@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'FILE=\"$CLAUDE_FILE_PATH\"; if echo \"$FILE\" | grep -qE \"schemas\\.py|signals\\.py|trend_filter\\.py\"; then if echo \"$CLAUDE_OLD_STRING $CLAUDE_NEW_STRING\" | grep -qiE \"min_count|min_score|min_net|tp_levels|sl_pct|exit_split|leverage|risk_per_trade|CONFLUENCE_THRESHOLDS|TF_PARAMS\"; then echo \"⚠️ 트레이딩 파라미터 변경 감지. /trade-review 로 전문가 토론을 먼저 실행하세요.\"; exit 1; fi; fi'"
+          }
+        ]
+      }
+    ]
+  }
+}
