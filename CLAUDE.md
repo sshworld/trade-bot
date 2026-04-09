@@ -1,46 +1,70 @@
 # Trade Bot — Claude 작업 가이드
 
+> 새 세션에서 이 파일을 먼저 읽고 작업 컨텍스트를 파악할 것.
+
 ## 프로젝트 개요
-Binance BTC/USDT 선물 자동 매매 시스템. 모의투자(paper trading) → 실거래 전환 예정.
+Binance BTC/USDT 선물 자동 매매 시스템.
+현재: Paper trading (testnet) → 목표: 실거래 전환.
 
 ## 기술 스택
-- Backend: Python FastAPI, pandas, ta, binance-connector
-- Frontend: Next.js 16, React, TypeScript, TailwindCSS, lightweight-charts
-- Data: 인메모리 KlineStore (시작 시 로드 + WebSocket 실시간 갱신, REST API 호출 0)
-- Infra: uv (Python), pnpm (Node.js)
+- **Backend**: Python FastAPI, pandas, ta, httpx, websockets
+- **Frontend**: Next.js 16 (App Router), React, TypeScript, TailwindCSS, lightweight-charts
+- **Data**: 인메모리 KlineStore (8 TF × 500 캔들, WebSocket 실시간 갱신, REST 호출 0)
+- **DB**: SQLite (`backend/data/trading.db` — 거래기록, 포지션, 계좌, 일자별 스냅샷)
+- **Infra**: uv (Python), pnpm (Node.js), Docker Compose (PostgreSQL 옵션)
 
-## 핵심 원칙
+## 핵심 원칙 (반드시 준수)
 
 ### 1. 의사결정 프로세스
-**트레이딩 파라미터(TP/SL/레버리지/포지션사이즈/진입조건 등) 변경 시 반드시:**
+**트레이딩 파라미터(TP/SL/레버리지/포지션사이즈/진입조건/리스크 등) 변경 시:**
 1. Warren Buffett + Jamie Dimon 페르소나로 토론 에이전트 실행
 2. 토론 결과를 `docs/meeting-minutes/` 에 회의록 저장
-3. 사용자에게 결과 보고
-4. 승인 후 구현
+3. 사용자에게 결과 보고 후 승인 받고 구현
 
 **절대 임의로 파라미터를 변경하지 않는다.**
 
 ### 2. 수동 개입 없음
 모든 매매는 100% 프로그램 자동. 수동 확인/승인 UI 없음.
+사용자는 24/7 모니터링하지 않음 → 이상 감지는 자동 + Telegram 알림.
 
 ### 3. 능동적 업무
-- 이슈 발견 → 전문가 토론 → 결론 → 구현까지 한 흐름으로
-- 회의록 작성, 메모리 업데이트 등 부수 작업도 알아서
+- 이슈 발견 → 전문가 토론 → 결론 → 회의록 저장 → 구현까지 한 흐름
+- "어떻게 할까요?" 물어보지 말고 전문가 토론 먼저 돌리고 결과 보고
+- UX 디자인은 사용자에게 직접 확인 (Donald Norman 리뷰는 사용 안 함)
 
-## 현재 확정 파라미터 (2026-04-08 회의록 기준)
+### 4. 데이터 보존
+- 거래 기록 reset 절대 금지 (사용자가 명시적으로 요청한 경우만)
+- 모든 데이터는 SQLite DB에 영속화 (서버 재시작 시 복원)
+
+## 현재 상태 (2026-04-09 기준)
+
+### 동작 중
+- Binance testnet API 키 설정됨 (`.env`)
+- 1초마다 6개 TF 시그널 스캔 (15m, 30m, 1h, 4h, 1d, 1w)
+- Confluence 발생 시 자동 포지션 진입 (Paper Trading)
+- 포지션/거래기록/계좌 SQLite 영속화
+
+### 미완성 (TODO)
+- [ ] Binance Futures testnet API 키 재발급 필요 (현재 Spot testnet 키라 401)
+- [ ] LiveTradingEngine: 시뮬레이션 → 실제 Binance 주문 전환
+  - 주문 흐름: status="waiting" → Binance API → "filled"/"failed"
+  - client_order_id로 reconciliation
+- [ ] Equity Curve 포지션 사이징 (20거래 MA)
+- [ ] Telegram 알림 연동 (alert_sender.py 코드 있음, .env에 token 필요)
+- [ ] 실거래 전환 시 일일 손실 강화 (-2/-3/-5%)
+
+## 확정 파라미터 (Buffett×Dimon 회의록)
 
 ### 계좌/리스크
-| 파라미터 | 값 |
-|---------|-----|
-| 시작 자본 | $1,000 |
-| 레버리지 | 3-5x |
-| 동시 포지션 | 1개 |
-| 거래당 리스크 | 자본의 2% |
-| 일일 손실 Tier1 | -3% → 사이즈 절반 |
-| 일일 손실 Tier2 | -5% → 당일 거래 중단 |
-| 일일 손실 Tier3 | -8% → 48시간 중단 |
-| 연속 SL 쿨다운 | 같은 방향 2연속 SL → 30분 차단 |
-| 일일 최대 거래 | 5회 |
+| 파라미터 | Paper | Real (전환 시) |
+|---------|-------|---------------|
+| 레버리지 | 3-5x | 3-5x |
+| 동시 포지션 | 1개 | 1개 |
+| 거래당 리스크 | balance × 2% | clamp(balance × 2%, $10, $100) |
+| 일일 손실 | -3/-5/-8% | -2/-3/-5% |
+| Circuit breaker | -50% | -20% |
+| Peak drawdown | -10% | -7% |
+| 일일 최대 거래 | 5회 | 5회 |
 
 ### TP/SL — WITH_TREND (마진 기준 %)
 | TF | TP1 | TP2 | TP3 | SL | Split |
@@ -57,65 +81,104 @@ Binance BTC/USDT 선물 자동 매매 시스템. 모의투자(paper trading) →
 | 4h | +7% | +14% | +25% | -5.5% | 50/30/20 |
 
 ### 트레일링 SL
-- TP1 체결 → SL을 진입가(본전)로
+- TP1 체결 → SL을 본전(수수료 포함)으로
 - TP2 체결 → SL을 TP1 가격으로
-
-### ATR 가드레일 (SL만)
-- ATR(14) 기준
-- SL < 1.5×ATR → 1.5×ATR로 확대
-- SL > 4.0×ATR → 4.0×ATR로 축소
+- SL보다 불리한 pending entry 자동 취소
 
 ### 포지션 교체 (반대 시그널)
-- 미실현 PnL < 현재 TP1 → 교체 (청산 + 반대 진입)
-- 미실현 PnL ≥ TP1 → 무시
-- 쿨다운 30분, 일일 3회 상한
+- 미실현 PnL < TP1 → 교체 (청산 + 반대 진입)
+- 미실현 PnL ≥ TP1 → 무시 (트레일링에 맡김)
+- 쿨다운 30분, 일일 3회
 
 ### 같은 방향 시그널
-- PnL < 0%: 무시
-- PnL 0~3%: SL을 본전으로
-- PnL ≥ 3%: SL을 미실현 수익 50% 잠금
+- PnL < 1.5%: 무시
+- PnL 1.5-3%: SL을 본전(수수료 포함)으로
+- PnL ≥ 3%: 미실현 수익 50% 잠금
 
 ### 진입 TF
 - 30m, 1h, 4h: 진입 가능
-- 15m: 분석/UI 표시만 (진입 불가)
+- 15m: 분석/UI만 (진입 불가)
 - 1d, 1w: 추세 필터만
 
 ### 시그널 시스템
-- 7개 지표 (RSI, MACD, BB, MA, Fibonacci, Elliott, VP)
-- Registry 패턴 (확장 가능)
-- Confluence 합류 (TF별 임계값)
-- Strong trigger 필수 (weight ≥ 1.5)
-- Lagging state 할인 (MA_align, EMA_pos → 반대 방향 시 30%로 할인)
-- 3-tier 분류: WITH_TREND / COUNTER_TREND / BLOCKED + CONSENSUS
+- 7개 지표 Registry 패턴 (INDICATOR_REGISTRY에 추가만 하면 확장)
+- Confluence: TF별 임계값 + strong trigger(w≥1.5) 필수
+- Lagging state 할인: MA_align, EMA_pos는 반대 방향 시 30%로 할인
+- 3-tier: WITH_TREND / COUNTER_TREND / BLOCKED + CONSENSUS override
 
-### 데이터 아키텍처
-- 시작 시 8개 TF × 500 캔들 REST 로드 → KlineStore
-- 이후 WebSocket kline 스트림으로 실시간 갱신 (REST 0회)
-- 1초마다 전체 TF 시그널 스캔 (로컬 데이터)
-- 캔들 종가 확정 시 즉시 재분석
+### Auto-Halt 규칙 (anomaly_detector.py)
+| 규칙 | 조건 | 중단 |
+|------|------|------|
+| Rapid-Fire | 60초 내 6건+ | 1시간 |
+| Flip-Flop | 2시간 내 방향전환 3회+ | 2시간 |
+| Fee Bleeding | 5건 중 4건 PnL < 0.3% | 1시간 |
+| 5연패 | 5연속 손실 | 50% 사이즈 3거래, 재평가 |
+| Stale Price | 120초 미수신 | 5분 |
+| Abnormal Size | margin > balance 50% | 무기한 (수동) |
+| Price Sanity | 진입가 ≠ 시장가 ±3% | 무기한 (수동) |
 
-## 디렉토리 구조 (핵심)
+## 디렉토리 구조
 ```
 backend/app/
-  analysis/signals.py      — 시그널 생성 (Registry + Confluence)
-  analysis/trend_filter.py — WITH/COUNTER/BLOCKED 분류
-  trading/engine.py        — 매매 엔진 (포지션/체결/PnL)
-  trading/schemas.py       — 데이터 모델 + 설정값
-  binance/kline_store.py   — 인메모리 캔들 스토어
-  binance/ws_consumer.py   — WebSocket 수신 + tick 처리
-  tasks/scheduler.py       — 1초 스캔 + 캔들 종가 트리거
+├── analysis/
+│   ├── signals.py          # 시그널 생성 (Registry + Confluence)
+│   ├── trend_filter.py     # WITH/COUNTER/BLOCKED 분류
+│   ├── engine.py           # 지표 오케스트레이션
+│   └── indicators/         # RSI, MACD, BB, MA, Fib, Elliott, VP
+├── trading/
+│   ├── engine.py           # PaperTradingEngine (핵심)
+│   ├── schemas.py          # 데이터 모델 + TF별 설정 + 회의록 파라미터
+│   ├── persistence.py      # SQLite (거래/포지션/계좌/스냅샷)
+│   ├── anomaly_detector.py # 10가지 이상 감지
+│   └── alert_sender.py     # Telegram/webhook 알림
+├── binance/
+│   ├── client.py           # REST (인증+공개) + retry + rate limit
+│   ├── kline_store.py      # 인메모리 8TF 캔들 스토어
+│   ├── ws_consumer.py      # WebSocket 수신 + tick queue + candle close trigger
+│   └── schemas.py          # KlineData, TickerData, TickData
+├── api/routes/             # REST API (market, analysis, trading, health)
+├── ws/                     # WebSocket 서버 (manager + server)
+├── tasks/scheduler.py      # 1초 스캔 + 캔들 종가 트리거 + anomaly heartbeat
+├── config.py               # 환경설정 (pydantic-settings)
+└── main.py                 # FastAPI entry + lifespan
 
 frontend/src/
-  app/dashboard/page.tsx   — 차트 + 시그널 트리
-  app/trading/page.tsx     — 포지션 + 거래내역
-  components/indicators/TFSignalPanel.tsx — 시그널 파이프라인 UI
+├── app/
+│   ├── dashboard/page.tsx  # 차트 + 시그널 트리 + 지표 오버레이
+│   ├── trading/page.tsx    # 포지션 + 거래내역 + 일자별 성과
+│   ├── layout.tsx          # 루트 레이아웃 + ToastWrapper
+│   └── ToastWrapper.tsx    # 거래 이벤트 토스트 알림
+├── components/
+│   ├── charts/CandlestickChart.tsx  # lightweight-charts + 지표 오버레이
+│   ├── indicators/TFSignalPanel.tsx # 시그널 파이프라인 (접기/펼치기, 클릭→오버레이)
+│   ├── trading/                     # AccountSummary, OpenPositions, TradeHistory 등
+│   └── layout/Header.tsx            # 봇 상태 뱃지 + 네비게이션
+├── hooks/                  # useMarketData, useWebSocket, useTrading, useIndicators
+├── lib/api.ts              # REST API 클라이언트
+└── types/                  # market.ts, analysis.ts, trading.ts, ws.ts
 
-docs/meeting-minutes/      — 전문가 토론 회의록
+docs/meeting-minutes/       # 전문가 토론 회의록 (의사결정 근거)
+scripts/setup.sh            # 대화형 설정 (API 키 입력 + 의존성 + 연결 테스트)
+```
+
+## 실행 방법
+```bash
+make setup      # 최초 설정 (API 키 입력 포함)
+make backend    # 백엔드 (터미널 1)
+make frontend   # 프론트엔드 (터미널 2)
 ```
 
 ## 주의사항
-- 데이터 reset 하지 말 것 (거래 기록 보존)
-- mainnet 사용 중 (testnet 아님)
-- 수수료 추적 중 (maker 0.02%, taker 0.04%)
-- front에서 internal server error 발생 시 backend 재시작 확인
-- pnpm dev는 frontend/ 디렉토리에서, uvicorn은 backend/ 디렉토리에서 실행
+- `.env`에 API 키 저장됨 (gitignore 대상, push 안 됨)
+- `backend/data/` 에 SQLite DB (gitignore 대상)
+- `BINANCE_TESTNET=true`면 주문은 testnet, `false`면 mainnet
+- pnpm dev는 `frontend/`, uvicorn은 `backend/` 에서 실행
+- 본전 계산에 왕복 수수료(taker×2/leverage) 포함
+
+## 회의록 참조
+의사결정 근거가 필요하면 `docs/meeting-minutes/` 확인:
+- `2026-04-08-buffett-dimon-final.md` — 전체 파라미터 확정
+- `2026-04-09-buffett-dimon-real-account.md` — 실계좌 전환
+- `2026-04-09-buffett-dimon-execution-architecture.md` — 주문 실행 아키텍처
+- `2026-04-09-buffett-dimon-auto-halt-rules.md` — 이상 감지 규칙
+- `2026-04-09-buffett-dimon-streak-rules.md` — 연승/연패 규칙 (Equity Curve)
