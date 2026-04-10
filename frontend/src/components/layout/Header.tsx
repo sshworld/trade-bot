@@ -6,7 +6,7 @@ import { formatPrice } from "@/lib/utils";
 import type { TickerResponse } from "@/types/market";
 
 interface BotStatus {
-  state: "scanning" | "near" | "long" | "short" | "halted";
+  state: "scanning" | "idle" | "near" | "long" | "short" | "halted";
   leverage?: number;
   pnl?: string;
   pnlPercent?: number;
@@ -20,6 +20,7 @@ interface HeaderProps {
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
   scanning: { bg: "bg-zinc-700", text: "text-zinc-300", label: "SCANNING" },
+  idle:     { bg: "bg-blue-900/50", text: "text-blue-400", label: "WAITING" },
   near:     { bg: "bg-yellow-900/50", text: "text-yellow-400", label: "NEAR ENTRY" },
   long:     { bg: "bg-emerald-900/50", text: "text-emerald-400", label: "LONG" },
   short:    { bg: "bg-red-900/50", text: "text-red-400", label: "SHORT" },

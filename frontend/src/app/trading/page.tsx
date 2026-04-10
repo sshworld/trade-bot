@@ -11,7 +11,6 @@ import DailyHistory from "@/components/trading/DailyHistory";
 import { useTrading } from "@/hooks/useTrading";
 import { useMarketWebSocket } from "@/hooks/useWebSocket";
 import { useMarketData } from "@/hooks/useMarketData";
-import { resetTradingAccount } from "@/lib/api";
 
 export default function TradingPage() {
   const {
@@ -37,15 +36,8 @@ export default function TradingPage() {
       const p = positions[0];
       return { state: p.side as "long" | "short", leverage: p.leverage, pnl: p.unrealized_pnl, pnlPercent: p.pnl_percent };
     }
-    return { state: "scanning" as const };
+    return { state: "idle" as const };
   })();
-
-  const handleReset = async () => {
-    if (confirm("계좌를 초기화하시겠습니까?")) {
-      await resetTradingAccount();
-      refetch();
-    }
-  };
 
   return (
     <div className="flex h-screen flex-col bg-zinc-950 text-white">
@@ -59,13 +51,7 @@ export default function TradingPage() {
         ) : (
           <div className="mx-auto max-w-7xl flex flex-col gap-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold">Paper Trading</h2>
-              <button
-                onClick={handleReset}
-                className="rounded border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:border-red-700 hover:text-red-400"
-              >
-                Reset Account
-              </button>
+              <h2 className="text-lg font-bold">Live Trading</h2>
             </div>
 
             <AccountSummary status={status} />
