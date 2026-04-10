@@ -157,8 +157,8 @@ class CounterTrendSettings(BaseModel):
 class TradingSettings(BaseModel):
     initial_capital: Decimal = Decimal("1000")
 
-    # 레버리지: 3-5x
-    min_leverage: int = 3
+    # 레버리지: 5x 고정 (2026-04-10 회의록)
+    min_leverage: int = 5
     max_leverage: int = 5
 
     # 수수료

@@ -265,7 +265,7 @@ def generate_signals(
         effective_bear = _effective_opposing_score("bearish", bearish, True)
         net = bull_score - effective_bear
         if net >= min_net:
-            strength = min(net / 8.0, 1.0)
+            strength = min(net / 4.0, 1.0)
             reasons = [s.reason for s in bullish[:4]]
             signals.append({
                 "type": "confluence_long",
@@ -294,7 +294,7 @@ def generate_signals(
         effective_bull = _effective_opposing_score("bullish", bullish, True)
         net = bear_score - effective_bull
         if net >= min_net:
-            strength = min(net / 8.0, 1.0)
+            strength = min(net / 4.0, 1.0)
             reasons = [s.reason for s in bearish[:4]]
             signals.append({
                 "type": "confluence_short",
