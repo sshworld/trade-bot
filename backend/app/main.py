@@ -12,6 +12,7 @@ from app.tasks.scheduler import start_scheduler, stop_scheduler
 from app.ws.manager import manager
 from app.ws.server import ws_router
 
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 logger = logging.getLogger(__name__)
 
 
