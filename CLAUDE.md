@@ -69,6 +69,11 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 - TP1 → SL을 본전(수수료 포함)
 - TP2 → SL을 TP1 가격
 - TP2 이후: 동적 트레일 (최고가 - 2.0×ATR, 5×ATR 넘으면 1.0×ATR)
+- **SL 사전 배치**: STOP_MARKET + reduceOnly로 바이낸스에 사전 주문 (서버 꺼져도 SL 작동)
+- SL 변경 시 0.1% 이상 차이나면 자동 재배치
+
+### TP merge
+- 소자본 tail merge 시 **가중 평균 가격** 적용 (R:R 비율 보존)
 
 ### 진입
 - WITH_TREND: 평단 최적화 50%/30%/20% (0%, -0.3%, -0.6%) (2026-04-11 회의록)

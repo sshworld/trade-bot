@@ -439,6 +439,9 @@ class LiveTradingEngine(PaperTradingEngine):
             save_position(position)
             save_account(self.account)
 
+            # SL 사전 배치 (바이낸스 STOP_MARKET)
+            await self._place_sl_order(position)
+
             logger.info(
                 f"[LIVE] Position opened [{tier_name}]: {side.value} {total_qty} "
                 f"@ ~{current_price} (lev:{leverage}x, TF:{signal_tf})"
@@ -473,6 +476,8 @@ class LiveTradingEngine(PaperTradingEngine):
             positions_to_close: list[tuple[str, str]] = []
 
             for pos_id, pos in self.open_positions.items():
+                old_sl = pos.stop_loss_price
+
                 # 동적 트레일링 (TP2 이후 매 tick)
                 self._update_dynamic_trailing(pos, price)
 
@@ -494,6 +499,10 @@ class LiveTradingEngine(PaperTradingEngine):
                                 new_sl = be - bump
                                 if new_sl < pos.stop_loss_price:
                                     pos.stop_loss_price = new_sl.quantize(Decimal("0.01"))
+
+                # SL 변경 시 바이낸스 주문 재배치
+                if pos.stop_loss_price != old_sl:
+                    await self._update_sl_order_if_changed(pos, old_sl)
 
                 # SL 체크 → 시장가 청산
                 if pos.avg_entry_price and pos.status in ("opening", "open"):
@@ -536,7 +545,10 @@ class LiveTradingEngine(PaperTradingEngine):
         if not pos:
             return None
 
-        # 1. 미체결 주문 전부 취소
+        # 1. SL 주문 취소
+        await self._cancel_sl_order(pos)
+
+        # 2. 미체결 주문 전부 취소
         for tranche in pos.entry_tranches + pos.exit_tranches:
             if tranche.status in (OrderStatus.PENDING, OrderStatus.WAITING):
                 if tranche.client_order_id:
@@ -744,6 +756,64 @@ class LiveTradingEngine(PaperTradingEngine):
             pending_exits = [t for t in pos.exit_tranches if t.status == OrderStatus.PENDING]
             if pending_exits:
                 asyncio.create_task(self._place_exit_orders(pos))
+
+    # ── SL 사전 배치 (STOP_MARKET + reduceOnly) ─────────────
+
+    async def _place_sl_order(self, pos: Position):
+        """SL을 바이낸스에 STOP_MARKET으로 사전 배치."""
+        close_side = "SELL" if pos.side == PositionSide.LONG else "BUY"
+        sl_client_id = f"{pos.id}-sl"
+
+        # 기존 SL 주문 취소
+        await self._cancel_sl_order(pos)
+
+        filled_qty = sum(t.quantity for t in pos.entry_tranches if t.status == OrderStatus.FILLED)
+        exited_qty = sum(t.quantity for t in pos.exit_tranches if t.status == OrderStatus.FILLED)
+        remaining = filled_qty - exited_qty
+        if remaining <= 0:
+            return
+
+        try:
+            params = {
+                "symbol": "BTCUSDT",
+                "side": close_side,
+                "type": "STOP_MARKET",
+                "quantity": str(remaining.quantize(Decimal("0.001"))),
+                "stopPrice": str(pos.stop_loss_price.quantize(Decimal("0.10"))),
+                "reduceOnly": "true",
+                "newClientOrderId": sl_client_id,
+            }
+            signed = binance_client._sign(params)
+            resp = await binance_client._retry_request(
+                binance_client.client, "post", "/fapi/v1/order",
+                params=signed, headers=binance_client._auth_headers(),
+            )
+            result = resp.json()
+            pos.signal_details = pos.signal_details or {}
+            pos.signal_details["sl_order_client_id"] = sl_client_id
+            pos.signal_details["sl_order_id"] = str(result.get("orderId", ""))
+            logger.info(f"[LIVE] SL order placed: {close_side} STOP_MARKET @ {pos.stop_loss_price} qty={remaining}")
+        except Exception as e:
+            logger.error(f"[LIVE] SL order placement failed: {e}")
+
+    async def _cancel_sl_order(self, pos: Position):
+        """기존 SL 주문 취소."""
+        sl_client_id = (pos.signal_details or {}).get("sl_order_client_id")
+        if sl_client_id:
+            try:
+                await binance_client.cancel_order("BTCUSDT", sl_client_id)
+                logger.info(f"[LIVE] SL order cancelled: {sl_client_id}")
+            except Exception:
+                pass
+
+    async def _update_sl_order_if_changed(self, pos: Position, old_sl: Decimal):
+        """SL이 0.1% 이상 변경되었으면 재배치."""
+        if old_sl <= 0:
+            await self._place_sl_order(pos)
+            return
+        change_pct = abs(float(pos.stop_loss_price - old_sl) / float(old_sl) * 100)
+        if change_pct >= 0.1:
+            await self._place_sl_order(pos)
 
     # ── Reset (DB 초기화 + 바이낸스 주문 전부 취소) ───────────
 

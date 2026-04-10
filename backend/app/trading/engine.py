@@ -729,13 +729,18 @@ class PaperTradingEngine:
         return Decimal(str(math.ceil(raw * 1000) / 1000))
 
     def _merge_small_tranches(self, tranches: list[TrancheOrder], min_qty: Decimal) -> list[TrancheOrder]:
-        """최소 수량 미달 tranche를 뒤에서부터 앞으로 합침."""
+        """최소 수량 미달 tranche를 뒤에서부터 앞으로 가중 평균 가격으로 합침."""
         if len(tranches) <= 1:
             return tranches
         result = list(tranches)
         while len(result) > 1 and result[-1].quantity < min_qty:
             last = result.pop()
-            result[-1].quantity += last.quantity
+            prev = result[-1]
+            # 가중 평균 가격
+            total_val = prev.target_price * prev.quantity + last.target_price * last.quantity
+            total_qty = prev.quantity + last.quantity
+            prev.target_price = (total_val / total_qty).quantize(Decimal("0.10"))
+            prev.quantity = total_qty
         return result
 
     def _create_entry_tranches(
