@@ -710,6 +710,42 @@ class LiveTradingEngine(PaperTradingEngine):
                     save_position(pos)
                     save_account(self.account)
 
+            # 바이낸스 포지션 소멸 감지 (SL/TP가 바이낸스에서 실행된 경우)
+            if self.open_positions:
+                try:
+                    binance_pos = await binance_client.get_position_risk("BTCUSDT")
+                    has_binance_pos = binance_pos and float(binance_pos.get("positionAmt", 0)) != 0
+                    if not has_binance_pos:
+                        # 바이낸스에서 포지션 없어짐 → SL/TP가 바이낸스에서 체결됨
+                        for pos_id in list(self.open_positions.keys()):
+                            pos = self.open_positions[pos_id]
+                            real_bal = await binance_client.get_balance("USDT")
+                            # PnL 추정: 새 잔고 - 이전 잔고
+                            old_bal = self.account.balance
+                            pnl = real_bal - old_bal
+                            reason = "stop_loss" if pnl < 0 else "take_profit"
+                            logger.info(f"[LIVE] Binance position gone! {reason} PnL≈${pnl:.2f}")
+
+                            trade = self._close_position(pos_id, self._last_price or Decimal("0"), reason)
+
+                            self.account.balance = real_bal
+                            self.account.margin_used = Decimal("0")
+                            save_account(self.account)
+
+                            side_kr = "롱" if trade.side == PositionSide.LONG else "숏"
+                            reason_kr = "익절" if pnl >= 0 else "손절"
+                            emoji = "💚" if pnl >= 0 else "🔴"
+                            await self.alert_sender._send_telegram_text(
+                                f"{emoji} <b>POSITION CLOSED (Binance) — {reason_kr.upper()}</b>\n\n"
+                                f"Side: {side_kr}\n"
+                                f"PnL: {'+'if pnl >= 0 else ''}${pnl:.2f}\n"
+                                f"Balance: ${real_bal:,.2f}\n\n"
+                                f"<i>Binance SL/TP 자동 체결</i>"
+                            )
+                            break
+                except Exception as e:
+                    logger.error(f"[RECONCILE] Position check failed: {e}")
+
             # 잔고 동기화 (매 reconcile 주기)
             try:
                 real_bal = await self._get_real_balance()
@@ -719,29 +755,29 @@ class LiveTradingEngine(PaperTradingEngine):
             except Exception:
                 pass
 
-    # ── Exit tranche 실주문 발행 ──────────────────────────────
+    # ── Exit tranche 실주문 발행 (Algo TAKE_PROFIT_MARKET) ────
 
     async def _place_exit_orders(self, pos: Position):
-        """Exit tranche들을 바이낸스에 LIMIT 주문으로 발행."""
+        """Exit tranche들을 바이낸스 Algo API (TAKE_PROFIT_MARKET)로 발행."""
         close_side = "SELL" if pos.side == PositionSide.LONG else "BUY"
         for tranche in pos.exit_tranches:
             if tranche.status != OrderStatus.PENDING:
                 continue
             try:
-                resp = await binance_client.place_order(
+                result = await binance_client.place_algo_order(
                     symbol="BTCUSDT",
                     side=close_side,
-                    order_type="LIMIT",
-                    quantity=tranche.quantity,
-                    price=tranche.target_price,
+                    order_type="TAKE_PROFIT_MARKET",
+                    trigger_price=tranche.target_price.quantize(Decimal("0.10")),
+                    quantity=tranche.quantity.quantize(Decimal("0.001")),
                     client_order_id=tranche.id,
                 )
                 tranche.client_order_id = tranche.id
-                tranche.binance_order_id = str(resp.get("orderId", ""))
+                tranche.binance_order_id = str(result.get("algoId", ""))
                 tranche.status = OrderStatus.WAITING
-                logger.info(f"[LIVE] Exit order placed: {tranche.id} @ {tranche.target_price}")
+                logger.info(f"[LIVE] TP algo order placed: {tranche.id} trigger={tranche.target_price} qty={tranche.quantity}")
             except Exception as e:
-                logger.error(f"[LIVE] Exit order failed: {e}")
+                logger.error(f"[LIVE] TP algo order failed: {e}")
 
     # ── recalculate 오버라이드: exit tranche 생성 후 실주문 ──
 
