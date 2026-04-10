@@ -7,6 +7,7 @@ echo ""
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
+RED='\033[0;31m'
 NC='\033[0m'
 
 step() { echo -e "\n${GREEN}[Step $1]${NC} $2"; }
@@ -15,50 +16,66 @@ warn() { echo -e "${YELLOW}[!]${NC} $1"; }
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
-# ── 1. Binance API 키 설정 ──────────────────────────────────
-step 1 "Binance API 설정"
+# ── 1. 모드 선택 ────────────────────────────────────────────
+step 1 "거래 모드 선택"
 
 if [ ! -f .env ]; then
   cp .env.example .env
 fi
 
-# 키가 비어있으면 입력 받기
 CURRENT_KEY=$(grep "^BINANCE_API_KEY=" .env | cut -d'=' -f2)
 if [ -z "$CURRENT_KEY" ]; then
   echo ""
-  echo -e "${CYAN}Binance Futures Testnet API 키를 설정합니다.${NC}"
-  echo "  키가 없으면 https://testnet.binancefuture.com 에서 생성하세요."
-  echo "  (실제 Binance 계정으로 로그인 → API Management → Generate HMAC-SHA-256 Key)"
+  echo -e "${CYAN}어떤 모드로 실행하시겠습니까?${NC}"
+  echo ""
+  echo "  1) ${GREEN}Testnet (모의거래)${NC} — 가상 자금으로 테스트"
+  echo "     키 발급: https://testnet.binancefuture.com"
+  echo ""
+  echo "  2) ${RED}Mainnet (실거래)${NC} — 실제 자금으로 거래"
+  echo "     키 발급: https://www.binance.com → API Management"
+  echo ""
+  read -p "  선택 (1 또는 2, 기본: 1): " MODE_CHOICE
+  MODE_CHOICE=${MODE_CHOICE:-1}
+
+  if [ "$MODE_CHOICE" = "2" ]; then
+    sed -i '' "s|^BINANCE_TESTNET=.*|BINANCE_TESTNET=false|" .env
+    echo -e "\n  ${RED}⚠ Mainnet (실거래) 모드${NC}"
+    echo -e "  ${YELLOW}실제 자금이 사용됩니다. 신중하게 진행하세요.${NC}"
+    KEY_URL="https://www.binance.com → API Management"
+  else
+    sed -i '' "s|^BINANCE_TESTNET=.*|BINANCE_TESTNET=true|" .env
+    echo -e "\n  ${GREEN}Testnet (모의거래) 모드${NC}"
+    KEY_URL="https://testnet.binancefuture.com → API Management"
+  fi
+
+  # ── 2. API 키 입력 ──────────────────────────────────────────
+  echo ""
+  echo -e "  ${CYAN}Binance Futures API 키를 입력하세요.${NC}"
+  echo "  발급: $KEY_URL"
   echo ""
 
   read -p "  API Key: " API_KEY
   read -p "  Secret Key: " SECRET_KEY
 
   if [ -n "$API_KEY" ] && [ -n "$SECRET_KEY" ]; then
-    # .env에 키 저장
     sed -i '' "s|^BINANCE_API_KEY=.*|BINANCE_API_KEY=$API_KEY|" .env
     sed -i '' "s|^BINANCE_API_SECRET=.*|BINANCE_API_SECRET=$SECRET_KEY|" .env
     echo -e "  ${GREEN}API 키 저장 완료${NC}"
   else
-    warn "키를 입력하지 않았습니다. 나중에 .env 파일에서 직접 입력하세요."
-  fi
-
-  echo ""
-  read -p "  Testnet 사용? (y/n, 기본: y): " USE_TESTNET
-  USE_TESTNET=${USE_TESTNET:-y}
-  if [ "$USE_TESTNET" = "n" ] || [ "$USE_TESTNET" = "N" ]; then
-    sed -i '' "s|^BINANCE_TESTNET=.*|BINANCE_TESTNET=false|" .env
-    echo -e "  ${YELLOW}Mainnet (실거래) 모드${NC}"
-  else
-    sed -i '' "s|^BINANCE_TESTNET=.*|BINANCE_TESTNET=true|" .env
-    echo -e "  ${GREEN}Testnet (모의거래) 모드${NC}"
+    warn "키를 입력하지 않았습니다. .env 파일에서 직접 입력하세요."
   fi
 else
-  echo "  API 키 이미 설정됨 (${CURRENT_KEY:0:10}...)"
+  TESTNET=$(grep "^BINANCE_TESTNET=" .env | cut -d'=' -f2)
+  if [ "$TESTNET" = "true" ]; then
+    echo "  모드: Testnet (모의거래)"
+  else
+    echo "  모드: Mainnet (실거래)"
+  fi
+  echo "  API 키 설정됨 (${CURRENT_KEY:0:10}...)"
 fi
 
-# ── 2. Python 의존성 ────────────────────────────────────────
-step 2 "백엔드 의존성 설치 (uv)"
+# ── 3. Python 의존성 ────────────────────────────────────────
+step 3 "백엔드 의존성 설치 (uv)"
 if ! command -v uv &> /dev/null; then
   echo "  uv 설치 중..."
   curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -68,8 +85,8 @@ cd "$ROOT_DIR/backend"
 uv sync --quiet
 echo "  Python 패키지 설치 완료"
 
-# ── 3. Node 의존성 ──────────────────────────────────────────
-step 3 "프론트엔드 의존성 설치 (pnpm)"
+# ── 4. Node 의존성 ──────────────────────────────────────────
+step 4 "프론트엔드 의존성 설치 (pnpm)"
 if ! command -v pnpm &> /dev/null; then
   echo "  pnpm 설치 중..."
   npm install -g pnpm
@@ -78,13 +95,13 @@ cd "$ROOT_DIR/frontend"
 pnpm install --silent
 echo "  Node 패키지 설치 완료"
 
-# ── 4. 데이터 디렉토리 ─────────────────────────────────────
-step 4 "데이터 디렉토리 생성"
+# ── 5. 데이터 디렉토리 ─────────────────────────────────────
+step 5 "데이터 디렉토리 생성"
 mkdir -p "$ROOT_DIR/backend/data"
-echo "  backend/data/ 생성 완료 (SQLite DB 저장 위치)"
+echo "  backend/data/ (SQLite DB)"
 
-# ── 5. API 키 검증 ──────────────────────────────────────────
-step 5 "Binance API 연결 테스트"
+# ── 6. API 연결 테스트 ──────────────────────────────────────
+step 6 "Binance API 연결 테스트"
 cd "$ROOT_DIR/backend"
 API_KEY=$(grep "^BINANCE_API_KEY=" "$ROOT_DIR/.env" | cut -d'=' -f2)
 if [ -n "$API_KEY" ]; then
@@ -97,28 +114,30 @@ async def test():
         balance = await binance_client.get_balance('USDT')
         print(f'  ✓ Binance 연결 성공! 잔고: \${balance}')
     except Exception as e:
-        print(f'  ✗ Binance 연결 실패: {e}')
-        print('    .env의 API 키를 확인하세요.')
+        err = str(e)
+        if '401' in err or '2015' in err:
+            print('  ✗ API 키가 유효하지 않습니다.')
+            print('    - Testnet 모드인데 Mainnet 키를 입력했거나')
+            print('    - Mainnet 모드인데 Testnet 키를 입력한 경우일 수 있습니다.')
+            print('    - Futures Testnet 키는 https://testnet.binancefuture.com 에서 발급')
+        else:
+            print(f'  ✗ 연결 실패: {err}')
     await binance_client.close()
 
 asyncio.run(test())
-" 2>&1 || warn "API 연결 테스트 실패 — 나중에 키를 확인하세요."
+" 2>&1 || warn "연결 테스트 실패"
 else
-  warn "API 키 미설정. 시그널 분석만 동작합니다."
+  warn "API 키 미설정. Paper trading만 동작합니다."
 fi
 
 echo ""
 echo "=== 설치 완료 ==="
 echo ""
-echo "실행 방법:"
-echo "  make start              (백엔드 + 프론트엔드 동시 실행)"
-echo ""
-echo "또는 개별:"
-echo "  make backend            (백엔드 서버)"
-echo "  make frontend           (프론트엔드 서버)"
+echo "실행:"
+echo "  make backend    (터미널 1)"
+echo "  make frontend   (터미널 2)"
 echo ""
 echo "브라우저: http://localhost:3000"
 echo ""
-echo "설정 변경:"
-echo "  .env 파일에서 API 키/모드 수정 가능"
+echo "설정 변경: .env 파일 수정 후 서버 재시작"
 echo ""
