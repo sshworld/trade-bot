@@ -43,7 +43,11 @@
 - TypeScript: strict, "use client" for interactive
 - 지표 추가: `INDICATOR_REGISTRY`에 scorer 함수 등록
 - DB 변경: `persistence.py`에 테이블/함수 추가
-- 설정: `schemas.py`의 `TradingSettings` 또는 `TF_PARAMS_*`
+- Paper 설정: `schemas.py`의 `TradingSettings`
+- Live 설정: `schemas.py`의 `LiveTradingSettings` (TradingSettings 상속)
+- 레버리지: **5x 고정** (2026-04-10 회의록)
+- 리스크: **순수 balance × 2%**, 클램프 없음 (2026-04-11 회의록)
+- **실거래 서버 재시작 금지** — 반드시 사용자 승인 필요
 
 ## 워크플로우
 

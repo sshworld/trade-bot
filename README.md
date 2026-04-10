@@ -22,11 +22,12 @@
 - **시간 기반 청산**: 오래 끄는 거래 자동 정리
 
 ### 리스크 관리
-- **거래당 2% 리스크**: SL 역산 기반 사이즈 (레버리지와 무관하게 손실 고정)
-- **레버리지 3-5x**: 시그널 강도에 따라 자동 조절 (net_score/4.0)
-- **일일 손실 제한**: -3% 사이즈 절반, -5% 당일 중단
+- **거래당 순수 2% 리스크**: SL 역산 기반 사이즈, 고정 달러 클램프 없음 (모든 자본 규모에서 동일)
+- **레버리지 5x 고정**: 마진 효율 최적화 (2% SL 사이징으로 실손실 동일)
+- **일일 손실 제한**: -3% 사이즈 절반, -5% 당일 중단, Peak Drawdown -7% 정지
 - **속도 제한**: 60분 내 3연속 SL → 30분 중단
 - **10가지 이상 감지**: Rapid-Fire, Flip-Flop, Fee Bleeding 등
+- **실거래 지원**: LiveTradingEngine — Binance 실주문, 5초 주문 조회, ghost position 감지
 
 ### 실시간 대시보드
 - **캔들스틱 차트**: TradingView lightweight-charts, rAF 60fps
@@ -62,9 +63,12 @@ Binance WebSocket ──→ KlineStore ──→ 1초 전 TF 분석
                            ▼              ▼
                      Trading Engine ◄─── ATR 기반 TP/SL 계산
                            │
+                           ├─ Paper: 시뮬레이션 체결
+                           ├─ Live: Binance 실주문 + 5초 Reconciliation
                            ├─ 확인 추가 진입 (50/30/20)
                            ├─ 동적 트레일링 SL
                            ├─ 시간 기반 청산
+                           ├─ Telegram 알림 (진입/청산/이상감지)
                            └─ SQLite 영속화
 ```
 
@@ -146,7 +150,7 @@ make frontend   # 터미널 2
 trade-bot/
 ├── backend/app/
 │   ├── analysis/           # 시그널 + 지표 + 추세 필터
-│   ├── trading/            # 매매 엔진 + 스키마 + DB + 이상 감지
+│   ├── trading/            # Paper/Live 매매 엔진 + 스키마 + DB + 이상 감지
 │   ├── binance/            # API 클라이언트 + KlineStore + WebSocket
 │   ├── api/routes/         # REST API
 │   └── tasks/              # 1초 스케줄러
@@ -170,7 +174,9 @@ trade-bot/
 | 패밀리 중복 제거 | MACD 2개=실질 1개 | 04-10 performance |
 | 확인 추가 진입 | 레버리지 선물 물타기 위험 | 04-10 aggressive |
 | 거래 횟수 무제한 | 일일 손실%가 실질 안전망 | 04-10 unlimited |
-| 5x 고정 아닌 3-5x | 시그널 강도 반영 | 04-10 leverage |
+| 5x 고정 레버리지 | SL 사이징으로 실손실 동일 | 04-10 leverage-5x |
+| 순수 % 리스크 | 고정 달러 클램프 스케일링 안 됨 | 04-11 percent-based |
+| Live Trading | Paper→Live 전환, 실주문 | 04-11 구현 |
 
 ---
 

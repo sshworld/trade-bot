@@ -4,7 +4,7 @@
 
 ## 프로젝트 개요
 Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
-현재: Paper trading (testnet) → 목표: 실거래 전환.
+현재: **실거래 운영 중** (LiveTradingEngine, Mainnet).
 
 ## 기술 스택
 - **Backend**: Python FastAPI, pandas, ta, httpx, websockets
@@ -40,19 +40,21 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 | `/implement` | 구현 자동 루프 |
 | `/analyze` | 거래 성과 분석 |
 
-## 현재 확정 파라미터 (2026-04-10)
+## 현재 확정 파라미터 (2026-04-11)
 
 ### 계좌/리스크
 | 파라미터 | 값 |
 |---------|-----|
-| 레버리지 | 3-5x (net_score/4.0 기반) |
+| 레버리지 | **5x 고정** (2026-04-10 회의록) |
 | 동시 포지션 | 1개 |
-| 거래당 리스크 | 자본의 2% (SL 역산) |
+| 거래당 리스크 | **순수 balance × 2%** (클램프 없음, 2026-04-11 회의록) |
+| 최소 거래 조건 | 노셔널 ≥ $100 (Binance 최소) |
 | 일일 거래/교체 횟수 | **무제한** |
 | 일일 손실 -3% | 사이즈 절반 |
 | 일일 손실 -5% | **당일 중단** (00시 복귀) |
 | 속도 제한 | 60분 3연속 SL → 30분 중단 |
-| Drawdown -10% | 당일 중단 |
+| Drawdown -7% | 당일 중단 (Live 강화) |
+| 슬리피지 버퍼 | 95% (계산 사이즈의 95%만 사용) |
 
 ### TP/SL — ATR 기반 (단타 최적화)
 | TF | SL | TP1 | TP2 | TP3 | Split |
@@ -85,16 +87,20 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 - 4× → 시장가 청산
 
 ## TODO
-- [ ] Binance Futures testnet API 키 재발급
-- [ ] LiveTradingEngine
-- [ ] Telegram 알림
+- [x] LiveTradingEngine (2026-04-11 구현)
+- [x] Telegram 알림 (2026-04-11 연동)
+- [x] 순수 % 리스크 체계 (2026-04-11 회의록)
+- [ ] PnL에 수수료 포함 표시
+- [ ] UI: 패밀리 count 기준 표시 개선 (부분 완료)
+- [ ] 자본 $10,000 도달 시 리스크 재검토 토론
 
 ## 디렉토리
 ```
 backend/app/
 ├── analysis/signals.py       # Registry + 패밀리 + Confluence
 ├── trading/engine.py         # PaperTradingEngine (ATR TP/SL)
-├── trading/schemas.py        # TF_ATR_PARAMS + 설정
+├── trading/live_engine.py    # LiveTradingEngine (실거래, Binance 주문)
+├── trading/schemas.py        # TF_ATR_PARAMS + 설정 + LiveTradingSettings
 ├── trading/persistence.py    # SQLite
 ├── binance/client.py         # REST (인증+공개)
 ├── binance/kline_store.py    # 8TF 캔들 스토어
