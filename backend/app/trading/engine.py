@@ -20,7 +20,7 @@ from app.trading.schemas import (
     TradingSettings,
     TrendContext,
     TrancheOrder,
-    get_tf_params,
+    get_tf_atr_params,
 )
 from app.analysis.trend_filter import classify_trade
 from app.trading.persistence import (
@@ -91,22 +91,28 @@ class PaperTradingEngine:
                 dd = (self.account.peak_equity - self.account.equity) / self.account.peak_equity * 100
                 if dd >= Decimal(str(self.settings.drawdown_halt_pct)):
                     logger.warning(f"Drawdown halt: {dd:.1f}% from peak")
-                    self._halt_until = now + 172_800_000  # 48h
+                    # 당일 중단 (다음 날 리셋)
+                    today_end = (int(time.time() // 86400) + 1) * 86400 * 1000
+                    self._halt_until = today_end
                     return None
 
             # 일일 손실 체크 (당일 00시 잔고 기준)
             daily_base = self.account.daily_start_balance if self.account.daily_start_balance > 0 else self.account.initial_capital
             daily_loss_pct = float(-self.account.daily_pnl / daily_base * 100) if self.account.daily_pnl < 0 else 0.0
-            if daily_loss_pct >= self.settings.daily_loss_tier3_pct:
-                self._halt_until = now + 172_800_000
-                logger.warning(f"Daily loss tier3: -{daily_loss_pct:.1f}%, halting 48h")
-                return None
             if daily_loss_pct >= self.settings.daily_loss_tier2_pct:
-                logger.info(f"Daily loss tier2: -{daily_loss_pct:.1f}%, blocked for today")
+                today_end = (int(time.time() // 86400) + 1) * 86400 * 1000
+                self._halt_until = today_end
+                logger.info(f"Daily loss -{daily_loss_pct:.1f}% >= {self.settings.daily_loss_tier2_pct}%, stopped for today")
                 return None
 
-            # 일일 최대 거래 수
-            if self.account.daily_trades >= self.settings.max_daily_trades:
+            # 속도 제한: 60분 내 3연속 SL → 30분 일시 중단
+            recent_sl = [
+                t for t in self.trade_history[-10:]
+                if t.close_reason == "stop_loss" and now - t.closed_at < self.settings.velocity_window_ms
+            ]
+            if len(recent_sl) >= self.settings.velocity_max_consecutive_sl:
+                self._halt_until = now + self.settings.velocity_pause_ms
+                logger.info(f"Velocity brake: {len(recent_sl)} SLs in {self.settings.velocity_window_ms//60000}min, pausing {self.settings.velocity_pause_ms//60000}min")
                 return None
 
             # 시그널 중복 방지
@@ -143,7 +149,7 @@ class PaperTradingEngine:
                     return None
                 else:
                     # 반대 방향 → 교체 판단
-                    if not self._should_replace(pos, current_price, now):
+                    if not self._should_replace(pos, current_price, now, signal):
                         return None
                     # 교체 실행
                     trade = self._close_position(list(self.open_positions.keys())[0], current_price, "replaced_by_signal")
@@ -190,24 +196,34 @@ class PaperTradingEngine:
                     return None
 
             # ── TF별 파라미터 ──
-            tf_params = get_tf_params(signal_tf, tier_name)
+            # ATR 기반 TP/SL 파라미터
+            atr_params = get_tf_atr_params(signal_tf)
             strength = signal.get("strength", 0.5)
             leverage = self._calculate_leverage(strength)
 
-            # Tier2 (일일 손실 -3%~-5%) → 사이즈 절반, 레버 min으로
+            # ATR 계산
+            atr = self._get_atr(signal_tf)
+            if atr <= 0:
+                atr = float(current_price) * 0.01  # fallback: 가격의 1%
+
+            # 일일 손실 -3%~-5% → 사이즈 절반
             size_multiplier = Decimal("1.0")
             if daily_loss_pct >= self.settings.daily_loss_tier1_pct:
                 size_multiplier = Decimal("0.5")
                 leverage = self.settings.min_leverage
 
-            # 행동 이상 감지기 사이즈 보정
-            anomaly_mult = self.anomaly_detector.get_size_multiplier()
-            size_multiplier *= anomaly_mult
+            # ATR 기반 SL 계산 (가격 기준)
+            sl_distance = atr * atr_params.sl_atr
+            # ATR 가드레일 적용
+            sl_distance = max(sl_distance, atr * self.settings.atr_sl_min_multiple)
+            sl_distance = min(sl_distance, atr * self.settings.atr_sl_max_multiple)
 
-            # 리스크 기반 포지션 사이즈
-            position_notional = self._calculate_position_size_risk_based(
-                leverage, tf_params.sl_pct, size_multiplier
-            )
+            # 리스크 기반 사이즈: 2% 리스크 역산
+            risk_amount = self.account.balance * Decimal(str(self.settings.risk_per_trade_pct / 100)) * size_multiplier
+            if sl_distance <= 0:
+                return None
+            position_notional = risk_amount / Decimal(str(sl_distance / float(current_price)))
+            position_notional = position_notional.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
             if position_notional < 100:
                 return None
 
@@ -216,33 +232,27 @@ class PaperTradingEngine:
             if total_qty <= 0:
                 return None
 
-            # ── 행동 이상 감지: 주문 전 검사 ──
-            anomaly_alert = self.anomaly_detector.check_pre_order(
-                direction=side.value,
-                margin=margin,
-                balance=self.account.balance,
-                entry_price=current_price,
-                current_price=current_price,
-            )
-            if anomaly_alert:
-                asyncio.create_task(self.alert_sender.send(anomaly_alert))
-                if anomaly_alert.action_taken.value != "alert":
-                    logger.warning(f"Order blocked by anomaly detector: {anomaly_alert.rule_name}")
-                    return None
-
-            # 주문 기록 (anomaly 모니터링용)
-            self.anomaly_detector.record_order(now, side.value)
-
             pos_id = str(uuid.uuid4())[:8]
 
-            entry_offsets = self.settings.counter_trend.entry_offsets if is_counter else self.settings.entry_offsets
-            entry_tranches = self._create_entry_tranches(
-                side, current_price, total_qty, pos_id, now, offsets_override=entry_offsets
-            )
-            stop_loss = self._calculate_stop_loss(side, current_price, sl_pct=tf_params.sl_pct, leverage=leverage)
+            # 진입: WITH_TREND은 확인 추가, COUNTER는 소폭 물타기
+            if is_counter:
+                entry_offsets = self.settings.counter_trend.entry_offsets
+                entry_split = self.settings.counter_trend.entry_split
+            else:
+                entry_offsets = self.settings.entry_offsets
+                entry_split = self.settings.entry_split
 
-            # ATR 가드레일
-            stop_loss = self._apply_atr_guardrail(side, current_price, stop_loss, signal_tf, leverage)
+            entry_tranches = self._create_entry_tranches(
+                side, current_price, total_qty, pos_id, now,
+                offsets_override=entry_offsets, split_override=entry_split,
+            )
+
+            # SL 가격 계산
+            sl_decimal = Decimal(str(sl_distance))
+            if side == PositionSide.LONG:
+                stop_loss = (current_price - sl_decimal).quantize(Decimal("0.01"))
+            else:
+                stop_loss = (current_price + sl_decimal).quantize(Decimal("0.01"))
 
             signal_details = signal.get("details") or {}
             signal_details["trade_tier"] = tier_name
@@ -263,9 +273,9 @@ class PaperTradingEngine:
                 stop_loss_price=stop_loss,
                 allocated_quantity=total_qty,
                 allocated_margin=margin,
-                tp_levels=tf_params.tp_levels,
-                exit_split=tf_params.exit_split,
-                sl_pct=tf_params.sl_pct,
+                tp_levels=[atr_params.tp1_atr, atr_params.tp2_atr, 999.0],  # ATR 배수
+                exit_split=atr_params.exit_split,
+                sl_atr_multiple=atr_params.sl_atr,
                 timeframe=signal_tf,
                 opened_at=now,
             )
@@ -377,6 +387,28 @@ class PaperTradingEngine:
 
                         if filled_exits == total_exits:
                             positions_to_close.append((pos_id, "take_profit"))
+
+                # 동적 트레일링 (TP2 이후 매 tick)
+                self._update_dynamic_trailing(pos, price)
+
+                # 시간 기반 청산
+                if pos.avg_entry_price and pos.status in ("opening", "open"):
+                    time_action = self._check_time_exit(pos, int(time.time() * 1000))
+                    if time_action == "time_exit":
+                        positions_to_close.append((pos_id, "time_exit"))
+                    elif time_action == "tighten_sl":
+                        be = self._breakeven_price(pos)
+                        atr = self._get_atr(pos.timeframe)
+                        if atr > 0:
+                            bump = Decimal(str(atr * 0.5))
+                            if pos.side == PositionSide.LONG:
+                                new_sl = be + bump
+                                if new_sl > pos.stop_loss_price:
+                                    pos.stop_loss_price = new_sl.quantize(Decimal("0.01"))
+                            else:
+                                new_sl = be - bump
+                                if new_sl < pos.stop_loss_price:
+                                    pos.stop_loss_price = new_sl.quantize(Decimal("0.01"))
 
                 # 손절 체크
                 if pos.avg_entry_price and pos.status in ("opening", "open"):
@@ -519,13 +551,17 @@ class PaperTradingEngine:
             self.account.last_daily_reset = today_start
             save_account(self.account)
 
-    def _should_replace(self, pos: Position, current_price: Decimal, now: int) -> bool:
-        """교체 조건 판단. 회의록: PnL < TP1이면 교체."""
-        # 쿨다운
+    def _should_replace(self, pos: Position, current_price: Decimal, now: int, new_signal: dict | None = None) -> bool:
+        """교체 조건: PnL < 0 AND 새 시그널이 기존보다 강해야."""
+        # 쿨다운 20분
         if now - self.account.last_replacement_at < self.settings.replacement_cooldown_ms:
             return False
-        if self.account.daily_replacements >= self.settings.max_daily_replacements:
-            return False
+
+        # 같은 시그널 패밀리 8시간 차단
+        if new_signal:
+            new_type = new_signal.get("type", "")
+            if new_type == pos.signal_type and now - pos.opened_at < self.settings.same_signal_block_ms:
+                return False
 
         if not pos.avg_entry_price or pos.allocated_margin <= 0:
             return True
@@ -533,9 +569,17 @@ class PaperTradingEngine:
         unrealized = self._calc_pnl(pos.side, pos.avg_entry_price, current_price, pos.total_quantity, pos.leverage)
         pnl_pct = float(unrealized / pos.allocated_margin * 100)
 
-        # TP1 레벨 가져오기
-        tp1 = pos.tp_levels[0] if pos.tp_levels else 7.0
-        return pnl_pct < tp1
+        # PnL < 0 (손실 중)이어야 교체 가능
+        if pnl_pct >= 0:
+            return False
+
+        # 새 시그널 강도 > 기존 + 0.5
+        if new_signal:
+            new_strength = new_signal.get("strength", 0)
+            if new_strength < pos.signal_strength + self.settings.replacement_min_score_diff:
+                return False
+
+        return True
 
     def _breakeven_price(self, pos: Position) -> Decimal:
         """수수료 포함 진짜 본전가 계산.
@@ -581,7 +625,7 @@ class PaperTradingEngine:
             pos.stop_loss_price = new_sl
 
     def _trailing_sl_after_tp(self, pos: Position, filled_exits: int):
-        """TP 체결 후 트레일링 SL. 회의록: TP1→본전, TP2→TP1가격."""
+        """TP 체결 후 트레일링. TP1→본전, TP2→TP1, TP3→동적 트레일."""
         total_exits = len(pos.exit_tranches)
         if filled_exits >= total_exits:
             return
@@ -589,13 +633,13 @@ class PaperTradingEngine:
         filled_exit_list = [t for t in pos.exit_tranches if t.status == OrderStatus.FILLED]
 
         if filled_exits == 1:
-            new_sl = self._breakeven_price(pos)  # 수수료 포함 본전
+            new_sl = self._breakeven_price(pos)
         elif filled_exits >= 2 and len(filled_exit_list) >= 2:
             sorted_prices = sorted(
                 [t.filled_price for t in filled_exit_list],
                 key=lambda p: p if pos.side == PositionSide.LONG else -p,
             )
-            new_sl = sorted_prices[0]  # 가장 낮은 TP 가격 (LONG기준 TP1)
+            new_sl = sorted_prices[0]
         else:
             return
 
@@ -604,6 +648,52 @@ class PaperTradingEngine:
             pos.stop_loss_price = new_sl
         elif pos.side == PositionSide.SHORT and new_sl < pos.stop_loss_price:
             pos.stop_loss_price = new_sl
+
+    def _update_dynamic_trailing(self, pos: Position, price: Decimal):
+        """TP2 이후 남은 30% 포지션 동적 트레일링. 매 tick 호출."""
+        filled_exits = sum(1 for t in pos.exit_tranches if t.status == OrderStatus.FILLED)
+        if filled_exits < 2:
+            return  # TP2 전이면 동적 트레일 안 함
+
+        atr = self._get_atr(pos.timeframe)
+        if atr <= 0:
+            return
+
+        # 최고/최저가 추적
+        if pos.side == PositionSide.LONG:
+            if pos.highest_price is None or price > pos.highest_price:
+                pos.highest_price = price
+            highest = pos.highest_price
+
+            # 수익이 5×ATR 초과면 1×ATR로 조임, 아니면 2×ATR
+            profit_in_atr = float(highest - pos.avg_entry_price) / atr if pos.avg_entry_price else 0
+            trail = atr * (1.0 if profit_in_atr > 5 else 2.0)
+            new_sl = (highest - Decimal(str(trail))).quantize(Decimal("0.01"))
+
+            # TP1 가격 하한
+            tp1_prices = [t.filled_price for t in pos.exit_tranches if t.status == OrderStatus.FILLED]
+            if tp1_prices:
+                floor = min(tp1_prices)
+                new_sl = max(new_sl, floor)
+
+            if new_sl > pos.stop_loss_price:
+                pos.stop_loss_price = new_sl
+        else:
+            if pos.lowest_price is None or price < pos.lowest_price:
+                pos.lowest_price = price
+            lowest = pos.lowest_price
+
+            profit_in_atr = float(pos.avg_entry_price - lowest) / atr if pos.avg_entry_price else 0
+            trail = atr * (1.0 if profit_in_atr > 5 else 2.0)
+            new_sl = (lowest + Decimal(str(trail))).quantize(Decimal("0.01"))
+
+            tp1_prices = [t.filled_price for t in pos.exit_tranches if t.status == OrderStatus.FILLED]
+            if tp1_prices:
+                ceiling = max(tp1_prices)
+                new_sl = min(new_sl, ceiling)
+
+            if new_sl < pos.stop_loss_price:
+                pos.stop_loss_price = new_sl
 
         # SL보다 불리한 pending entry 취소
         for et in pos.entry_tranches:
@@ -634,12 +724,14 @@ class PaperTradingEngine:
     def _create_entry_tranches(
         self, side: PositionSide, base_price: Decimal, total_qty: Decimal,
         pos_id: str, now: int, offsets_override: list[float] | None = None,
+        split_override: list[float] | None = None,
     ) -> list[TrancheOrder]:
         offsets = offsets_override or self.settings.entry_offsets
+        splits = split_override or self.settings.entry_split
         tranches = []
-        for i, (split, offset) in enumerate(zip(self.settings.entry_split, offsets)):
+        for i, (split, offset) in enumerate(zip(splits, offsets)):
             qty = (total_qty * Decimal(str(split))).quantize(Decimal("0.0001"), rounding=ROUND_DOWN)
-            if i == len(self.settings.entry_split) - 1:
+            if i == len(splits) - 1:
                 qty = total_qty - sum(t.quantity for t in tranches)
             if side == PositionSide.LONG:
                 target = base_price * (1 + Decimal(str(offset / 100)))
@@ -653,21 +745,27 @@ class PaperTradingEngine:
 
     def _create_exit_tranches(
         self, side: PositionSide, avg_entry: Decimal, total_qty: Decimal,
-        pos_id: str, now: int, tp_levels: list[float] | None = None,
+        pos_id: str, now: int, tp_atr_multiples: list[float] | None = None,
         exit_split: list[float] | None = None, leverage: int = 5,
+        tf: str = "1h",
     ) -> list[TrancheOrder]:
-        tp = tp_levels or [7.0, 14.0, 25.0]
-        split = exit_split or [0.50, 0.30, 0.20]
+        """ATR 기반 TP. tp_atr_multiples=[1.5, 3.0, 999.0] → 999=트레일링(매우 먼 가격)."""
+        tp_multiples = tp_atr_multiples or [1.5, 3.0, 999.0]
+        split = exit_split or [0.40, 0.30, 0.30]
+        atr = self._get_atr(tf)
+        if atr <= 0:
+            atr = float(avg_entry) * 0.01
+
         tranches = []
-        for i, (sp, margin_tp_pct) in enumerate(zip(split, tp)):
+        for i, (sp, tp_mult) in enumerate(zip(split, tp_multiples)):
             qty = (total_qty * Decimal(str(sp))).quantize(Decimal("0.0001"), rounding=ROUND_DOWN)
             if i == len(split) - 1:
                 qty = total_qty - sum(t.quantity for t in tranches)
-            price_tp_pct = margin_tp_pct / leverage
+            tp_distance = Decimal(str(atr * tp_mult))
             if side == PositionSide.LONG:
-                target = avg_entry * (1 + Decimal(str(price_tp_pct / 100)))
+                target = avg_entry + tp_distance
             else:
-                target = avg_entry * (1 - Decimal(str(price_tp_pct / 100)))
+                target = avg_entry - tp_distance
             tranches.append(TrancheOrder(
                 id=f"{pos_id}-x{i}", position_id=pos_id, side=side, is_entry=False,
                 target_price=target.quantize(Decimal("0.01")), quantity=qty, created_at=now,
@@ -727,6 +825,34 @@ class PaperTradingEngine:
             return sum(tr) / len(tr) if tr else 0
         return sum(tr[-period:]) / period
 
+    def _check_time_exit(self, pos: Position, now: int) -> str | None:
+        """시간 기반 청산. 평균 승리 시간의 2배→SL 조임, 4배→청산."""
+        winning = [t for t in self.trade_history[-20:] if float(t.realized_pnl) > 0]
+        if not winning:
+            avg_dur = 3_600_000  # 1시간 기본값
+        else:
+            avg_dur = sum(t.duration_seconds * 1000 for t in winning) / len(winning)
+        if avg_dur <= 0:
+            avg_dur = 3_600_000
+
+        age = now - pos.opened_at
+        if age > 4 * avg_dur:
+            return "time_exit"
+        if age > 2 * avg_dur:
+            return "tighten_sl"
+        return None
+
+    def _get_atr(self, tf: str) -> float:
+        """KlineStore에서 ATR 계산."""
+        try:
+            from app.binance.kline_store import kline_store
+            df = kline_store.get_dataframe("BTCUSDT", tf)
+            if df is None or len(df) < 15:
+                return 0
+            return self._calc_atr(df)
+        except Exception:
+            return 0
+
     def _should_fill_entry(self, t: TrancheOrder, price: Decimal) -> bool:
         if t.side == PositionSide.LONG:
             return price <= t.target_price
@@ -751,12 +877,17 @@ class PaperTradingEngine:
         pos.avg_entry_price = (total_value / total_qty).quantize(Decimal("0.01"))
         pos.total_quantity = total_qty
 
-        pos.stop_loss_price = self._calculate_stop_loss(
-            pos.side, pos.avg_entry_price, sl_pct=pos.sl_pct, leverage=pos.leverage
-        )
-        pos.stop_loss_price = self._apply_atr_guardrail(
-            pos.side, pos.avg_entry_price, pos.stop_loss_price, pos.timeframe, pos.leverage
-        )
+        # ATR 기반 SL 재계산
+        atr = self._get_atr(pos.timeframe)
+        if atr > 0:
+            sl_distance = Decimal(str(atr * pos.sl_atr_multiple))
+            sl_distance = max(sl_distance, Decimal(str(atr * self.settings.atr_sl_min_multiple)))
+            sl_distance = min(sl_distance, Decimal(str(atr * self.settings.atr_sl_max_multiple)))
+            if pos.side == PositionSide.LONG:
+                new_sl = (pos.avg_entry_price - sl_distance).quantize(Decimal("0.01"))
+            else:
+                new_sl = (pos.avg_entry_price + sl_distance).quantize(Decimal("0.01"))
+            pos.stop_loss_price = new_sl
 
         # Exit tranche 생성/재생성
         filled_exits = [t for t in pos.exit_tranches if t.status == OrderStatus.FILLED]
@@ -766,9 +897,10 @@ class PaperTradingEngine:
             pos.exit_tranches = filled_exits + self._create_exit_tranches(
                 pos.side, pos.avg_entry_price, remaining_qty,
                 pos.id, int(time.time() * 1000),
-                tp_levels=pos.tp_levels or None,
+                tp_atr_multiples=pos.tp_levels or None,
                 exit_split=pos.exit_split or None,
                 leverage=pos.leverage,
+                tf=pos.timeframe,
             )
 
     def _calc_fee(self, price: Decimal, qty: Decimal, is_market: bool = False) -> Decimal:

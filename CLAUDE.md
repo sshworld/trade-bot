@@ -47,11 +47,19 @@ Binance BTC/USDT 선물 자동 매매 시스템.
 ### 미완성 (TODO)
 - [ ] Binance Futures testnet API 키 재발급 필요 (현재 Spot testnet 키라 401)
 - [ ] LiveTradingEngine: 시뮬레이션 → 실제 Binance 주문 전환
-  - 주문 흐름: status="waiting" → Binance API → "filled"/"failed"
-  - client_order_id로 reconciliation
-- [ ] Equity Curve 포지션 사이징 (20거래 MA)
 - [ ] Telegram 알림 연동 (alert_sender.py 코드 있음, .env에 token 필요)
-- [ ] 실거래 전환 시 일일 손실 강화 (-2/-3/-5%)
+
+### 2026-04-10 변경사항 (적용 완료)
+- ATR 기반 동적 TP/SL (고정% 제거)
+- 지표 패밀리 중복 제거 (3+ 독립 패밀리 필수)
+- 진입: 물타기→확인 추가 (0%, +0.3%, +0.6%)
+- TP3: 무제한 트레일링 (TP2 이후 동적 trail)
+- 시간 기반 청산 (2×평균→SL 조임, 4×평균→청산)
+- 교체: 무제한, PnL < 0 + 시그널 강도 차이 0.5, 20분 쿨다운
+- 일일 거래/교체 횟수 제한 제거
+- 일일 손실 -3% 사이즈 절반, -5% 당일 중단 (48시간 제거)
+- 속도 제한: 60분 3연속 SL → 30분 일시 중단
+- MACD 히스토그램 weight 0.5→0.3
 
 ## 확정 파라미터 (Buffett×Dimon 회의록)
 

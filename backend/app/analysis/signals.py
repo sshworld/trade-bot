@@ -26,7 +26,8 @@ class Score:
     direction: str  # "bullish" | "bearish" | "neutral"
     weight: float
     reason: str
-    is_lagging_state: bool = False  # MA_align, EMA_pos 등 지연 상태 지표
+    family: str = ""           # 지표 패밀리 (macd, rsi, bb, ma, elliott, vp, fib)
+    is_lagging_state: bool = False
 
 
 # ── 지표별 Scorer ──────────────────────────────────────────────
@@ -36,9 +37,9 @@ def score_rsi(df: pd.DataFrame, cache: dict) -> list[Score]:
     v = rsi["value"]
     # 극단값만 (40~60 중립구간 제거 — 노이즈)
     if v < 30:
-        return [Score("RSI", "bullish", 1.5, f"RSI {v} 과매도 구간")]
+        return [Score("RSI", "bullish", 1.5, f"RSI {v} 과매도 구간", family="rsi")]
     if v > 70:
-        return [Score("RSI", "bearish", 1.5, f"RSI {v} 과매수 구간")]
+        return [Score("RSI", "bearish", 1.5, f"RSI {v} 과매수 구간", family="rsi")]
     return []
 
 
@@ -50,14 +51,14 @@ def score_macd(df: pd.DataFrame, cache: dict) -> list[Score]:
     scores = []
 
     if prev_macd["macd"] <= prev_macd["signal"] and macd["macd"] > macd["signal"]:
-        scores.append(Score("MACD", "bullish", 1.5, "MACD 골든 크로스"))
+        scores.append(Score("MACD", "bullish", 1.5, "MACD 골든 크로스", family="macd"))
     elif prev_macd["macd"] >= prev_macd["signal"] and macd["macd"] < macd["signal"]:
-        scores.append(Score("MACD", "bearish", 1.5, "MACD 데드 크로스"))
+        scores.append(Score("MACD", "bearish", 1.5, "MACD 데드 크로스", family="macd"))
 
     if macd["histogram"] > 0 and macd["histogram"] > prev_macd["histogram"]:
-        scores.append(Score("MACD_hist", "bullish", 0.5, "MACD 히스토그램 상승 중"))
+        scores.append(Score("MACD_hist", "bullish", 0.3, "MACD 히스토그램 상승 중", family="macd"))
     elif macd["histogram"] < 0 and macd["histogram"] < prev_macd["histogram"]:
-        scores.append(Score("MACD_hist", "bearish", 0.5, "MACD 히스토그램 하락 중"))
+        scores.append(Score("MACD_hist", "bearish", 0.3, "MACD 히스토그램 하락 중", family="macd"))
 
     return scores
 
@@ -65,9 +66,9 @@ def score_macd(df: pd.DataFrame, cache: dict) -> list[Score]:
 def score_bollinger(df: pd.DataFrame, cache: dict) -> list[Score]:
     bb = cache.setdefault("bb", compute_bollinger(df))
     if bb["position"] == "below_lower":
-        return [Score("BB", "bullish", 1.5, f"볼린저밴드 하단 이탈 (하단: {bb['lower']:.0f})")]
+        return [Score("BB", "bullish", 1.5, f"볼린저밴드 하단 이탈 (하단: {bb['lower']:.0f})", family="bb")]
     if bb["position"] == "above_upper":
-        return [Score("BB", "bearish", 1.5, f"볼린저밴드 상단 이탈 (상단: {bb['upper']:.0f})")]
+        return [Score("BB", "bearish", 1.5, f"볼린저밴드 상단 이탈 (상단: {bb['upper']:.0f})", family="bb")]
     return []
 
 
@@ -82,27 +83,27 @@ def score_moving_averages(df: pd.DataFrame, cache: dict) -> list[Score]:
     if ma["sma_20"] > ma["sma_50"]:
         scores.append(Score("MA_align", "bullish", 0.7,
                             f"이동평균 정배열 (SMA20 {ma['sma_20']:.0f} > SMA50 {ma['sma_50']:.0f})",
-                            is_lagging_state=True))
+                            family="ma", is_lagging_state=True))
     else:
         scores.append(Score("MA_align", "bearish", 0.7,
                             f"이동평균 역배열 (SMA20 {ma['sma_20']:.0f} < SMA50 {ma['sma_50']:.0f})",
-                            is_lagging_state=True))
+                            family="ma", is_lagging_state=True))
 
     # SMA 크로스 — 이벤트이므로 높은 가중치
     sma20 = cache.setdefault("sma20_series", df["close"].rolling(20).mean())
     sma50 = cache.setdefault("sma50_series", df["close"].rolling(50).mean())
     if sma20.iloc[-2] <= sma50.iloc[-2] and sma20.iloc[-1] > sma50.iloc[-1]:
-        scores.append(Score("MA_cross", "bullish", 1.5, "SMA 20/50 골든 크로스"))
+        scores.append(Score("MA_cross", "bullish", 1.5, "SMA 20/50 골든 크로스", family="ma"))
     elif sma20.iloc[-2] >= sma50.iloc[-2] and sma20.iloc[-1] < sma50.iloc[-1]:
-        scores.append(Score("MA_cross", "bearish", 1.5, "SMA 20/50 데드 크로스"))
+        scores.append(Score("MA_cross", "bearish", 1.5, "SMA 20/50 데드 크로스", family="ma"))
 
     # EMA 구조 — 지연 상태지표
     if current_price > ma["ema_12"] > ma["ema_26"]:
         scores.append(Score("EMA_pos", "bullish", 0.5, "가격 > EMA12 > EMA26 상승 구조",
-                            is_lagging_state=True))
+                            family="ma", is_lagging_state=True))
     elif current_price < ma["ema_12"] < ma["ema_26"]:
         scores.append(Score("EMA_pos", "bearish", 0.5, "가격 < EMA12 < EMA26 하락 구조",
-                            is_lagging_state=True))
+                            family="ma", is_lagging_state=True))
 
     return scores
 
@@ -122,10 +123,10 @@ def score_fibonacci(df: pd.DataFrame, cache: dict) -> list[Score]:
 
     if fib["trend"] == "uptrend":
         return [Score("FIB", "bullish", 1.0,
-                       f"피보나치 {nearest['ratio']} 지지 ({nearest['price']:.0f}) 근접")]
+                       f"피보나치 {nearest['ratio']} 지지 ({nearest['price']:.0f}) 근접", family="fib")]
     if fib["trend"] == "downtrend":
         return [Score("FIB", "bearish", 1.0,
-                       f"피보나치 {nearest['ratio']} 저항 ({nearest['price']:.0f}) 근접")]
+                       f"피보나치 {nearest['ratio']} 저항 ({nearest['price']:.0f}) 근접", family="fib")]
     return []
 
 
@@ -138,9 +139,9 @@ def score_elliott(df: pd.DataFrame, cache: dict) -> list[Score]:
     if impulse["pattern"] == "bullish_impulse":
         wave = impulse.get("current_wave", 0)
         if wave <= 3:
-            return [Score("ELLIOTT", "bullish", 1.0, f"엘리엇 상승 임펄스 Wave {wave} 진행 중")]
+            return [Score("ELLIOTT", "bullish", 1.0, f"엘리엇 상승 임펄스 Wave {wave} 진행 중", family="elliott")]
         if wave >= 5:
-            return [Score("ELLIOTT", "bearish", 0.8, "엘리엇 5파 완성 - 조정 임박")]
+            return [Score("ELLIOTT", "bearish", 0.8, "엘리엇 5파 완성 - 조정 임박", family="elliott")]
     return []
 
 
@@ -153,10 +154,10 @@ def score_volume_profile(df: pd.DataFrame, cache: dict) -> list[Score]:
 
     if current_price < va_low:
         return [Score("VP", "bullish", 0.8,
-                       f"Value Area 하단({va_low:.0f}) 아래 → POC({poc:.0f})로 회귀 가능")]
+                       f"Value Area 하단({va_low:.0f}) 아래 → POC({poc:.0f})로 회귀 가능", family="vp")]
     if current_price > va_high:
         return [Score("VP", "bearish", 0.8,
-                       f"Value Area 상단({va_high:.0f}) 위 → POC({poc:.0f})로 회귀 가능")]
+                       f"Value Area 상단({va_high:.0f}) 위 → POC({poc:.0f})로 회귀 가능", family="vp")]
     return []
 
 
@@ -218,6 +219,22 @@ def generate_signals(
     bull_score = sum(s.weight for s in bullish)
     bear_score = sum(s.weight for s in bearish)
 
+    # 패밀리 중복 제거: 같은 family에서 가장 높은 weight만 카운트
+    def _dedup_by_family(scores: list[Score]) -> list[Score]:
+        family_best: dict[str, Score] = {}
+        no_family: list[Score] = []
+        for s in scores:
+            if not s.family:
+                no_family.append(s)
+                continue
+            if s.family not in family_best or s.weight > family_best[s.family].weight:
+                family_best[s.family] = s
+        return list(family_best.values()) + no_family
+
+    def _count_unique_families(scores: list[Score]) -> int:
+        families = set(s.family for s in scores if s.family)
+        return len(families)
+
     # TF별 임계값
     thresh = CONFLUENCE_THRESHOLDS.get(timeframe, DEFAULT_THRESHOLD)
     min_count = thresh["min_count"]
@@ -237,9 +254,11 @@ def generate_signals(
                 total += s.weight
         return total
 
-    # Bullish confluence
+    # Bullish confluence — 패밀리 중복 제거 후 3+ 독립 패밀리 필수
+    bull_dedup = _dedup_by_family(bullish)
+    bull_families = _count_unique_families(bullish)
     if (
-        len(bullish) >= min_count
+        bull_families >= min_count
         and bull_score >= min_score
         and _has_strong_trigger(bullish)
     ):
@@ -264,9 +283,11 @@ def generate_signals(
                 },
             })
 
-    # Bearish confluence
+    # Bearish confluence — 패밀리 중복 제거
+    bear_dedup = _dedup_by_family(bearish)
+    bear_families = _count_unique_families(bearish)
     if (
-        len(bearish) >= min_count
+        bear_families >= min_count
         and bear_score >= min_score
         and _has_strong_trigger(bearish)
     ):

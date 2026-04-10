@@ -1,6 +1,6 @@
 """트레이딩 데이터 모델 + 설정.
 
-파라미터는 2026-04-08 Buffett×Dimon 회의록 기준.
+파라미터는 2026-04-10 Buffett×Dimon 회의록 기준.
 변경 시 반드시 전문가 토론 → 회의록 → 승인 후 적용.
 """
 
@@ -19,6 +19,7 @@ class OrderStatus(str, Enum):
     PENDING = "pending"
     FILLED = "filled"
     CANCELLED = "cancelled"
+    WAITING = "waiting"  # Binance 주문 전송 중 (reconciliation용)
 
 
 class TrancheOrder(BaseModel):
@@ -30,6 +31,8 @@ class TrancheOrder(BaseModel):
     quantity: Decimal
     filled_price: Decimal | None = None
     status: OrderStatus = OrderStatus.PENDING
+    client_order_id: str | None = None
+    binance_order_id: str | None = None
     created_at: int
     filled_at: int | None = None
 
@@ -52,9 +55,11 @@ class Position(BaseModel):
     total_quantity: Decimal = Decimal("0")
     allocated_quantity: Decimal = Decimal("0")
     allocated_margin: Decimal = Decimal("0")
-    tp_levels: list[float] = []
+    tp_levels: list[float] = []       # ATR 배수 [1.5, 3.0, 999]
     exit_split: list[float] = []
-    sl_pct: float = 5.0
+    sl_atr_multiple: float = 2.0      # SL ATR 배수
+    highest_price: Decimal | None = None  # 트레일링용 최고가 추적
+    lowest_price: Decimal | None = None   # 트레일링용 최저가 추적
     timeframe: str = "1h"
     realized_pnl: Decimal = Decimal("0")
     total_fees: Decimal = Decimal("0")
@@ -87,19 +92,19 @@ class AccountState(BaseModel):
     balance: Decimal = Decimal("1000")
     initial_capital: Decimal = Decimal("1000")
     equity: Decimal = Decimal("1000")
-    peak_equity: Decimal = Decimal("1000")     # 고점 추적 (drawdown용)
+    peak_equity: Decimal = Decimal("1000")
     margin_used: Decimal = Decimal("0")
     unrealized_pnl: Decimal = Decimal("0")
     total_realized_pnl: Decimal = Decimal("0")
     total_fees: Decimal = Decimal("0")
     total_trades: int = 0
     winning_trades: int = 0
-    daily_pnl: Decimal = Decimal("0")          # 금일 실현 PnL
-    daily_start_balance: Decimal = Decimal("1000")  # 금일 00시 잔고
-    daily_trades: int = 0                       # 금일 거래 수
-    daily_replacements: int = 0                 # 금일 교체 수
-    last_replacement_at: int = 0                # 마지막 교체 시각
-    last_daily_reset: int = 0                   # 마지막 일일 리셋 시각
+    daily_pnl: Decimal = Decimal("0")
+    daily_start_balance: Decimal = Decimal("1000")
+    daily_trades: int = 0
+    daily_replacements: int = 0
+    last_replacement_at: int = 0
+    last_daily_reset: int = 0
 
 
 class TradeTier(str, Enum):
@@ -114,35 +119,26 @@ class TrendContext(BaseModel):
     updated_at: int = 0
 
 
-# ── TF별 TP/SL 설정 (회의록 2026-04-08 확정) ──────────────────
+# ── ATR 기반 TP/SL 설정 (2026-04-10 회의록) ───────────────────
 
-class TFParams(BaseModel):
-    """TF별 TP/SL/Split 파라미터. 마진 기준 %."""
-    tp_levels: list[float]
-    sl_pct: float
+class TFATRParams(BaseModel):
+    """TF별 ATR 배수 기반 TP/SL."""
+    sl_atr: float          # SL = N × ATR
+    tp1_atr: float         # TP1 = N × ATR
+    tp2_atr: float         # TP2 = N × ATR
+    # TP3 = 트레일링 (상한 없음)
     exit_split: list[float]
 
 
-# WITH_TREND TF별
-TF_PARAMS_WITH_TREND: dict[str, TFParams] = {
-    "30m": TFParams(tp_levels=[5.0, 10.0, 18.0], sl_pct=3.5, exit_split=[0.50, 0.30, 0.20]),
-    "1h":  TFParams(tp_levels=[7.0, 14.0, 25.0], sl_pct=5.0, exit_split=[0.50, 0.30, 0.20]),
-    "4h":  TFParams(tp_levels=[10.0, 20.0, 35.0], sl_pct=7.0, exit_split=[0.50, 0.30, 0.20]),
-}
-
-# COUNTER_TREND & CONSENSUS TF별
-TF_PARAMS_COUNTER: dict[str, TFParams] = {
-    "30m": TFParams(tp_levels=[3.5, 7.0, 12.0], sl_pct=3.0, exit_split=[0.50, 0.30, 0.20]),
-    "1h":  TFParams(tp_levels=[5.0, 10.0, 18.0], sl_pct=4.0, exit_split=[0.50, 0.30, 0.20]),
-    "4h":  TFParams(tp_levels=[7.0, 14.0, 25.0], sl_pct=5.5, exit_split=[0.50, 0.30, 0.20]),
+TF_ATR_PARAMS: dict[str, TFATRParams] = {
+    "30m": TFATRParams(sl_atr=1.5, tp1_atr=1.5, tp2_atr=2.5, exit_split=[0.40, 0.30, 0.30]),
+    "1h":  TFATRParams(sl_atr=2.0, tp1_atr=1.5, tp2_atr=3.0, exit_split=[0.40, 0.30, 0.30]),
+    "4h":  TFATRParams(sl_atr=2.5, tp1_atr=2.0, tp2_atr=4.0, exit_split=[0.40, 0.30, 0.30]),
 }
 
 
-def get_tf_params(tf: str, tier: str) -> TFParams:
-    """TF + tier에 맞는 파라미터 반환."""
-    if tier == "with_trend":
-        return TF_PARAMS_WITH_TREND.get(tf, TF_PARAMS_WITH_TREND["1h"])
-    return TF_PARAMS_COUNTER.get(tf, TF_PARAMS_COUNTER["1h"])
+def get_tf_atr_params(tf: str) -> TFATRParams:
+    return TF_ATR_PARAMS.get(tf, TF_ATR_PARAMS["1h"])
 
 
 # ── Counter-Trend 추가 조건 ────────────────────────────────────
@@ -151,8 +147,9 @@ class CounterTrendSettings(BaseModel):
     extra_min_count: int = 1
     extra_min_score: float = 1.0
     min_strong_triggers: int = 2
-    entry_offsets: list[float] = [0.0, -0.3, -0.6]
-    max_counter_positions: int = 1
+    # Counter: 2 tranche, 확인 아닌 소폭 물타기
+    entry_offsets: list[float] = [0.0, -0.3]
+    entry_split: list[float] = [0.60, 0.40]
 
 
 # ── 메인 설정 ──────────────────────────────────────────────────
@@ -160,7 +157,7 @@ class CounterTrendSettings(BaseModel):
 class TradingSettings(BaseModel):
     initial_capital: Decimal = Decimal("1000")
 
-    # 레버리지: 3-5x (회의록 확정)
+    # 레버리지: 3-5x
     min_leverage: int = 3
     max_leverage: int = 5
 
@@ -168,24 +165,29 @@ class TradingSettings(BaseModel):
     fee_maker_pct: float = 0.02
     fee_taker_pct: float = 0.04
 
-    # 진입 분할
-    entry_offsets: list[float] = [0.0, -0.5, -1.0]
-    entry_split: list[float] = [0.33, 0.33, 0.34]
+    # 진입: 확인 추가 (물타기 아님)
+    # WITH_TREND: 50% 즉시, 30% +0.3% 확인, 20% +0.6% 확인
+    entry_offsets: list[float] = [0.0, 0.3, 0.6]
+    entry_split: list[float] = [0.50, 0.30, 0.20]
 
     # 포지션
-    max_open_positions: int = 1          # 동시 1개 (회의록 확정)
-    risk_per_trade_pct: float = 2.0      # 거래당 자본 2% 리스크
+    max_open_positions: int = 1
+    risk_per_trade_pct: float = 2.0
 
-    # 일일 제한
-    max_daily_trades: int = 5
+    # 일일 제한 — 횟수 무제한, 손실만 제한
     daily_loss_tier1_pct: float = 3.0    # -3% → 사이즈 절반
-    daily_loss_tier2_pct: float = 5.0    # -5% → 당일 거래 중단
-    daily_loss_tier3_pct: float = 8.0    # -8% → 48시간 중단
+    daily_loss_tier2_pct: float = 5.0    # -5% → 당일 중단 (다음 날 00시 복귀)
     drawdown_halt_pct: float = 10.0      # 고점 대비 -10% → 중단
 
-    # 교체
-    replacement_cooldown_ms: int = 1_800_000  # 30분
-    max_daily_replacements: int = 3
+    # 교체 — 무제한, 품질 게이트
+    replacement_cooldown_ms: int = 1_200_000  # 20분
+    replacement_min_score_diff: float = 0.5   # 새 시그널 > 기존 + 0.5
+    same_signal_block_ms: int = 28_800_000    # 같은 시그널 8시간 차단
+
+    # 속도 제한 (velocity brake)
+    velocity_max_consecutive_sl: int = 3      # 60분 내 3연속 SL
+    velocity_window_ms: int = 3_600_000       # 60분
+    velocity_pause_ms: int = 1_800_000        # 30분 일시 중단
 
     # ATR 가드레일
     atr_sl_min_multiple: float = 1.5
