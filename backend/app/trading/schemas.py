@@ -122,18 +122,18 @@ class TrendContext(BaseModel):
 # ── ATR 기반 TP/SL 설정 (2026-04-10 회의록) ───────────────────
 
 class TFATRParams(BaseModel):
-    """TF별 ATR 배수 기반 TP/SL."""
-    sl_atr: float          # SL = N × ATR
-    tp1_atr: float         # TP1 = N × ATR
-    tp2_atr: float         # TP2 = N × ATR
-    # TP3 = 트레일링 (상한 없음)
+    """TF별 ATR 배수 기반 TP/SL. 단타 최적화."""
+    sl_atr: float
+    tp1_atr: float
+    tp2_atr: float
+    tp3_atr: float         # 하드캡 (무한 트레일 제거)
     exit_split: list[float]
 
 
 TF_ATR_PARAMS: dict[str, TFATRParams] = {
-    "30m": TFATRParams(sl_atr=1.5, tp1_atr=1.5, tp2_atr=2.5, exit_split=[0.40, 0.30, 0.30]),
-    "1h":  TFATRParams(sl_atr=2.0, tp1_atr=1.5, tp2_atr=3.0, exit_split=[0.40, 0.30, 0.30]),
-    "4h":  TFATRParams(sl_atr=2.5, tp1_atr=2.0, tp2_atr=4.0, exit_split=[0.40, 0.30, 0.30]),
+    "30m": TFATRParams(sl_atr=1.2, tp1_atr=1.0, tp2_atr=1.8, tp3_atr=3.0, exit_split=[0.50, 0.30, 0.20]),
+    "1h":  TFATRParams(sl_atr=1.5, tp1_atr=1.2, tp2_atr=2.0, tp3_atr=3.5, exit_split=[0.50, 0.30, 0.20]),
+    "4h":  TFATRParams(sl_atr=2.0, tp1_atr=1.5, tp2_atr=2.5, tp3_atr=4.0, exit_split=[0.50, 0.30, 0.20]),
 }
 
 

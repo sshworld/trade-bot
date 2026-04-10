@@ -273,7 +273,7 @@ class PaperTradingEngine:
                 stop_loss_price=stop_loss,
                 allocated_quantity=total_qty,
                 allocated_margin=margin,
-                tp_levels=[atr_params.tp1_atr, atr_params.tp2_atr, 999.0],  # ATR 배수
+                tp_levels=[atr_params.tp1_atr, atr_params.tp2_atr, atr_params.tp3_atr],
                 exit_split=atr_params.exit_split,
                 sl_atr_multiple=atr_params.sl_atr,
                 timeframe=signal_tf,

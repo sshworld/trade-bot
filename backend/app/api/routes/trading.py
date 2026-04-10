@@ -54,6 +54,32 @@ async def update_settings(updates: dict):
     return {"settings": settings.model_dump(mode="json")}
 
 
+@router.post("/recalculate")
+async def recalculate_positions():
+    """열린 포지션의 TP/SL을 현재 ATR 기준으로 재계산."""
+    from app.trading.persistence import save_position
+    from app.trading.schemas import get_tf_atr_params
+    results = []
+    for pos_id, pos in trading_engine.open_positions.items():
+        old_sl = str(pos.stop_loss_price)
+        old_tp = [str(t.target_price) for t in pos.exit_tranches]
+        # ATR 파라미터 갱신
+        atr_params = get_tf_atr_params(pos.timeframe)
+        pos.tp_levels = [atr_params.tp1_atr, atr_params.tp2_atr, atr_params.tp3_atr]
+        pos.exit_split = list(atr_params.exit_split)
+        pos.sl_atr_multiple = atr_params.sl_atr
+        trading_engine._recalculate_position(pos)
+        save_position(pos)
+        results.append({
+            "id": pos_id,
+            "old_sl": old_sl,
+            "new_sl": str(pos.stop_loss_price),
+            "old_tp": old_tp,
+            "new_tp": [str(t.target_price) for t in pos.exit_tranches],
+        })
+    return {"recalculated": results}
+
+
 @router.post("/reset")
 async def reset_account():
     trading_engine.reset()
