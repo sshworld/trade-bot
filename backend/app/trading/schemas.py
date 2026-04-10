@@ -194,3 +194,13 @@ class TradingSettings(BaseModel):
     atr_sl_max_multiple: float = 4.0
 
     counter_trend: CounterTrendSettings = CounterTrendSettings()
+
+
+class LiveTradingSettings(TradingSettings):
+    """실거래용 리스크 파라미터 (2026-04-11 회의록 기준: 순수 % 체계)."""
+    drawdown_halt_pct: float = 7.0        # Peak drawdown -7% → 당일 정지
+    slippage_buffer: float = 0.95         # 계산 사이즈의 95%만 사용
+    min_notional: Decimal = Decimal("100")  # Binance 최소 노셔널 (자연 하한)
+    balance_cache_ttl_sec: float = 5.0    # 잔고 캐시 5초
+    reconciliation_interval_sec: int = 5  # 주문 조회 주기
+    balance_discrepancy_pct: float = 1.0  # 잔고 차이 1% 초과 시 경고

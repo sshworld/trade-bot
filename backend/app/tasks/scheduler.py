@@ -211,6 +211,15 @@ async def anomaly_heartbeat():
         await trading_engine.alert_sender.send(alert)
 
 
+async def order_reconciliation():
+    """Live 엔진: 바이낸스 주문 상태 동기화 (5초마다)."""
+    if hasattr(trading_engine, "reconcile_orders"):
+        try:
+            await trading_engine.reconcile_orders()
+        except Exception as e:
+            logger.error(f"[RECONCILE] failed: {e}")
+
+
 def start_scheduler(mgr: ConnectionManager):
     scheduler.add_job(
         signal_scan, "interval", seconds=1,
@@ -222,6 +231,16 @@ def start_scheduler(mgr: ConnectionManager):
         id="anomaly_heartbeat",
         max_instances=1,
     )
+
+    # Live 엔진이면 reconciliation 루프 추가
+    if hasattr(trading_engine, "reconcile_orders"):
+        scheduler.add_job(
+            order_reconciliation, "interval", seconds=5,
+            id="order_reconciliation",
+            max_instances=1,
+        )
+        logger.info("Reconciliation scheduler added (every 5s)")
+
     scheduler.start()
     logger.info(f"Scheduler started: signal scan every 1s on {SIGNAL_TIMEFRAMES} (local, no API)")
 

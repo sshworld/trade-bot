@@ -139,6 +139,24 @@ class AlertSender:
         else:
             logger.info(f"Webhook alert sent: [{alert.severity}] {alert.rule_name}")
 
+    async def _send_telegram_text(self, text: str):
+        """간단한 텍스트 메시지 직접 전송 (AnomalyAlert 없이)."""
+        if not self._telegram_token or not self._telegram_chat_id:
+            logger.warning("Telegram not configured, skipping message")
+            return
+        if len(text) > 4000:
+            text = text[:3997] + "..."
+        url = f"https://api.telegram.org/bot{self._telegram_token}/sendMessage"
+        client = await self._get_client()
+        resp = await client.post(url, json={
+            "chat_id": self._telegram_chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        })
+        if resp.status_code != 200:
+            logger.error(f"Telegram send error: {resp.status_code} {resp.text}")
+
     async def close(self):
         if self._client and not self._client.is_closed:
             await self._client.aclose()

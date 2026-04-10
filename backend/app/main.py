@@ -20,6 +20,11 @@ async def lifespan(app: FastAPI):
     # Startup
     await kline_store.initialize("BTCUSDT")
 
+    # Live 엔진이면 바이낸스 잔고/포지션 동기화
+    from app.trading.engine import trading_engine
+    if hasattr(trading_engine, "initialize"):
+        await trading_engine.initialize()
+
     consumer = BinanceWSConsumer(manager)
     consumer_task = asyncio.create_task(consumer.start())
 

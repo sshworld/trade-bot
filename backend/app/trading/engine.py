@@ -1015,4 +1015,13 @@ class PaperTradingEngine:
         save_account(self.account)
 
 
-trading_engine = PaperTradingEngine()
+def _create_engine() -> PaperTradingEngine:
+    if not settings.binance_testnet and settings.binance_api_key:
+        from app.trading.live_engine import LiveTradingEngine
+        logger.info("Creating LiveTradingEngine (mainnet)")
+        return LiveTradingEngine()
+    logger.info("Creating PaperTradingEngine (testnet/no key)")
+    return PaperTradingEngine()
+
+
+trading_engine = _create_engine()
