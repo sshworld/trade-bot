@@ -75,10 +75,28 @@ Binance WebSocket ──→ KlineStore ──→ 1초 전 TF 분석
 ```bash
 git clone https://github.com/sshworld/trade-bot.git
 cd trade-bot
-make setup      # API 키 입력 + 의존성 + 연결 테스트
+make setup      # 아래 대화형 설정 진행
 make backend    # 터미널 1
 make frontend   # 터미널 2
 # http://localhost:3000
+```
+
+### Setup 과정
+
+```
+[Step 1] 거래 모드 선택
+
+  1) Testnet (모의거래) — 가상 자금으로 테스트
+     키 발급: https://testnet.binancefuture.com
+
+  2) Mainnet (실거래) — 실제 자금으로 거래
+     키 발급: https://www.binance.com → API Management
+
+  선택 (1 또는 2): _
+
+[Step 2] API Key / Secret Key 입력
+[Step 3~5] 의존성 설치 (자동)
+[Step 6] Binance 연결 테스트
 ```
 
 ---
