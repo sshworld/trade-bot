@@ -95,8 +95,10 @@ make frontend   # 터미널 2
   선택 (1 또는 2): _
 
 [Step 2] API Key / Secret Key 입력
-[Step 3~5] 의존성 설치 (자동)
-[Step 6] Binance 연결 테스트
+[Step 3~4] 의존성 설치 (자동)
+[Step 5] 알림 채널 설정 (Telegram, 선택)
+[Step 6] 데이터 디렉토리 생성
+[Step 7] Binance 연결 테스트
 ```
 
 ---
