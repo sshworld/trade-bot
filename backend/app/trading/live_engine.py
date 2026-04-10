@@ -760,9 +760,8 @@ class LiveTradingEngine(PaperTradingEngine):
     # ── SL 사전 배치 (STOP_MARKET + reduceOnly) ─────────────
 
     async def _place_sl_order(self, pos: Position):
-        """SL을 바이낸스에 STOP_MARKET으로 사전 배치."""
+        """SL을 바이낸스 Algo API (STOP_MARKET)로 사전 배치."""
         close_side = "SELL" if pos.side == PositionSide.LONG else "BUY"
-        sl_client_id = f"{pos.id}-sl"
 
         # 기존 SL 주문 취소
         await self._cancel_sl_order(pos)
@@ -774,35 +773,26 @@ class LiveTradingEngine(PaperTradingEngine):
             return
 
         try:
-            params = {
-                "symbol": "BTCUSDT",
-                "side": close_side,
-                "type": "STOP_MARKET",
-                "quantity": str(remaining.quantize(Decimal("0.001"))),
-                "stopPrice": str(pos.stop_loss_price.quantize(Decimal("0.10"))),
-                "reduceOnly": "true",
-                "newClientOrderId": sl_client_id,
-            }
-            signed = binance_client._sign(params)
-            resp = await binance_client._retry_request(
-                binance_client.client, "post", "/fapi/v1/order",
-                params=signed, headers=binance_client._auth_headers(),
+            result = await binance_client.place_algo_order(
+                symbol="BTCUSDT",
+                side=close_side,
+                order_type="STOP_MARKET",
+                trigger_price=pos.stop_loss_price.quantize(Decimal("0.10")),
+                quantity=remaining.quantize(Decimal("0.001")),
             )
-            result = resp.json()
             pos.signal_details = pos.signal_details or {}
-            pos.signal_details["sl_order_client_id"] = sl_client_id
-            pos.signal_details["sl_order_id"] = str(result.get("orderId", ""))
-            logger.info(f"[LIVE] SL order placed: {close_side} STOP_MARKET @ {pos.stop_loss_price} qty={remaining}")
+            pos.signal_details["sl_algo_id"] = str(result.get("algoId", ""))
+            logger.info(f"[LIVE] SL algo order placed: {close_side} STOP_MARKET trigger={pos.stop_loss_price} qty={remaining}")
         except Exception as e:
-            logger.error(f"[LIVE] SL order placement failed: {e}")
+            logger.error(f"[LIVE] SL algo order failed: {e}")
 
     async def _cancel_sl_order(self, pos: Position):
-        """기존 SL 주문 취소."""
-        sl_client_id = (pos.signal_details or {}).get("sl_order_client_id")
-        if sl_client_id:
+        """기존 SL algo 주문 취소."""
+        algo_id = (pos.signal_details or {}).get("sl_algo_id")
+        if algo_id:
             try:
-                await binance_client.cancel_order("BTCUSDT", sl_client_id)
-                logger.info(f"[LIVE] SL order cancelled: {sl_client_id}")
+                await binance_client.cancel_algo_order("BTCUSDT", algo_id)
+                logger.info(f"[LIVE] SL algo order cancelled: {algo_id}")
             except Exception:
                 pass
 

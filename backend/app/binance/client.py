@@ -192,6 +192,61 @@ class BinanceClient:
         except Exception:
             return None
 
+    # ── Algo Order API (STOP_MARKET 등 조건부 주문) ──────────
+
+    async def place_algo_order(
+        self, symbol: str, side: str, order_type: str,
+        trigger_price: Decimal, quantity: Decimal | None = None,
+        close_position: bool = False, client_order_id: str | None = None,
+    ) -> dict:
+        """Algo 조건부 주문 (STOP_MARKET, TAKE_PROFIT_MARKET 등)."""
+        params: dict = {
+            "algoType": "CONDITIONAL",
+            "symbol": symbol,
+            "side": side,
+            "type": order_type,
+            "triggerPrice": str(trigger_price),
+        }
+        if close_position:
+            params["closePosition"] = "true"
+        elif quantity:
+            params["quantity"] = str(quantity)
+        if client_order_id:
+            params["newClientOrderId"] = client_order_id
+
+        params = self._sign(params)
+        resp = await self._retry_request(
+            self.client, "post", "/fapi/v1/algoOrder",
+            params=params, headers=self._auth_headers(),
+        )
+        result = resp.json()
+        logger.info(f"Algo order placed: {side} {order_type} trigger={trigger_price} → algoId={result.get('algoId')}")
+        return result
+
+    async def cancel_algo_order(self, symbol: str, algo_id: str) -> dict | None:
+        """Algo 주문 취소."""
+        try:
+            params = self._sign({"symbol": symbol, "algoId": algo_id})
+            resp = await self._retry_request(
+                self.client, "delete", "/fapi/v1/algoOrder",
+                params=params, headers=self._auth_headers(),
+            )
+            return resp.json()
+        except Exception:
+            return None
+
+    async def get_algo_order(self, symbol: str, algo_id: str) -> dict | None:
+        """Algo 주문 상태 조회."""
+        try:
+            params = self._sign({"symbol": symbol, "algoId": algo_id})
+            resp = await self._retry_request(
+                self.client, "get", "/fapi/v1/algoOrder",
+                params=params, headers=self._auth_headers(),
+            )
+            return resp.json()
+        except Exception:
+            return None
+
     async def set_leverage(self, symbol: str, leverage: int) -> dict:
         """레버리지 설정."""
         params = self._sign({"symbol": symbol, "leverage": leverage})
