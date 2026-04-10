@@ -64,6 +64,26 @@ export function useTrading() {
 
         if (msg.type === "account_update") {
           setStatus(msg.data);
+        } else if (msg.type === "tick") {
+          // WS 실시간 가격으로 포지션 mark_price + unrealized PnL 갱신
+          const currentPrice = parseFloat(msg.data.price);
+          setPositions((prev) =>
+            prev.map((pos) => {
+              const entry = parseFloat(pos.avg_entry_price);
+              const qty = parseFloat(pos.quantity);
+              const pnl = pos.side === "long"
+                ? (currentPrice - entry) * qty
+                : (entry - currentPrice) * qty;
+              const margin = parseFloat(pos.margin);
+              const pnlPct = margin > 0 ? (pnl / margin) * 100 : 0;
+              return {
+                ...pos,
+                mark_price: currentPrice.toFixed(2),
+                unrealized_pnl: pnl.toFixed(2),
+                pnl_percent: Math.round(pnlPct * 100) / 100,
+              };
+            })
+          );
         } else if (
           msg.type === "trade_opened" ||
           msg.type === "tranche_filled" ||
