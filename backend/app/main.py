@@ -3,29 +3,21 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-
-logger = logging.getLogger(__name__)
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.binance.kline_store import kline_store
 from app.binance.ws_consumer import BinanceWSConsumer
-from app.db.session import init_db
 from app.tasks.scheduler import start_scheduler, stop_scheduler
 from app.ws.manager import manager
 from app.ws.server import ws_router
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    try:
-        await init_db()
-        logger.info("Database connected")
-    except Exception as e:
-        logger.warning(f"Database not available: {e}. Running without DB.")
-
-    # 히스토리컬 klines 로드 (전체 TF, 1회)
     await kline_store.initialize("BTCUSDT")
 
     consumer = BinanceWSConsumer(manager)

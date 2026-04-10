@@ -95,13 +95,44 @@ cd "$ROOT_DIR/frontend"
 pnpm install --silent
 echo "  Node 패키지 설치 완료"
 
-# ── 5. 데이터 디렉토리 ─────────────────────────────────────
-step 5 "데이터 디렉토리 생성"
+# ── 5. 알림 채널 설정 ───────────────────────────────────────
+step 5 "알림 채널 설정 (선택)"
+CURRENT_TG=$(grep "^ALERT_TELEGRAM_BOT_TOKEN=" "$ROOT_DIR/.env" | cut -d'=' -f2)
+if [ -z "$CURRENT_TG" ]; then
+  echo ""
+  echo -e "  ${CYAN}거래 이벤트 알림을 받으시겠습니까?${NC}"
+  echo "  (포지션 진입/청산, 이상 감지 시 Telegram으로 알림)"
+  echo ""
+  read -p "  Telegram 알림 설정? (y/n, 기본: n): " SETUP_TG
+  SETUP_TG=${SETUP_TG:-n}
+
+  if [ "$SETUP_TG" = "y" ] || [ "$SETUP_TG" = "Y" ]; then
+    echo ""
+    echo "  Telegram Bot 생성: @BotFather에서 /newbot → token 복사"
+    echo "  Chat ID 확인: @userinfobot에게 메시지 → chat_id 복사"
+    echo ""
+    read -p "  Bot Token: " TG_TOKEN
+    read -p "  Chat ID: " TG_CHAT_ID
+
+    if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT_ID" ]; then
+      sed -i '' "s|^ALERT_TELEGRAM_BOT_TOKEN=.*|ALERT_TELEGRAM_BOT_TOKEN=$TG_TOKEN|" "$ROOT_DIR/.env"
+      sed -i '' "s|^ALERT_TELEGRAM_CHAT_ID=.*|ALERT_TELEGRAM_CHAT_ID=$TG_CHAT_ID|" "$ROOT_DIR/.env"
+      echo -e "  ${GREEN}Telegram 알림 설정 완료${NC}"
+    fi
+  else
+    echo "  알림 건너뜀 (나중에 .env에서 설정 가능)"
+  fi
+else
+  echo "  Telegram 알림 설정됨"
+fi
+
+# ── 6. 데이터 디렉토리 ─────────────────────────────────────
+step 6 "데이터 디렉토리 생성"
 mkdir -p "$ROOT_DIR/backend/data"
 echo "  backend/data/ (SQLite DB)"
 
-# ── 6. API 연결 테스트 ──────────────────────────────────────
-step 6 "Binance API 연결 테스트"
+# ── 7. API 연결 테스트 ──────────────────────────────────────
+step 7 "Binance API 연결 테스트"
 cd "$ROOT_DIR/backend"
 API_KEY=$(grep "^BINANCE_API_KEY=" "$ROOT_DIR/.env" | cut -d'=' -f2)
 if [ -n "$API_KEY" ]; then
