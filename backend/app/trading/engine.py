@@ -115,13 +115,13 @@ class PaperTradingEngine:
                 logger.info(f"Velocity brake: {len(recent_sl)} SLs in {self.settings.velocity_window_ms//60000}min, pausing {self.settings.velocity_pause_ms//60000}min")
                 return None
 
-            # 시그널 중복 방지
-            expired = [k for k, t in self._recent_signals.items() if now - t > 600_000]
+            # 시그널 스로틀 (5초, 2026-04-11 회의록)
+            expired = [k for k, t in self._recent_signals.items() if now - t > 60_000]
             for k in expired:
                 del self._recent_signals[k]
             sig_key = f"{signal['type']}_{signal['direction']}"
             if sig_key in self._recent_signals:
-                if now - self._recent_signals[sig_key] < 300_000:
+                if now - self._recent_signals[sig_key] < 5_000:
                     return None
             self._recent_signals[sig_key] = now
 

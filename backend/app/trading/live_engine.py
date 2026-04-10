@@ -185,16 +185,17 @@ class LiveTradingEngine(PaperTradingEngine):
             ]
             if len(recent_sl) >= self.settings.velocity_max_consecutive_sl:
                 self._halt_until = now + self.settings.velocity_pause_ms
+                logger.info(f"[LIVE] REJECT: velocity brake ({len(recent_sl)} SLs in window)")
                 return None
 
-            # 시그널 중복 방지
-            expired = [k for k, t in self._recent_signals.items() if now - t > 600_000]
+            # 시그널 스로틀 (5초, 2026-04-11 회의록)
+            expired = [k for k, t in self._recent_signals.items() if now - t > 60_000]
             for k in expired:
                 del self._recent_signals[k]
             sig_key = f"{signal['type']}_{signal['direction']}"
             if sig_key in self._recent_signals:
-                if now - self._recent_signals[sig_key] < 300_000:
-                    return None
+                if now - self._recent_signals[sig_key] < 5_000:
+                    return None  # 5초 스로틀 — silent
             self._recent_signals[sig_key] = now
 
             side = PositionSide.LONG if signal["direction"] == "bullish" else PositionSide.SHORT
@@ -208,6 +209,7 @@ class LiveTradingEngine(PaperTradingEngine):
             ]
             if len(recent_same_dir) >= 2:
                 if now - recent_same_dir[-1].closed_at < 1_800_000:
+                    logger.info(f"[LIVE] REJECT: 2 consecutive {side.value} SLs, 30min cooldown")
                     return None
 
             # 기존 포지션 처리
@@ -218,6 +220,7 @@ class LiveTradingEngine(PaperTradingEngine):
                     return None
                 else:
                     if not self._should_replace(pos, current_price, now, signal):
+                        logger.info(f"[LIVE] REJECT: replacement conditions not met")
                         return None
                     # 교체: 기존 포지션 시장가 청산
                     await self._live_close_position(
@@ -242,15 +245,18 @@ class LiveTradingEngine(PaperTradingEngine):
             if is_consensus:
                 tier = classify_trade(signal["direction"], signal_tf, self._trend_context)
                 if tier == TradeTier.BLOCKED:
+                    logger.info(f"[LIVE] REJECT: BLOCKED by trend filter (consensus)")
                     return None
                 tier_name = "consensus"
             else:
                 tier = classify_trade(signal["direction"], signal_tf, self._trend_context)
                 if tier == TradeTier.BLOCKED:
+                    logger.info(f"[LIVE] REJECT: BLOCKED by trend filter ({signal['direction']} vs higher TF)")
                     return None
                 tier_name = tier.value
 
             is_counter = tier_name in ("counter_trend", "consensus")
+            logger.info(f"[LIVE] Tier: {tier_name} (counter={is_counter})")
 
             # Counter-trend 추가 검증
             if is_counter and not is_consensus:
@@ -259,10 +265,13 @@ class LiveTradingEngine(PaperTradingEngine):
                 indicators = details.get("indicators", [])
                 strong_triggers = sum(1 for ind in indicators if ind.get("weight", 0) >= 1.5)
                 if strong_triggers < ct.min_strong_triggers:
+                    logger.info(f"[LIVE] REJECT: counter-trend needs {ct.min_strong_triggers} strong triggers, got {strong_triggers}")
                     return None
                 tf_threshold = details.get("threshold", {})
                 net_score = details.get("net_score", 0)
-                if net_score < (tf_threshold.get("min_net", 2.0) + ct.extra_min_score):
+                required_net = tf_threshold.get("min_net", 2.0) + ct.extra_min_score
+                if net_score < required_net:
+                    logger.info(f"[LIVE] REJECT: counter-trend net_score {net_score:.1f} < required {required_net:.1f}")
                     return None
 
             # ATR 기반 사이즈 계산
@@ -287,6 +296,7 @@ class LiveTradingEngine(PaperTradingEngine):
             risk_amount = self.account.balance * Decimal(str(self.settings.risk_per_trade_pct / 100)) * size_multiplier
 
             if sl_distance <= 0:
+                logger.info("[LIVE] REJECT: sl_distance <= 0")
                 return None
             position_notional = risk_amount / Decimal(str(sl_distance / float(current_price)))
             # 슬리피지 버퍼 적용
