@@ -721,6 +721,23 @@ class PaperTradingEngine:
         notional = risk_amount / Decimal(str(sl_price_pct / 100))
         return notional.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
 
+    def _calc_min_tranche_qty(self, current_price: Decimal) -> Decimal:
+        """동적 최소 tranche 수량: ceil($110 / price, 0.001)."""
+        import math
+        min_notional = Decimal("110")  # $100 + 10% 버퍼
+        raw = float(min_notional / current_price)
+        return Decimal(str(math.ceil(raw * 1000) / 1000))
+
+    def _merge_small_tranches(self, tranches: list[TrancheOrder], min_qty: Decimal) -> list[TrancheOrder]:
+        """최소 수량 미달 tranche를 뒤에서부터 앞으로 합침."""
+        if len(tranches) <= 1:
+            return tranches
+        result = list(tranches)
+        while len(result) > 1 and result[-1].quantity < min_qty:
+            last = result.pop()
+            result[-1].quantity += last.quantity
+        return result
+
     def _create_entry_tranches(
         self, side: PositionSide, base_price: Decimal, total_qty: Decimal,
         pos_id: str, now: int, offsets_override: list[float] | None = None,
@@ -741,7 +758,8 @@ class PaperTradingEngine:
                 id=f"{pos_id}-e{i}", position_id=pos_id, side=side, is_entry=True,
                 target_price=target.quantize(Decimal("0.01")), quantity=qty, created_at=now,
             ))
-        return tranches
+        min_qty = self._calc_min_tranche_qty(base_price)
+        return self._merge_small_tranches(tranches, min_qty)
 
     def _create_exit_tranches(
         self, side: PositionSide, avg_entry: Decimal, total_qty: Decimal,
@@ -770,7 +788,8 @@ class PaperTradingEngine:
                 id=f"{pos_id}-x{i}", position_id=pos_id, side=side, is_entry=False,
                 target_price=target.quantize(Decimal("0.01")), quantity=qty, created_at=now,
             ))
-        return tranches
+        min_qty = self._calc_min_tranche_qty(avg_entry)
+        return self._merge_small_tranches(tranches, min_qty)
 
     def _calculate_stop_loss(
         self, side: PositionSide, entry_price: Decimal,
