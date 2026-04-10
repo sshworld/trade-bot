@@ -228,7 +228,7 @@ class PaperTradingEngine:
                 return None
 
             margin = (position_notional / leverage).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
-            total_qty = (position_notional / current_price).quantize(Decimal("0.0001"), rounding=ROUND_DOWN)
+            total_qty = (position_notional / current_price).quantize(Decimal("0.001"), rounding=ROUND_DOWN)
             if total_qty <= 0:
                 return None
 
@@ -730,7 +730,7 @@ class PaperTradingEngine:
         splits = split_override or self.settings.entry_split
         tranches = []
         for i, (split, offset) in enumerate(zip(splits, offsets)):
-            qty = (total_qty * Decimal(str(split))).quantize(Decimal("0.0001"), rounding=ROUND_DOWN)
+            qty = (total_qty * Decimal(str(split))).quantize(Decimal("0.001"), rounding=ROUND_DOWN)
             if i == len(splits) - 1:
                 qty = total_qty - sum(t.quantity for t in tranches)
             if side == PositionSide.LONG:
@@ -758,7 +758,7 @@ class PaperTradingEngine:
 
         tranches = []
         for i, (sp, tp_mult) in enumerate(zip(split, tp_multiples)):
-            qty = (total_qty * Decimal(str(sp))).quantize(Decimal("0.0001"), rounding=ROUND_DOWN)
+            qty = (total_qty * Decimal(str(sp))).quantize(Decimal("0.001"), rounding=ROUND_DOWN)
             if i == len(split) - 1:
                 qty = total_qty - sum(t.quantity for t in tranches)
             tp_distance = Decimal(str(atr * tp_mult))
