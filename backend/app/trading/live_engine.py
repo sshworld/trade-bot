@@ -501,7 +501,7 @@ class LiveTradingEngine(PaperTradingEngine):
                                 if new_sl > pos.stop_loss_price:
                                     pos.stop_loss_price = new_sl.quantize(Decimal("0.01"))
                             else:
-                                new_sl = be - bump
+                                new_sl = be + bump  # SHORT: SL을 진입가 쪽으로 조임
                                 if new_sl < pos.stop_loss_price:
                                     pos.stop_loss_price = new_sl.quantize(Decimal("0.01"))
 
