@@ -174,4 +174,4 @@ trade-bot/
 
 ## 📜 License
 
-Private repository. All rights reserved.
+[MIT License](LICENSE)
