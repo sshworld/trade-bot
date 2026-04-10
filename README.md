@@ -180,6 +180,16 @@ trade-bot/
 
 ---
 
+## 🔗 Binance 계정 개설
+
+이 프로젝트를 사용하려면 Binance Futures 계정이 필요합니다.
+
+[![Binance](https://img.shields.io/badge/Binance-가입하기-F0B90B?style=for-the-badge&logo=binance)](https://www.binance.com/register?ref=130350784)
+
+> 레퍼럴 링크입니다. 이 링크로 가입해주시면 프로젝트 개발에 도움이 됩니다.
+
+---
+
 ## 📜 License
 
 [MIT License](LICENSE)
