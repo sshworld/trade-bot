@@ -72,7 +72,7 @@ function TFRow({ tf, data, trend, highlightTF, onIndicatorClick }: {
 
   // 지배 방향
   const dominant = data.bull_score > data.bear_score ? "bullish" : data.bear_score > data.bull_score ? "bearish" : "neutral";
-  const domCount = dominant === "bullish" ? data.bull_count : data.bear_count;
+  const domFamilies = dominant === "bullish" ? (data.bull_families ?? data.bull_count) : (data.bear_families ?? data.bear_count);
   const domScore = dominant === "bullish" ? data.bull_score : data.bear_score;
   const oppScore = dominant === "bullish" ? data.bear_score : data.bull_score;
   const netScore = domScore - oppScore;
@@ -82,7 +82,7 @@ function TFRow({ tf, data, trend, highlightTF, onIndicatorClick }: {
   const progressPct = Math.round(progress * 100);
 
   // 부족한 것
-  const needCount = Math.max(0, thresh.min_count - domCount);
+  const needCount = Math.max(0, thresh.min_count - domFamilies);
   const needScore = Math.max(0, thresh.min_score - domScore);
   const needNet = Math.max(0, thresh.min_net - netScore);
   const needTrigger = data.strong_triggers < 1;
@@ -108,11 +108,19 @@ function TFRow({ tf, data, trend, highlightTF, onIndicatorClick }: {
         <span className="text-zinc-600 text-[10px] w-3">{isExpanded ? "▾" : "▸"}</span>
         <span className="font-mono font-bold text-zinc-200 w-8">{tf}</span>
 
-        {/* 개수/점수/트리거 */}
-        <span className={`${domCount >= thresh.min_count ? "text-emerald-400" : "text-zinc-500"}`}>
-          {domCount}/{thresh.min_count}
+        {/* 패밀리 수/점수/트리거 */}
+        <span className={`${
+          domFamilies >= thresh.min_count
+            ? (dominant === "bearish" ? "text-red-400" : "text-emerald-400")
+            : "text-zinc-500"
+        }`}>
+          {domFamilies}/{thresh.min_count}
         </span>
-        <span className={`font-mono ${domScore >= thresh.min_score ? "text-emerald-400" : "text-zinc-500"}`}>
+        <span className={`font-mono ${
+          domScore >= thresh.min_score
+            ? (dominant === "bearish" ? "text-red-400" : "text-emerald-400")
+            : "text-zinc-500"
+        }`}>
           {domScore.toFixed(1)}/{thresh.min_score}
         </span>
         <span className={`text-[10px] ${data.strong_triggers >= 1 ? "text-yellow-400" : "text-zinc-600"}`}>
@@ -130,7 +138,11 @@ function TFRow({ tf, data, trend, highlightTF, onIndicatorClick }: {
             style={{ width: `${progressPct}%` }}
           />
         </div>
-        <span className="text-[10px] text-zinc-600 w-8 text-right">{progressPct}%</span>
+        <span className={`text-[10px] w-8 text-right ${
+          progressPct >= 60
+            ? (dominant === "bearish" ? "text-red-400" : "text-emerald-400")
+            : "text-zinc-600"
+        }`}>{progressPct}%</span>
 
         {/* Confluence / Entry 뱃지 */}
         {hasConf && data.confluence.map((conf, i) => (
@@ -168,6 +180,8 @@ function TFRow({ tf, data, trend, highlightTF, onIndicatorClick }: {
             : sigType.startsWith("vp") ? "vp"
             : null;
 
+          const family = sig.family;
+
           return (
             <div
               key={i}
@@ -180,6 +194,7 @@ function TFRow({ tf, data, trend, highlightTF, onIndicatorClick }: {
               }}
             >
               <span className={d.color}>{d.sym}</span>
+              {family && <span className="text-zinc-600 font-mono text-[9px] w-7 shrink-0">{family}</span>}
               <span className="text-zinc-400 flex-1 truncate">{sig.message}</span>
               {isStrong && <span className="text-yellow-400">★</span>}
               <span className="text-zinc-600 w-8 text-right">
@@ -193,9 +208,9 @@ function TFRow({ tf, data, trend, highlightTF, onIndicatorClick }: {
       }
 
       {/* 부족한 것 (펼침 시만) */}
-      {isExpanded && !hasConf && domCount >= 1 && (
+      {isExpanded && !hasConf && domFamilies >= 1 && (
         <div className="ml-10 mt-1 text-[10px] text-zinc-600">
-          {needCount > 0 && <span className="mr-3">+{needCount} 지표</span>}
+          {needCount > 0 && <span className="mr-3">+{needCount} 패밀리</span>}
           {needScore > 0 && <span className="mr-3">+{needScore.toFixed(1)} score</span>}
           {needNet > 0 && <span className="mr-3">net +{needNet.toFixed(1)}</span>}
           {needTrigger && <span className="text-yellow-600">★ 트리거 필요</span>}

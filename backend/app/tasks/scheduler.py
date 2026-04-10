@@ -73,6 +73,16 @@ async def signal_scan(mgr: ConnectionManager):
             bear_count = sum(1 for s in individual_in_tf if s.get("direction") == "bearish")
             strong_count = sum(1 for s in individual_in_tf if s.get("strength", 0) >= 1.0)
 
+            # 패밀리 기준 카운트 (독립 패밀리 수)
+            bull_families_set = set()
+            bear_families_set = set()
+            for s in individual_in_tf:
+                family = s.get("family", s.get("type", ""))
+                if s.get("direction") == "bullish":
+                    bull_families_set.add(family)
+                elif s.get("direction") == "bearish":
+                    bear_families_set.add(family)
+
             latest_results[tf] = {
                 "timeframe": tf,
                 "scanned_at": scan_time,
@@ -86,6 +96,8 @@ async def signal_scan(mgr: ConnectionManager):
                 "bear_score": round(bear_w, 1),
                 "bull_count": bull_count,
                 "bear_count": bear_count,
+                "bull_families": len(bull_families_set),
+                "bear_families": len(bear_families_set),
                 "strong_triggers": strong_count,
             }
 
@@ -114,8 +126,13 @@ async def signal_scan(mgr: ConnectionManager):
 
         # confluence → trading
         for tf, signal, price in all_confluence:
+            logger.info(f"[SCAN] Confluence → engine: {tf} {signal['direction']} strength={signal.get('strength',0):.2f} @ {price}")
             tagged = {**signal, "message": f"[{tf}] {signal['message']}", "timeframe": tf}
-            position = await trading_engine.on_signal(tagged, price)
+            try:
+                position = await trading_engine.on_signal(tagged, price)
+            except Exception as e:
+                logger.error(f"[SCAN] on_signal error: {e}")
+                position = None
             if position:
                 side_kr = "롱" if position.side.value == "long" else "숏"
                 await mgr.broadcast({

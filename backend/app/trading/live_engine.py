@@ -144,20 +144,20 @@ class LiveTradingEngine(PaperTradingEngine):
 
     async def on_signal(self, signal: dict, current_price: Decimal) -> Position | None:
         if not self._initialized:
+            logger.info("[LIVE] on_signal skipped: not initialized")
             return None
 
         async with self._lock:
             now = int(time.time() * 1000)
-
-            # 부모 클래스의 게이트 체크 재사용 (halt, daily loss, velocity 등)
-            # 직접 인라인하지 않고 포지션 생성 직전까지의 로직을 호출
-            # super().on_signal()은 paper fill까지 하므로 직접 구현
+            logger.info(f"[LIVE] on_signal: {signal.get('direction')} {signal.get('timeframe')} strength={signal.get('strength',0):.2f} @ {current_price}")
 
             self._check_daily_reset(now)
 
             if now < self._halt_until:
+                logger.info("[LIVE] on_signal blocked: halt active")
                 return None
             if self.anomaly_detector.is_halted():
+                logger.info("[LIVE] on_signal blocked: anomaly halt")
                 return None
 
             # drawdown 체크

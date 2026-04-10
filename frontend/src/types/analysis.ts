@@ -42,6 +42,7 @@ export interface Signal {
   strength: number;
   message: string;
   timestamp: number;
+  family?: string;
 }
 
 export interface SignalsResponse {
@@ -68,6 +69,8 @@ export interface TFScanResult {
   bear_score: number;
   bull_count: number;
   bear_count: number;
+  bull_families?: number;
+  bear_families?: number;
   strong_triggers: number;
 }
 

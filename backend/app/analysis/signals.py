@@ -377,6 +377,7 @@ def generate_signals(
                 "message": s.reason,
                 "timestamp": now,
                 "is_confluence": False,
+                "family": s.family,
             })
 
     return signals
