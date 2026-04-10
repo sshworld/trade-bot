@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Header from "@/components/layout/Header";
 import AccountSummary from "@/components/trading/AccountSummary";
 import DailySummary from "@/components/trading/DailySummary";
@@ -27,8 +27,12 @@ export default function TradingPage() {
     refetch,
   } = useTrading();
 
-  const { ticker } = useMarketData("BTCUSDT", "1h");
-  const { connected: wsConnected } = useMarketWebSocket();
+  const { ticker, updatePriceFromWS } = useMarketData("BTCUSDT", "1h");
+  const { price, connected: wsConnected } = useMarketWebSocket();
+
+  useEffect(() => {
+    if (price) updatePriceFromWS(price);
+  }, [price, updatePriceFromWS]);
   const [historyTab, setHistoryTab] = useState<"today" | "all">("today");
 
   const botStatus = (() => {
