@@ -420,13 +420,20 @@ class LiveTradingEngine(PaperTradingEngine):
                     logger.error(f"[LIVE] Limit entry order failed: {e}")
                     tranche.status = OrderStatus.CANCELLED
 
-            self.account.balance -= margin
+            # Cross margin: 잔고 차감 없음 (Binance가 관리)
             self.account.margin_used += margin
             self.open_positions[pos_id] = position
 
             if first.status == OrderStatus.FILLED:
-                self.account.balance -= position.total_fees
+                self.account.total_fees += position.total_fees
                 self._recalculate_position(position)
+
+            # 바이낸스 실잔고로 동기화
+            try:
+                real_bal = await self._get_real_balance()
+                self.account.balance = real_bal
+            except Exception:
+                pass
 
             self.account.daily_trades += 1
             save_position(position)
@@ -572,6 +579,14 @@ class LiveTradingEngine(PaperTradingEngine):
         # 3. 로컬 상태 업데이트 (Paper 로직 재사용)
         trade = self._close_position(pos_id, actual_close_price, reason)
 
+        # 바이낸스 실잔고로 동기화
+        try:
+            real_bal = await self._get_real_balance()
+            self.account.balance = real_bal
+            self.account.margin_used = Decimal("0")
+        except Exception:
+            pass
+
         # 4. 텔레그램 알림
         side_kr = "롱" if trade.side == PositionSide.LONG else "숏"
         reason_kr = {"take_profit": "익절", "breakeven": "본전", "stop_loss": "손절",
@@ -682,6 +697,15 @@ class LiveTradingEngine(PaperTradingEngine):
                 if changed and pos_id in self.open_positions:
                     save_position(pos)
                     save_account(self.account)
+
+            # 잔고 동기화 (매 reconcile 주기)
+            try:
+                real_bal = await self._get_real_balance()
+                if self.account.balance != real_bal:
+                    self.account.balance = real_bal
+                    save_account(self.account)
+            except Exception:
+                pass
 
     # ── Exit tranche 실주문 발행 ──────────────────────────────
 

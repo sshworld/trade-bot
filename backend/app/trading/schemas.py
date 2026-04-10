@@ -165,9 +165,9 @@ class TradingSettings(BaseModel):
     fee_maker_pct: float = 0.02
     fee_taker_pct: float = 0.04
 
-    # 진입: 확인 추가 (물타기 아님)
-    # WITH_TREND: 50% 즉시, 30% +0.3% 확인, 20% +0.6% 확인
-    entry_offsets: list[float] = [0.0, 0.3, 0.6]
+    # 진입: 평단 최적화 (2026-04-11 회의록)
+    # WITH_TREND: 50% 즉시, 30% -0.3% 역행 추가, 20% -0.6% 역행 추가
+    entry_offsets: list[float] = [0.0, -0.3, -0.6]
     entry_split: list[float] = [0.50, 0.30, 0.20]
 
     # 포지션
