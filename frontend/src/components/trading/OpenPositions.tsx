@@ -163,10 +163,10 @@ export default function OpenPositions({ positions }: OpenPositionsProps) {
                                   <div key={i} className="flex items-center gap-2 text-[11px] py-0.5">
                                     <span className={`w-12 text-center rounded px-1 py-0.5 text-[10px] font-bold ${
                                       o.status === "filled" ? "bg-emerald-900/50 text-emerald-400" :
-                                      o.status === "pending" ? "bg-yellow-900/30 text-yellow-400" :
+                                      (o.status === "pending" || o.status === "waiting") ? "bg-yellow-900/30 text-yellow-400" :
                                       "bg-zinc-800 text-zinc-500"
                                     }`}>
-                                      {o.status === "filled" ? "체결" : o.status === "pending" ? "대기" : "취소"}
+                                      {o.status === "filled" ? "체결" : (o.status === "pending" || o.status === "waiting") ? "대기" : "취소"}
                                     </span>
                                     <span className="font-mono text-zinc-300">
                                       ${formatPrice(o.filled_price ?? o.price)}
@@ -183,10 +183,10 @@ export default function OpenPositions({ positions }: OpenPositionsProps) {
                                   <div key={i} className="flex items-center gap-2 text-[11px] py-0.5">
                                     <span className={`w-12 text-center rounded px-1 py-0.5 text-[10px] font-bold ${
                                       o.status === "filled" ? "bg-emerald-900/50 text-emerald-400" :
-                                      o.status === "pending" ? "bg-blue-900/30 text-blue-400" :
+                                      (o.status === "pending" || o.status === "waiting") ? "bg-blue-900/30 text-blue-400" :
                                       "bg-zinc-800 text-zinc-500"
                                     }`}>
-                                      {o.status === "filled" ? "체결" : o.status === "pending" ? "대기" : "취소"}
+                                      {o.status === "filled" ? "체결" : (o.status === "pending" || o.status === "waiting") ? "대기" : "취소"}
                                     </span>
                                     <span className="font-mono text-emerald-400/70">
                                       ${formatPrice(o.price)}

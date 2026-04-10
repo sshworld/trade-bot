@@ -428,6 +428,14 @@ class LiveTradingEngine(PaperTradingEngine):
                 self.account.total_fees += position.total_fees
                 self._recalculate_position(position)
 
+            # Exit tranche 주문 발행 (await로 확실히 처리)
+            if (position.signal_details or {}).get("_pending_exit_placement"):
+                await self._place_exit_orders(position)
+                position.signal_details.pop("_pending_exit_placement", None)
+
+            # SL 사전 배치 (바이낸스 STOP_MARKET)
+            await self._place_sl_order(position)
+
             # 바이낸스 실잔고로 동기화
             try:
                 real_bal = await self._get_real_balance()
@@ -438,9 +446,6 @@ class LiveTradingEngine(PaperTradingEngine):
             self.account.daily_trades += 1
             save_position(position)
             save_account(self.account)
-
-            # SL 사전 배치 (바이낸스 STOP_MARKET)
-            await self._place_sl_order(position)
 
             logger.info(
                 f"[LIVE] Position opened [{tier_name}]: {side.value} {total_qty} "
@@ -655,9 +660,15 @@ class LiveTradingEngine(PaperTradingEngine):
                         tranche.filled_at = int(order.get("updateTime", time.time() * 1000))
                         fee = self._calc_fee(tranche.filled_price, tranche.quantity, is_market=False)
                         pos.total_fees += fee
-                        self.account.balance -= fee
                         self.account.total_fees += fee
+                        # balance는 바이낸스 잔고 동기화에서 처리 (직접 차감 안 함)
                         self._recalculate_position(pos)
+
+                        # exit tranche 발행 (await로 확실히)
+                        if (pos.signal_details or {}).get("_pending_exit_placement"):
+                            await self._place_exit_orders(pos)
+                            pos.signal_details.pop("_pending_exit_placement", None)
+                            await self._place_sl_order(pos)  # SL도 수량 업데이트
                         changed = True
                         logger.info(f"[LIVE] Entry tranche filled: {tranche.id} @ {tranche.filled_price}")
 
@@ -808,16 +819,17 @@ class LiveTradingEngine(PaperTradingEngine):
     # ── recalculate 오버라이드: exit tranche 생성 후 실주문 ──
 
     def _recalculate_position(self, pos: Position):
-        """부모 로직 실행 후 exit tranche가 새로 생기면 주문 발행."""
+        """부모 로직 실행 후 exit tranche가 새로 생기면 주문 발행 예약."""
         had_exits = len(pos.exit_tranches)
         super()._recalculate_position(pos)
         new_exits = len(pos.exit_tranches)
 
         if new_exits > had_exits:
-            # 새 exit tranche가 생겼으면 비동기로 주문 발행
             pending_exits = [t for t in pos.exit_tranches if t.status == OrderStatus.PENDING]
             if pending_exits:
-                asyncio.create_task(self._place_exit_orders(pos))
+                # 발행 예약 (on_signal에서 await로 호출)
+                pos.signal_details = pos.signal_details or {}
+                pos.signal_details["_pending_exit_placement"] = True
 
     # ── SL 사전 배치 (STOP_MARKET + reduceOnly) ─────────────
 
