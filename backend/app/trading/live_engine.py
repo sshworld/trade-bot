@@ -549,11 +549,19 @@ class LiveTradingEngine(PaperTradingEngine):
         await self._cancel_sl_order(pos)
 
         # 2. 미체결 주문 전부 취소
-        for tranche in pos.entry_tranches + pos.exit_tranches:
+        for tranche in pos.entry_tranches:
             if tranche.status in (OrderStatus.PENDING, OrderStatus.WAITING):
                 if tranche.client_order_id:
                     try:
                         await binance_client.cancel_order("BTCUSDT", tranche.client_order_id)
+                    except Exception:
+                        pass
+                tranche.status = OrderStatus.CANCELLED
+        for tranche in pos.exit_tranches:
+            if tranche.status in (OrderStatus.PENDING, OrderStatus.WAITING):
+                if tranche.binance_order_id:
+                    try:
+                        await binance_client.cancel_algo_order("BTCUSDT", tranche.binance_order_id)
                     except Exception:
                         pass
                 tranche.status = OrderStatus.CANCELLED
@@ -662,47 +670,65 @@ class LiveTradingEngine(PaperTradingEngine):
                         changed = True
                         logger.info(f"[LIVE] Entry tranche {status}: {tranche.id}")
 
-                # Exit tranche reconciliation
+                # Exit tranche reconciliation (Algo API)
                 for tranche in pos.exit_tranches:
                     if tranche.status != OrderStatus.WAITING:
                         continue
-                    if not tranche.client_order_id:
+                    algo_id = tranche.binance_order_id
+                    if not algo_id:
                         continue
 
-                    order = await binance_client.get_order("BTCUSDT", tranche.client_order_id)
-                    if not order:
+                    try:
+                        algo = await binance_client.get_algo_order("BTCUSDT", algo_id)
+                        if not algo:
+                            continue
+                        algo_status = algo.get("algoStatus", "")
+                    except Exception:
                         continue
 
-                    status = order.get("status", "")
-                    if status == "FILLED":
+                    if algo_status == "EXECUTED":
                         tranche.status = OrderStatus.FILLED
-                        tranche.filled_price = Decimal(str(order.get("avgPrice", tranche.target_price)))
-                        tranche.filled_at = int(order.get("updateTime", time.time() * 1000))
+                        tranche.filled_price = Decimal(str(algo.get("triggerPrice", tranche.target_price)))
+                        tranche.filled_at = int(algo.get("triggerTime", time.time() * 1000))
                         pnl = self._calc_tranche_pnl(pos, tranche)
                         pos.realized_pnl += pnl
-                        fee = self._calc_fee(tranche.filled_price, tranche.quantity, is_market=False)
+                        fee = self._calc_fee(tranche.filled_price, tranche.quantity, is_market=True)
                         pos.total_fees += fee
-                        self.account.balance -= fee
                         self.account.total_fees += fee
 
                         filled_exits = sum(1 for t in pos.exit_tranches if t.status == OrderStatus.FILLED)
                         self._trailing_sl_after_tp(pos, filled_exits)
                         changed = True
-                        logger.info(f"[LIVE] Exit tranche filled: {tranche.id} @ {tranche.filled_price}")
+                        logger.info(f"[LIVE] TP algo filled: {tranche.id} @ {tranche.filled_price}")
+
+                        # SL 재배치 (수량 + 가격 변경)
+                        await self._place_sl_order(pos)
+                        logger.info(f"[LIVE] SL updated after TP{filled_exits}: SL={pos.stop_loss_price}")
+
+                        # 텔레그램 알림
+                        side_kr = "롱" if pos.side == PositionSide.LONG else "숏"
+                        asyncio.create_task(self.alert_sender._send_telegram_text(
+                            f"💰 <b>TP{filled_exits} HIT</b>\n\n"
+                            f"Side: {side_kr}\n"
+                            f"Price: ${tranche.filled_price:,.2f}\n"
+                            f"Qty: {tranche.quantity}\n"
+                            f"PnL: {'+'if pnl >= 0 else ''}${pnl:.2f}\n"
+                            f"New SL: ${pos.stop_loss_price:,.2f}"
+                        ))
 
                         # 모든 exit 체결 → 포지션 종료
                         if filled_exits == len(pos.exit_tranches):
+                            await self._cancel_sl_order(pos)
                             trade = self._close_position(pos_id, tranche.filled_price, "take_profit")
-                            side_kr = "롱" if trade.side == PositionSide.LONG else "숏"
                             asyncio.create_task(self.alert_sender._send_telegram_text(
-                                f"💚 <b>TAKE PROFIT — ALL TARGETS HIT</b>\n\n"
+                                f"💚 <b>ALL TPs HIT</b>\n\n"
                                 f"Side: {side_kr}\n"
                                 f"PnL: +${trade.realized_pnl:.2f} ({trade.pnl_percent:+.2f}%)\n"
                                 f"Balance: ${self.account.balance:,.2f}"
                             ))
                             break
 
-                    elif status in ("CANCELED", "REJECTED", "EXPIRED"):
+                    elif algo_status in ("CANCELLED", "EXPIRED"):
                         tranche.status = OrderStatus.CANCELLED
                         changed = True
 
