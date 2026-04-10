@@ -55,6 +55,8 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 | 속도 제한 | 60분 3연속 SL → 30분 중단 |
 | Drawdown -7% | 당일 중단 (Live 강화) |
 | 슬리피지 버퍼 | 95% (계산 사이즈의 95%만 사용) |
+| 시그널 스로틀 | **5초** (2026-04-11 회의록, 기존 5분에서 축소) |
+| 잔고 관리 | **Binance 실잔고 기준** (cross margin, 로컬 margin 차감 없음) |
 
 ### TP/SL — ATR 기반 (단타 최적화)
 | TF | SL | TP1 | TP2 | TP3 | Split |
@@ -90,8 +92,11 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 - [x] LiveTradingEngine (2026-04-11 구현)
 - [x] Telegram 알림 (2026-04-11 연동)
 - [x] 순수 % 리스크 체계 (2026-04-11 회의록)
+- [x] 시그널 쿨다운 5분→5초 (2026-04-11 회의록)
+- [x] 분할 진입 평단 최적화 (2026-04-11 회의록)
+- [x] Binance 실잔고 동기화 (2026-04-11)
+- [x] UI: 패밀리 count + bearish 빨간색 + reject 사유 표시
 - [ ] PnL에 수수료 포함 표시
-- [ ] UI: 패밀리 count 기준 표시 개선 (부분 완료)
 - [ ] 자본 $10,000 도달 시 리스크 재검토 토론
 
 ## 디렉토리
@@ -121,6 +126,7 @@ make setup && make backend && make frontend
 ```
 
 ## 주의
-- `backend/` 에서 uvicorn, `frontend/` 에서 pnpm dev
+- `backend/` 에서 uvicorn (**--reload 사용 금지**, 실거래 안정성), `frontend/` 에서 pnpm dev
 - 본전 = 진입가 ± 왕복 수수료
 - `/recalculate` API로 열린 포지션 TP/SL 재계산
+- 코드 수정 후 서버 재시작 시 **반드시 사용자 승인** 필요
