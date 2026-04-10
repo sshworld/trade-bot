@@ -145,18 +145,27 @@ function TFRow({ tf, data, trend, highlightTF, onIndicatorClick }: {
         }`}>{progressPct}%</span>
 
         {/* Confluence / Entry 뱃지 */}
-        {hasConf && data.confluence.map((conf, i) => (
-          <span
-            key={i}
-            className={`rounded px-2 py-0.5 text-[10px] font-bold ${
-              conf.direction === "bullish"
-                ? "bg-emerald-800 text-emerald-300"
-                : "bg-red-800 text-red-300"
-            }`}
-          >
-            ENTRY {conf.direction === "bullish" ? "▲ LONG" : "▼ SHORT"}
-          </span>
-        ))}
+        {hasConf && data.confluence.map((conf, i) => {
+          const reject = conf.reject_reason;
+          const isRejected = reject && reject.length > 0;
+          return (
+            <span
+              key={i}
+              className={`rounded px-2 py-0.5 text-[10px] font-bold ${
+                isRejected
+                  ? "bg-zinc-700 text-zinc-400"
+                  : conf.direction === "bullish"
+                    ? "bg-emerald-800 text-emerald-300"
+                    : "bg-red-800 text-red-300"
+              }`}
+            >
+              {isRejected
+                ? `✗ ${reject}`
+                : `ENTRY ${conf.direction === "bullish" ? "▲ LONG" : "▼ SHORT"}`
+              }
+            </span>
+          );
+        })}
 
         {isClose && !hasConf && (
           <span className="text-[10px] text-yellow-500">~ NEAR</span>

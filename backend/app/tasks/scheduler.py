@@ -124,6 +124,35 @@ async def signal_scan(mgr: ConnectionManager):
         trend_ctx = build_trend_context(latest_results)
         trading_engine.update_trend_context(trend_ctx)
 
+        # ── Confluence에 reject 사유 표시 (UI용) ──
+        from app.analysis.trend_filter import classify_trade
+        from app.trading.schemas import TradeTier
+        for tf_key, tf_data in latest_results.items():
+            for conf in tf_data.get("confluence", []):
+                if tf_key not in ENTRY_TIMEFRAMES:
+                    conf["reject_reason"] = "filter_only_tf"
+                    continue
+                tier = classify_trade(conf["direction"], tf_key, trend_ctx)
+                if tier == TradeTier.BLOCKED:
+                    conf["reject_reason"] = "BLOCKED: 상위 TF 강한 반대 추세"
+                elif tier == TradeTier.COUNTER_TREND:
+                    details = conf.get("details", {})
+                    indicators = details.get("indicators", [])
+                    strong_triggers = sum(1 for ind in indicators if ind.get("weight", 0) >= 1.5)
+                    ct = trading_engine.settings.counter_trend
+                    if strong_triggers < ct.min_strong_triggers:
+                        conf["reject_reason"] = f"COUNTER: 강한 트리거 {strong_triggers}/{ct.min_strong_triggers}개 부족"
+                    else:
+                        net_score = details.get("net_score", 0)
+                        thresh = details.get("threshold", {})
+                        required = thresh.get("min_net", 2.0) + ct.extra_min_score
+                        if net_score < required:
+                            conf["reject_reason"] = f"COUNTER: net {net_score:.1f} < {required:.1f}"
+                        else:
+                            conf["reject_reason"] = ""
+                else:
+                    conf["reject_reason"] = ""
+
         # confluence → trading
         for tf, signal, price in all_confluence:
             logger.info(f"[SCAN] Confluence → engine: {tf} {signal['direction']} strength={signal.get('strength',0):.2f} @ {price}")

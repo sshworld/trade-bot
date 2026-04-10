@@ -43,6 +43,7 @@ export interface Signal {
   message: string;
   timestamp: number;
   family?: string;
+  reject_reason?: string;
 }
 
 export interface SignalsResponse {
