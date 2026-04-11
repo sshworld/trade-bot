@@ -103,8 +103,14 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 - [x] 분할 진입 평단 최적화 (2026-04-11 회의록)
 - [x] Binance 실잔고 동기화 (2026-04-11)
 - [x] UI: 패밀리 count + bearish 빨간색 + reject 사유 표시
+- [x] SL/TP 바이낸스 Algo API 사전 배치 (서버 꺼져도 작동)
+- [x] 동적 최소 tranche (tail merge, 소자본 자동 분할 조정)
+- [x] TP 가중 평균 merge (R:R 비율 보존)
+- [x] SHORT tighten_sl 방향 버그 수정
+- [x] 텔레그램 봇 명령어 (/status, /position, /help)
 - [ ] PnL에 수수료 포함 표시
 - [ ] 자본 $10,000 도달 시 리스크 재검토 토론
+- [ ] TP 사전 배치 Phase 2 (트레일링 TP)
 
 ## 디렉토리
 ```
@@ -114,7 +120,9 @@ backend/app/
 ├── trading/live_engine.py    # LiveTradingEngine (실거래, Binance 주문)
 ├── trading/schemas.py        # TF_ATR_PARAMS + 설정 + LiveTradingSettings
 ├── trading/persistence.py    # SQLite
-├── binance/client.py         # REST (인증+공개)
+├── trading/telegram_bot.py   # 텔레그램 봇 명령어 (/status, /position)
+├── trading/alert_sender.py   # Telegram + Webhook 알림
+├── binance/client.py         # REST + Algo Order API (인증+공개)
 ├── binance/kline_store.py    # 8TF 캔들 스토어
 ├── tasks/scheduler.py        # 1초 스캔
 

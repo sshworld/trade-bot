@@ -28,6 +28,9 @@
 - **속도 제한**: 60분 내 3연속 SL → 30분 중단
 - **10가지 이상 감지**: Rapid-Fire, Flip-Flop, Fee Bleeding 등
 - **실거래 지원**: LiveTradingEngine — Binance 실주문, 5초 주문 조회, ghost position 감지
+- **SL/TP 사전 배치**: Binance Algo API (STOP_MARKET, TAKE_PROFIT_MARKET) — 서버 꺼져도 작동
+- **동적 분할 진입**: 소자본 자동 조정 (3분할→2분할→1분할, tail merge)
+- **텔레그램 봇**: /status, /position, /help 명령어로 실시간 상태 확인
 
 ### 실시간 대시보드
 - **캔들스틱 차트**: TradingView lightweight-charts, rAF 60fps

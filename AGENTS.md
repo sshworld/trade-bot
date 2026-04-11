@@ -50,8 +50,11 @@
 - 진입: **평단 최적화** [0, -0.3, -0.6] (2026-04-11 회의록)
 - 시그널 스로틀: **5초** (2026-04-11 회의록)
 - 잔고: **Binance 실잔고 기준** (cross margin, 로컬 차감 없음)
+- SL/TP: **Binance Algo API** 사전 배치 (STOP_MARKET, TAKE_PROFIT_MARKET)
+- 분할: **동적 최소 tranche** ceil($110/price), tail merge
+- 텔레그램 봇: `/status`, `/position`, `/help` 명령어 지원
 - **실거래 서버 --reload 절대 금지, 재시작은 반드시 사용자 승인**
-- push 시 **CLAUDE.md, README.md 등 관련 문서 반드시 같이 업데이트**
+- push 시 **CLAUDE.md, README.md, AGENTS.md 등 관련 문서 반드시 같이 업데이트**
 
 ## 워크플로우
 
