@@ -130,7 +130,7 @@ async def signal_scan(mgr: ConnectionManager):
         for tf_key, tf_data in latest_results.items():
             for conf in tf_data.get("confluence", []):
                 if tf_key not in ENTRY_TIMEFRAMES:
-                    conf["reject_reason"] = "filter_only_tf"
+                    conf["reject_reason"] = "필터 전용 TF (진입 불가)"
                     continue
                 tier = classify_trade(conf["direction"], tf_key, trend_ctx)
                 if tier == TradeTier.BLOCKED:
