@@ -29,6 +29,10 @@ async def lifespan(app: FastAPI):
     consumer = BinanceWSConsumer(manager)
     consumer_task = asyncio.create_task(consumer.start())
 
+    # 텔레그램 봇 (명령어 수신)
+    from app.trading.telegram_bot import telegram_bot
+    tg_task = asyncio.create_task(telegram_bot.start())
+
     start_scheduler(manager)
 
     yield
@@ -36,6 +40,8 @@ async def lifespan(app: FastAPI):
     # Shutdown
     consumer.stop()
     consumer_task.cancel()
+    telegram_bot.stop()
+    tg_task.cancel()
     stop_scheduler()
 
 
