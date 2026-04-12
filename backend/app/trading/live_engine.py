@@ -796,11 +796,19 @@ class LiveTradingEngine(PaperTradingEngine):
                 except Exception as e:
                     logger.error(f"[RECONCILE] Position check failed: {e}")
 
-            # 잔고 동기화 (매 reconcile 주기)
+            # 잔고 동기화 (매 reconcile 주기) — Binance가 source of truth
             try:
                 real_bal = await self._get_real_balance()
+                changed = False
                 if self.account.balance != real_bal:
                     self.account.balance = real_bal
+                    self.account.equity = real_bal + self.account.unrealized_pnl
+                    changed = True
+                # peak_equity도 실잔고 기준 갱신
+                if self.account.equity > self.account.peak_equity:
+                    self.account.peak_equity = self.account.equity
+                    changed = True
+                if changed:
                     save_account(self.account)
             except Exception:
                 pass
