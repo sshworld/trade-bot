@@ -89,14 +89,18 @@ class LiveTradingEngine(PaperTradingEngine):
             saved = load_account()
             if saved:
                 self.account = saved
-                # 잔고 차이 체크
-                local_total = self.account.balance + self.account.margin_used
-                diff_pct = abs(float(real_balance - local_total) / float(real_balance) * 100) if real_balance > 0 else 0
-                if diff_pct > self.settings.balance_discrepancy_pct:
+                # 잔고를 바이낸스 기준으로 동기화
+                self.account.balance = real_balance
+                self.account.margin_used = Decimal("0")
+                self.account.equity = real_balance
+                # peak_equity가 실잔고보다 비정상적으로 높으면 보정
+                if self.account.peak_equity > real_balance * Decimal("1.1"):
                     logger.warning(
-                        f"[LIVE] Balance discrepancy: local=${local_total}, "
-                        f"binance=${real_balance} (diff={diff_pct:.1f}%)"
+                        f"[LIVE] Peak equity ${self.account.peak_equity} > "
+                        f"balance ${real_balance} * 1.1, resetting to balance"
                     )
+                    self.account.peak_equity = real_balance
+                save_account(self.account)
             else:
                 # 첫 시작: 실제 잔고로 초기화
                 self.account = AccountState(
@@ -757,13 +761,22 @@ class LiveTradingEngine(PaperTradingEngine):
                         for pos_id in list(self.open_positions.keys()):
                             pos = self.open_positions[pos_id]
                             real_bal = await binance_client.get_balance("USDT")
-                            # PnL 추정: 새 잔고 - 이전 잔고
                             old_bal = self.account.balance
                             pnl = real_bal - old_bal
                             reason = "stop_loss" if pnl < 0 else "take_profit"
-                            logger.info(f"[LIVE] Binance position gone! {reason} PnL≈${pnl:.2f}")
 
-                            trade = self._close_position(pos_id, self._last_price or Decimal("0"), reason)
+                            # 체결 가격 추정: 현재 ticker 또는 last_price
+                            close_price = self._last_price
+                            if not close_price:
+                                try:
+                                    ticker = await binance_client.get_ticker("BTCUSDT")
+                                    close_price = ticker.price
+                                except Exception:
+                                    close_price = pos.avg_entry_price or Decimal("0")
+
+                            logger.info(f"[LIVE] Binance position gone! {reason} PnL≈${pnl:.2f} @ ~${close_price}")
+
+                            trade = self._close_position(pos_id, close_price, reason)
 
                             self.account.balance = real_bal
                             self.account.margin_used = Decimal("0")
