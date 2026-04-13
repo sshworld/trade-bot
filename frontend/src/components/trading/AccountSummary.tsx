@@ -32,20 +32,33 @@ export default function AccountSummary({ status }: AccountSummaryProps) {
   const pnl = parseFloat(status.unrealized_pnl);
   const pnlColor = pnl > 0 ? "text-emerald-400" : pnl < 0 ? "text-red-400" : "text-zinc-300";
 
+  const available = parseFloat(status.balance) - parseFloat(status.margin_used);
+  const dailyPnl = parseFloat(status.daily_pnl);
+  const dailyColor = dailyPnl > 0 ? "text-emerald-400" : dailyPnl < 0 ? "text-red-400" : "text-zinc-300";
+
   return (
-    <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
       <StatCard label="Balance" value={`$${formatPrice(status.balance)}`} />
+      <StatCard
+        label="Available"
+        value={`$${formatPrice(String(available.toFixed(2)))}`}
+        color="text-blue-400"
+      />
       <StatCard label="Equity" value={`$${formatPrice(status.equity)}`} />
       <StatCard
         label="Unrealized PnL"
         value={`${pnl >= 0 ? "+" : ""}$${formatPrice(status.unrealized_pnl)}`}
         color={pnlColor}
       />
-      <StatCard label="Margin Used" value={`$${formatPrice(status.margin_used)}`} />
       <StatCard
-        label="Total Fees"
-        value={`-$${formatPrice(status.total_fees)}`}
-        color="text-orange-400"
+        label="Daily PnL"
+        value={`${dailyPnl >= 0 ? "+" : ""}$${formatPrice(status.daily_pnl)}`}
+        color={dailyColor}
+      />
+      <StatCard
+        label="Margin / Fees"
+        value={`$${formatPrice(status.margin_used)} / $${formatPrice(status.total_fees)}`}
+        color="text-zinc-400"
       />
     </div>
   );
