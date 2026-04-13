@@ -182,8 +182,9 @@ class TradingSettings(BaseModel):
     # ── 마진 캡 ──
     margin_cap_pct: float = 55.0          # 잔고의 55%까지 마진 사용
 
-    # ── 진입: 물타기 (ATR 기반 offset) ──
-    entry_atr_offsets: list[float] = [0.0, 0.5, 1.0]     # ATR 배수 (역행)
+    # ── 진입: 물타기 (ATR 기반 offset, 2026-04-13 간격 확대) ──
+    entry_atr_offsets: list[float] = [0.0, 1.0, 2.0]      # ATR 배수 (역행) — 기존 0.5/1.0에서 2배
+    entry_atr_offset_floors: list[float] = [0.0, 0.3, 0.7]  # 최소 % 하한 (저변동성 보호)
     entry_atr_offset_caps: list[float] = [0.0, 1.0, 1.5]  # 최대 % 캡
     entry_split: list[float] = [0.50, 0.30, 0.20]
 

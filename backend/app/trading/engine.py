@@ -777,15 +777,20 @@ class PaperTradingEngine:
     ) -> list[TrancheOrder]:
         """물타기 진입 tranche 생성. ATR 기반 offset (2026-04-13 회의록)."""
         atr_offsets = self.settings.entry_atr_offsets
+        floors = getattr(self.settings, 'entry_atr_offset_floors', [0.0] * len(atr_offsets))
         caps = self.settings.entry_atr_offset_caps
         splits = self.settings.entry_split
         tranches = []
-        for i, (split_pct, atr_mult, cap_pct) in enumerate(zip(splits, atr_offsets, caps)):
+        for i, (split_pct, atr_mult, floor_pct, cap_pct) in enumerate(zip(splits, atr_offsets, floors, caps)):
             qty = (total_qty * Decimal(str(split_pct))).quantize(Decimal("0.001"), rounding=ROUND_DOWN)
             if i == len(splits) - 1:
                 qty = total_qty - sum(t.quantity for t in tranches)
             # ATR 기반 offset (역행 물타기)
             offset_price = Decimal(str(atr * atr_mult))
+            # 최소 % 하한 (저변동성 보호)
+            if floor_pct > 0:
+                min_offset = base_price * Decimal(str(floor_pct / 100))
+                offset_price = max(offset_price, min_offset)
             if cap_pct > 0:
                 max_offset = base_price * Decimal(str(cap_pct / 100))
                 offset_price = min(offset_price, max_offset)
