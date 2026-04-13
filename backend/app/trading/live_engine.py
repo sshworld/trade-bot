@@ -278,11 +278,15 @@ class LiveTradingEngine(PaperTradingEngine):
                     logger.info(f"[LIVE] REJECT: counter-trend net_score {net_score:.1f} < required {required_net:.1f}")
                     return None
 
-            # ATR 기반 사이즈 계산
-            atr_params = get_tf_atr_params(signal_tf)
+            # ── 최저 운영 잔고 체크 ──
+            if self.account.balance < self.settings.min_operating_balance:
+                logger.info(f"[LIVE] Balance ${self.account.balance} < min ${self.settings.min_operating_balance}")
+                return None
+
             strength = signal.get("strength", 0.5)
             leverage = self._calculate_leverage(strength)
 
+            # ATR (물타기 offset 전용)
             atr = self._get_atr(signal_tf)
             if atr <= 0:
                 atr = float(current_price) * 0.01
@@ -292,35 +296,30 @@ class LiveTradingEngine(PaperTradingEngine):
                 size_multiplier = Decimal("0.5")
                 leverage = self.settings.min_leverage
 
-            sl_distance = atr * atr_params.sl_atr
-            sl_distance = max(sl_distance, atr * self.settings.atr_sl_min_multiple)
-            sl_distance = min(sl_distance, atr * self.settings.atr_sl_max_multiple)
-
-            # 순수 퍼센트 리스크 (2026-04-11 회의록: 클램프 없음)
-            risk_amount = self.account.balance * Decimal(str(self.settings.risk_per_trade_pct / 100)) * size_multiplier
-
-            if sl_distance <= 0:
-                logger.info("[LIVE] REJECT: sl_distance <= 0")
-                return None
-            position_notional = risk_amount / Decimal(str(sl_distance / float(current_price)))
-            # 슬리피지 버퍼 적용
+            # ── % 기반 포지션 사이징 (2026-04-13 회의록) ──
+            real_balance = await self._get_real_balance()
+            max_margin = real_balance * Decimal(str(self.settings.margin_cap_pct / 100))
+            margin = (max_margin * size_multiplier).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+            position_notional = margin * leverage
             position_notional = position_notional * Decimal(str(self.settings.slippage_buffer))
             position_notional = position_notional.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
-            # Binance 최소 노셔널 체크 (자연 하한)
-            if position_notional < self.settings.min_notional:
-                logger.info(f"[LIVE] Notional ${position_notional} < min ${self.settings.min_notional}, skipping")
-                return None
 
-            # 실잔고 대비 마진 체크
-            real_balance = await self._get_real_balance()
-            margin = (position_notional / leverage).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
-            if margin > real_balance * Decimal("0.95"):
-                logger.warning(f"[LIVE] Insufficient margin: need ${margin}, have ${real_balance}")
+            if position_notional < self.settings.min_notional:
+                logger.info(f"[LIVE] Notional ${position_notional} < min ${self.settings.min_notional}")
                 return None
 
             total_qty = (position_notional / current_price).quantize(Decimal("0.001"), rounding=ROUND_DOWN)
             if total_qty <= 0:
                 return None
+
+            # SL 거리: 잔고 2% 고정 손실 역산
+            risk_amount = real_balance * Decimal(str(self.settings.sl_balance_risk_pct / 100)) * size_multiplier
+            sl_distance = risk_amount / total_qty
+            min_sl = current_price * Decimal(str(self.settings.min_sl_distance_pct / 100))
+            sl_distance = max(sl_distance, min_sl)
+
+            # 마진 재계산 (슬리피지 적용 후)
+            margin = (position_notional / leverage).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
 
             import uuid
             pos_id = str(uuid.uuid4())[:8]
@@ -331,25 +330,16 @@ class LiveTradingEngine(PaperTradingEngine):
             except Exception as e:
                 logger.warning(f"[LIVE] Set leverage failed: {e}")
 
-            # 진입 tranche 생성
-            if is_counter:
-                entry_offsets = self.settings.counter_trend.entry_offsets
-                entry_split = self.settings.counter_trend.entry_split
-            else:
-                entry_offsets = self.settings.entry_offsets
-                entry_split = self.settings.entry_split
-
+            # 진입 tranche 생성 (ATR 기반 물타기 offset)
             entry_tranches = self._create_entry_tranches(
-                side, current_price, total_qty, pos_id, now,
-                offsets_override=entry_offsets, split_override=entry_split,
+                side, current_price, total_qty, pos_id, now, atr=atr,
             )
 
             # SL 가격
-            sl_decimal = Decimal(str(sl_distance))
             if side == PositionSide.LONG:
-                stop_loss = (current_price - sl_decimal).quantize(Decimal("0.01"))
+                stop_loss = (current_price - sl_distance).quantize(Decimal("0.01"))
             else:
-                stop_loss = (current_price + sl_decimal).quantize(Decimal("0.01"))
+                stop_loss = (current_price + sl_distance).quantize(Decimal("0.01"))
 
             signal_details = signal.get("details") or {}
             signal_details["trade_tier"] = tier_name
@@ -365,9 +355,9 @@ class LiveTradingEngine(PaperTradingEngine):
                 entry_tranches=entry_tranches, exit_tranches=[],
                 stop_loss_price=stop_loss, allocated_quantity=total_qty,
                 allocated_margin=margin,
-                tp_levels=[atr_params.tp1_atr, atr_params.tp2_atr, atr_params.tp3_atr],
-                exit_split=atr_params.exit_split,
-                sl_atr_multiple=atr_params.sl_atr, timeframe=signal_tf,
+                tp_margin_pcts=list(self.settings.tp_margin_pcts),
+                tp_split=list(self.settings.tp_split),
+                timeframe=signal_tf,
                 opened_at=now,
             )
 
