@@ -675,11 +675,19 @@ class LiveTradingEngine(PaperTradingEngine):
                         # balance는 바이낸스 잔고 동기화에서 처리 (직접 차감 안 함)
                         self._recalculate_position(pos)
 
-                        # exit tranche 발행 (await로 확실히)
+                        # exit tranche 발행 (새로 생겼으면)
                         if (pos.signal_details or {}).get("_pending_exit_placement"):
+                            # 기존 TP 주문 취소 후 재발행
+                            for et in pos.exit_tranches:
+                                if et.status == OrderStatus.WAITING and et.binance_order_id:
+                                    await binance_client.cancel_algo_order("BTCUSDT", et.binance_order_id)
+                                    et.status = OrderStatus.PENDING
                             await self._place_exit_orders(pos)
                             pos.signal_details.pop("_pending_exit_placement", None)
-                            await self._place_sl_order(pos)  # SL도 수량 업데이트
+
+                        # SL 항상 재배치 (평단/수량 변경)
+                        await self._place_sl_order(pos)
+                        logger.info(f"[LIVE] SL/TP updated after entry fill: SL={pos.stop_loss_price}")
                         changed = True
                         logger.info(f"[LIVE] Entry tranche filled: {tranche.id} @ {tranche.filled_price}")
 
