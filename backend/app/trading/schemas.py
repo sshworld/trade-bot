@@ -1,6 +1,7 @@
 """트레이딩 데이터 모델 + 설정.
 
-파라미터는 2026-04-10 Buffett×Dimon 회의록 기준.
+파라미터는 2026-04-13 Buffett×Dimon 회의록 기준.
+ATR 기반 TP/SL → 마진 % 기반 TP/SL 전환.
 변경 시 반드시 전문가 토론 → 회의록 → 승인 후 적용.
 """
 
@@ -55,9 +56,8 @@ class Position(BaseModel):
     total_quantity: Decimal = Decimal("0")
     allocated_quantity: Decimal = Decimal("0")
     allocated_margin: Decimal = Decimal("0")
-    tp_levels: list[float] = []       # ATR 배수 [1.5, 3.0, 999]
-    exit_split: list[float] = []
-    sl_atr_multiple: float = 2.0      # SL ATR 배수
+    tp_margin_pcts: list[float] = []   # 마진 대비 TP % [3.0, 6.0, 10.0]
+    tp_split: list[float] = []        # TP 분할 비율 [0.50, 0.30, 0.20]
     highest_price: Decimal | None = None  # 트레일링용 최고가 추적
     lowest_price: Decimal | None = None   # 트레일링용 최저가 추적
     timeframe: str = "1h"
@@ -119,15 +119,15 @@ class TrendContext(BaseModel):
     updated_at: int = 0
 
 
-# ── ATR 기반 TP/SL 설정 (2026-04-10 회의록) ───────────────────
+# ── ATR 파라미터 (물타기 offset 전용, 2026-04-13 회의록) ─────
 
 class TFATRParams(BaseModel):
-    """TF별 ATR 배수 기반 TP/SL. 단타 최적화."""
-    sl_atr: float
-    tp1_atr: float
-    tp2_atr: float
-    tp3_atr: float         # 하드캡 (무한 트레일 제거)
-    exit_split: list[float]
+    """TF별 ATR 배수. TP/SL에서는 폐기, 물타기 offset 전용."""
+    sl_atr: float       # legacy — 물타기 간격 참조용
+    tp1_atr: float      # legacy
+    tp2_atr: float      # legacy
+    tp3_atr: float      # legacy
+    exit_split: list[float]  # legacy
 
 
 TF_ATR_PARAMS: dict[str, TFATRParams] = {
@@ -147,12 +147,9 @@ class CounterTrendSettings(BaseModel):
     extra_min_count: int = 1
     extra_min_score: float = 1.0
     min_strong_triggers: int = 2
-    # Counter: 2 tranche, 확인 아닌 소폭 물타기
-    entry_offsets: list[float] = [0.0, -0.3]
-    entry_split: list[float] = [0.60, 0.40]
 
 
-# ── 메인 설정 ──────────────────────────────────────────────────
+# ── 메인 설정 (2026-04-13 회의록: % 기반 TP/SL) ──────────────
 
 class TradingSettings(BaseModel):
     initial_capital: Decimal = Decimal("1000")
@@ -165,14 +162,35 @@ class TradingSettings(BaseModel):
     fee_maker_pct: float = 0.02
     fee_taker_pct: float = 0.04
 
-    # 진입: 평단 최적화 (2026-04-11 회의록)
-    # WITH_TREND: 50% 즉시, 30% -0.3% 역행 추가, 20% -0.6% 역행 추가
-    entry_offsets: list[float] = [0.0, -0.3, -0.6]
+    # ── TP: 마진 대비 % (2026-04-13 회의록, ATR 폐기) ──
+    tp_margin_pcts: list[float] = [3.0, 6.0, 10.0]   # TP1/2/3 마진 수익%
+    tp_split: list[float] = [0.50, 0.30, 0.20]        # TP 분할 비율
+
+    # ── SL: 잔고 고정 % 손실 ──
+    sl_balance_risk_pct: float = 2.0      # 잔고의 2% 고정 손실
+    min_sl_distance_pct: float = 0.3      # 최소 SL 거리 % (스프레드/슬리피지 보호)
+
+    # ── 마진 캡 ──
+    margin_cap_pct: float = 55.0          # 잔고의 55%까지 마진 사용
+
+    # ── 진입: 물타기 (ATR 기반 offset) ──
+    entry_atr_offsets: list[float] = [0.0, 0.5, 1.0]     # ATR 배수 (역행)
+    entry_atr_offset_caps: list[float] = [0.0, 1.0, 1.5]  # 최대 % 캡
     entry_split: list[float] = [0.50, 0.30, 0.20]
+
+    # ── 트레일링 (TP2 이후) ──
+    trailing_margin_pct: float = 3.0      # 기본: 최고가 - 마진 3%
+    trailing_tight_pct: float = 1.5       # TP3 넘으면: 최고가 - 마진 1.5%
 
     # 포지션
     max_open_positions: int = 1
-    risk_per_trade_pct: float = 2.0
+
+    # 최저 운영 잔고 (2026-04-13 회의록)
+    min_operating_balance: Decimal = Decimal("100")
+
+    # 시간 청산 (2026-04-13 회의록: 48h/72h)
+    time_exit_tighten_hours: float = 48.0  # SL 50% 조임
+    time_exit_force_hours: float = 72.0    # 시장가 청산
 
     # 일일 제한 — 횟수 무제한, 손실만 제한
     daily_loss_tier1_pct: float = 3.0    # -3% → 사이즈 절반
@@ -189,15 +207,11 @@ class TradingSettings(BaseModel):
     velocity_window_ms: int = 3_600_000       # 60분
     velocity_pause_ms: int = 1_800_000        # 30분 일시 중단
 
-    # ATR 가드레일
-    atr_sl_min_multiple: float = 1.5
-    atr_sl_max_multiple: float = 4.0
-
     counter_trend: CounterTrendSettings = CounterTrendSettings()
 
 
 class LiveTradingSettings(TradingSettings):
-    """실거래용 리스크 파라미터 (2026-04-11 회의록 기준: 순수 % 체계)."""
+    """실거래용 리스크 파라미터 (2026-04-13 회의록 기준)."""
     drawdown_halt_pct: float = 7.0        # Peak drawdown -7% → 당일 정지
     slippage_buffer: float = 0.95         # 계산 사이즈의 95%만 사용
     min_notional: Decimal = Decimal("100")  # Binance 최소 노셔널 (자연 하한)
