@@ -761,6 +761,7 @@ class LiveTradingEngine(PaperTradingEngine):
                         # 모든 exit 체결 → 포지션 종료
                         if filled_exits == len(pos.exit_tranches):
                             await self._cancel_sl_order(pos)
+                            await self._cancel_all_exit_orders(pos)
                             trade = self._close_position(pos_id, tranche.filled_price, "take_profit")
                             asyncio.create_task(self.alert_sender._send_telegram_text(
                                 f"💚 <b>ALL TPs HIT</b>\n\n"
@@ -802,6 +803,10 @@ class LiveTradingEngine(PaperTradingEngine):
                                     close_price = pos.avg_entry_price or Decimal("0")
 
                             logger.info(f"[LIVE] Binance position gone! {reason} PnL≈${pnl:.2f} @ ~${close_price}")
+
+                            # 잔존 Algo 주문 전부 취소
+                            await self._cancel_sl_order(pos)
+                            await self._cancel_all_exit_orders(pos)
 
                             trade = self._close_position(pos_id, close_price, reason)
 
@@ -903,20 +908,34 @@ class LiveTradingEngine(PaperTradingEngine):
                 quantity=remaining.quantize(Decimal("0.001")),
             )
             pos.signal_details = pos.signal_details or {}
-            pos.signal_details["sl_algo_id"] = str(result.get("algoId", ""))
-            logger.info(f"[LIVE] SL algo order placed: {close_side} STOP_MARKET trigger={pos.stop_loss_price} qty={remaining}")
+            algo_id = str(result.get("algoId", ""))
+            if algo_id:
+                pos.signal_details["sl_algo_id"] = algo_id
+            logger.info(f"[LIVE] SL algo order placed: {close_side} STOP_MARKET trigger={pos.stop_loss_price} qty={remaining} algoId={algo_id}")
         except Exception as e:
             logger.error(f"[LIVE] SL algo order failed: {e}")
 
     async def _cancel_sl_order(self, pos: Position):
         """기존 SL algo 주문 취소."""
         algo_id = (pos.signal_details or {}).get("sl_algo_id")
-        if algo_id:
+        if algo_id and str(algo_id).strip():
             try:
-                await binance_client.cancel_algo_order("BTCUSDT", algo_id)
+                await binance_client.cancel_algo_order("BTCUSDT", str(algo_id))
                 logger.info(f"[LIVE] SL algo order cancelled: {algo_id}")
+                pos.signal_details["sl_algo_id"] = ""
             except Exception:
                 pass
+
+    async def _cancel_all_exit_orders(self, pos: Position):
+        """모든 exit tranche의 Algo 주문 취소."""
+        for tranche in pos.exit_tranches:
+            if tranche.status in (OrderStatus.PENDING, OrderStatus.WAITING):
+                if tranche.binance_order_id and str(tranche.binance_order_id).strip():
+                    try:
+                        await binance_client.cancel_algo_order("BTCUSDT", str(tranche.binance_order_id))
+                        logger.info(f"[LIVE] TP algo cancelled: {tranche.binance_order_id}")
+                    except Exception:
+                        pass
 
     async def _update_sl_order_if_changed(self, pos: Position, old_sl: Decimal):
         """SL이 0.1% 이상 변경되었으면 재배치."""
