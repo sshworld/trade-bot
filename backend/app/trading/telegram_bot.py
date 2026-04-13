@@ -145,12 +145,19 @@ class TelegramBot:
             )
         signals_text = "\n".join(signal_lines) if signal_lines else "  데이터 없음"
 
+        filter_state = status.get("filter_state", "normal")
+        filter_icons = {
+            "boost": "🚀 BOOST", "normal": "✅ NORMAL",
+            "caution": "⚠️ CAUTION", "critical": "🔶 CRITICAL", "stop": "🔴 STOP",
+        }
+        filter_label = filter_icons.get(filter_state, filter_state)
         state = "🔴 HALTED" if halted else ("📈 포지션 보유" if positions_count > 0 else "⏳ 대기 중")
         daily_icon = "📈" if daily_pnl >= 0 else "📉"
         unreal_icon = "💚" if unrealized >= 0 else "💔"
 
         msg = (
             f"📊 <b>STATUS</b> — {state}\n"
+            f"🎚 <b>필터:</b> {filter_label}\n"
             f"{'━' * 28}\n\n"
             f"💰 <b>잔고:</b> <code>${balance:,.2f}</code>\n"
             f"💎 <b>평가:</b> <code>${equity:,.2f}</code>\n"
