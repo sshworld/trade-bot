@@ -795,12 +795,16 @@ class PaperTradingEngine:
         split = tp_split or list(self.settings.tp_split)
         lev = leverage or self.settings.min_leverage
 
+        # TP1 가격 기억 (1분할 merge 시 사용)
+        tp1_distance = avg_entry * Decimal(str(pcts[0] / 100 / lev))
+        tp1_price = (avg_entry + tp1_distance if side == PositionSide.LONG
+                     else avg_entry - tp1_distance).quantize(Decimal("0.01"))
+
         tranches = []
         for i, (sp, tp_pct) in enumerate(zip(split, pcts)):
             qty = (total_qty * Decimal(str(sp))).quantize(Decimal("0.001"), rounding=ROUND_DOWN)
             if i == len(split) - 1:
                 qty = total_qty - sum(t.quantity for t in tranches)
-            # 마진 tp_pct% = 가격 tp_pct/leverage % 이동
             tp_distance = avg_entry * Decimal(str(tp_pct / 100 / lev))
             if side == PositionSide.LONG:
                 target = avg_entry + tp_distance
@@ -811,7 +815,14 @@ class PaperTradingEngine:
                 target_price=target.quantize(Decimal("0.01")), quantity=qty, created_at=now,
             ))
         min_qty = self._calc_min_tranche_qty(avg_entry)
-        return self._merge_small_tranches(tranches, min_qty)
+        merged = self._merge_small_tranches(tranches, min_qty)
+
+        # 1분할 merge → TP1 가격 고정 (2026-04-13 회의록: 무위험 구간 없으므로 체결 확률 최우선)
+        if len(merged) == 1 and len(tranches) > 1:
+            merged[0].target_price = tp1_price
+            logger.info(f"Exit merge → 1분할: TP 가격을 TP1({tp1_price})으로 고정")
+
+        return merged
 
     def _calculate_stop_loss(
         self, side: PositionSide, entry_price: Decimal,
