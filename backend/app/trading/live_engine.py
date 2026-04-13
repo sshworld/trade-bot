@@ -687,13 +687,25 @@ class LiveTradingEngine(PaperTradingEngine):
 
                         # SL 항상 재배치 (평단/수량 변경)
                         await self._place_sl_order(pos)
-                        logger.info(f"[LIVE] SL/TP updated after entry fill: SL={pos.stop_loss_price}")
                         changed = True
-                        logger.info(f"[LIVE] Entry tranche filled: {tranche.id} @ {tranche.filled_price}")
 
                         filled_entries = sum(1 for t in pos.entry_tranches if t.status == OrderStatus.FILLED)
                         if filled_entries == len(pos.entry_tranches):
                             pos.status = "open"
+
+                        logger.info(f"[LIVE] Entry tranche filled: {tranche.id} @ {tranche.filled_price}")
+
+                        # 텔레그램 알림
+                        side_kr = "롱" if pos.side == PositionSide.LONG else "숏"
+                        await self.alert_sender._send_telegram_text(
+                            f"📥 <b>추매 체결 ({filled_entries}/{len(pos.entry_tranches)})</b>\n\n"
+                            f"Side: {side_kr}\n"
+                            f"Price: ${tranche.filled_price:,.2f}\n"
+                            f"Qty: {tranche.quantity}\n"
+                            f"평단: ${pos.avg_entry_price:,.2f}\n"
+                            f"총수량: {pos.total_quantity}\n"
+                            f"새 SL: ${pos.stop_loss_price:,.2f}"
+                        )
 
                     elif status in ("CANCELED", "REJECTED", "EXPIRED"):
                         tranche.status = OrderStatus.CANCELLED
