@@ -111,7 +111,7 @@ class TelegramBot:
         halted = status["anomaly"]["is_halted"]
         available = balance - margin_used
 
-        # 포지션 요약
+        # 포지션 상세 (현재가, TP, SL 포함)
         pos_summary = ""
         if positions_count > 0:
             pos_list = trading_engine.get_open_positions()
@@ -121,11 +121,20 @@ class TelegramBot:
                 pos_summary += (
                     f"\n{side_icon} <b>{p['side'].upper()} {p.get('leverage', 5)}x</b>"
                     f" | {p['quantity']} BTC @ ${p['avg_entry_price']}"
-                    f"\n{pnl_icon} PnL: ${p['unrealized_pnl']} ({p['pnl_percent']:+.2f}%)"
-                    f" | SL: ${p['stop_loss_price']}"
-                    f" | 진입 {p['filled_entries']}/{p['total_entries']}"
-                    f" 익절 {p['filled_exits']}/{p['total_exits']}"
+                    f"\n💲 <b>현재:</b> ${p['mark_price']}"
+                    f"\n{pnl_icon} <b>PnL:</b> ${p['unrealized_pnl']} ({p['pnl_percent']:+.2f}%)"
+                    f"\n🛑 <b>SL:</b> ${p['stop_loss_price']}"
+                    f"\n🎯 <b>진입:</b> {p['filled_entries']}/{p['total_entries']}"
+                    f" | <b>익절:</b> {p['filled_exits']}/{p['total_exits']}"
                 )
+                # TP 목록
+                for o in p.get("exit_orders", []):
+                    s = "✅" if o["status"] == "filled" else "⏳" if o["status"] in ("pending", "waiting") else "❌"
+                    tp_pct = ""
+                    if p["avg_entry_price"] and float(p["avg_entry_price"]) > 0:
+                        diff = abs(float(o["price"]) - float(p["avg_entry_price"])) / float(p["avg_entry_price"]) * 100
+                        tp_pct = f" ({diff:.1f}%)"
+                    pos_summary += f"\n  {s} TP ${o['price']}{tp_pct} × {o['qty']}"
 
         # 시그널 상황
         signal_lines = []
@@ -179,49 +188,8 @@ class TelegramBot:
         await self._send(chat_id, msg)
 
     async def _handle_position(self, chat_id: str):
-        from app.trading.engine import trading_engine
-
-        positions = trading_engine.get_open_positions()
-        if not positions:
-            await self._send(chat_id, "📭 열린 포지션 없음")
-            return
-
-        for p in positions:
-            side = "🟢 LONG" if p["side"] == "long" else "🔴 SHORT"
-            entry = p["avg_entry_price"]
-            mark = p["mark_price"]
-            qty = p["quantity"]
-            pnl = p["unrealized_pnl"]
-            pnl_pct = p["pnl_percent"]
-            sl = p["stop_loss_price"]
-            margin = p["margin"]
-            filled_e = p["filled_entries"]
-            total_e = p["total_entries"]
-            filled_x = p["filled_exits"]
-            total_x = p["total_exits"]
-
-            # TP 목록
-            tp_lines = []
-            for o in p.get("exit_orders", []):
-                s = "✅" if o["status"] == "filled" else "⏳" if o["status"] in ("pending", "waiting") else "❌"
-                tp_lines.append(f"  {s} ${o['price']} ({o['qty']})")
-            tp_text = "\n".join(tp_lines) if tp_lines else "  없음"
-
-            emoji = "💚" if float(pnl) >= 0 else "🔴"
-
-            await self._send(chat_id,
-                f"📈 <b>POSITION</b>\n\n"
-                f"<b>방향:</b> {side} {p.get('leverage', 5)}x\n"
-                f"<b>진입:</b> ${entry}\n"
-                f"<b>현재:</b> ${mark}\n"
-                f"<b>수량:</b> {qty} BTC\n"
-                f"<b>마진:</b> ${margin}\n\n"
-                f"{emoji} <b>PnL:</b> ${pnl} ({pnl_pct:+.2f}%)\n\n"
-                f"<b>SL:</b> ${sl}\n"
-                f"<b>진입:</b> {filled_e}/{total_e}\n"
-                f"<b>익절:</b> {filled_x}/{total_x}\n{tp_text}\n\n"
-                f"<b>시그널:</b> {p.get('signal_message', '')[:100]}"
-            )
+        """포지션 상세 → /status로 통합."""
+        await self._handle_status(chat_id)
 
 
 telegram_bot = TelegramBot()
