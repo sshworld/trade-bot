@@ -98,13 +98,34 @@ class TelegramBot:
         from app.tasks.scheduler import latest_results, ENTRY_TIMEFRAMES
 
         status = trading_engine.get_status()
-        balance = status["balance"]
-        equity = status["equity"]
-        pnl = status["daily_pnl"]
+        balance = Decimal(status["balance"])
+        equity = Decimal(status["equity"])
+        margin_used = Decimal(status["margin_used"])
+        unrealized = Decimal(status["unrealized_pnl"])
+        daily_pnl = Decimal(status["daily_pnl"])
+        total_fees = Decimal(status["total_fees"])
         trades = status["daily_trades"]
-        positions = status["open_positions_count"]
+        total_trades = status["total_trades"]
+        positions_count = status["open_positions_count"]
         win_rate = status["win_rate"]
         halted = status["anomaly"]["is_halted"]
+        available = balance - margin_used
+
+        # 포지션 요약
+        pos_summary = ""
+        if positions_count > 0:
+            pos_list = trading_engine.get_open_positions()
+            for p in pos_list:
+                side_icon = "🟢" if p["side"] == "long" else "🔴"
+                pnl_icon = "📈" if float(p["unrealized_pnl"]) >= 0 else "📉"
+                pos_summary += (
+                    f"\n{side_icon} <b>{p['side'].upper()} {p.get('leverage', 5)}x</b>"
+                    f" | {p['quantity']} BTC @ ${p['avg_entry_price']}"
+                    f"\n{pnl_icon} PnL: ${p['unrealized_pnl']} ({p['pnl_percent']:+.2f}%)"
+                    f" | SL: ${p['stop_loss_price']}"
+                    f" | 진입 {p['filled_entries']}/{p['total_entries']}"
+                    f" 익절 {p['filled_exits']}/{p['total_exits']}"
+                )
 
         # 시그널 상황
         signal_lines = []
@@ -122,21 +143,33 @@ class TelegramBot:
             signal_lines.append(
                 f"  {dom} <b>{tf}</b>: B{bull:.1f}({bull_fam}f) / S{bear:.1f}({bear_fam}f){conf_mark}"
             )
-
         signals_text = "\n".join(signal_lines) if signal_lines else "  데이터 없음"
 
-        state = "🔴 HALTED" if halted else ("📈 포지션 보유" if positions > 0 else "⏳ 대기 중")
+        state = "🔴 HALTED" if halted else ("📈 포지션 보유" if positions_count > 0 else "⏳ 대기 중")
+        daily_icon = "📈" if daily_pnl >= 0 else "📉"
+        unreal_icon = "💚" if unrealized >= 0 else "💔"
 
-        await self._send(chat_id,
-            f"📊 <b>STATUS</b>\n\n"
-            f"<b>상태:</b> {state}\n"
-            f"<b>잔고:</b> ${Decimal(balance):,.2f}\n"
-            f"<b>평가:</b> ${Decimal(equity):,.2f}\n"
-            f"<b>일일 PnL:</b> ${Decimal(pnl):,.2f}\n"
-            f"<b>일일 거래:</b> {trades}건\n"
-            f"<b>승률:</b> {win_rate}%\n\n"
-            f"<b>시그널 (진입 가능 TF):</b>\n{signals_text}"
+        msg = (
+            f"📊 <b>STATUS</b> — {state}\n"
+            f"{'━' * 28}\n\n"
+            f"💰 <b>잔고:</b> <code>${balance:,.2f}</code>\n"
+            f"💎 <b>평가:</b> <code>${equity:,.2f}</code>\n"
+            f"🏦 <b>가용:</b> <code>${available:,.2f}</code>\n"
+            f"🔒 <b>마진:</b> <code>${margin_used:,.2f}</code>\n"
+            f"{unreal_icon} <b>미실현:</b> <code>${unrealized:,.2f}</code>\n\n"
+            f"{daily_icon} <b>금일 PnL:</b> <code>${daily_pnl:,.2f}</code>"
+            f" | 거래 {trades}건\n"
+            f"📊 <b>누적:</b> 총 {total_trades}건"
+            f" | 승률 {win_rate}%"
+            f" | 수수료 ${total_fees:,.2f}\n"
         )
+
+        if pos_summary:
+            msg += f"\n{'━' * 28}\n<b>📌 포지션</b>{pos_summary}\n"
+
+        msg += f"\n{'━' * 28}\n<b>📡 시그널</b>\n{signals_text}"
+
+        await self._send(chat_id, msg)
 
     async def _handle_position(self, chat_id: str):
         from app.trading.engine import trading_engine
