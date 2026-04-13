@@ -772,20 +772,21 @@ class PaperTradingEngine:
         pos_id: str, now: int, margin: Decimal = Decimal("0"),
         tp_margin_pcts: list[float] | None = None,
         tp_split: list[float] | None = None,
+        leverage: int = 0,
     ) -> list[TrancheOrder]:
-        """마진 % 기반 TP (2026-04-13 회의록)."""
+        """마진 % 기반 TP (2026-04-13 회의록).
+        distance = entry × tp_pct / (leverage × 100) — 수량 무관, 부분 체결에도 정확."""
         pcts = tp_margin_pcts or list(self.settings.tp_margin_pcts)
         split = tp_split or list(self.settings.tp_split)
-        if margin <= 0:
-            margin = Decimal("1")
+        lev = leverage or self.settings.min_leverage
 
         tranches = []
         for i, (sp, tp_pct) in enumerate(zip(split, pcts)):
             qty = (total_qty * Decimal(str(sp))).quantize(Decimal("0.001"), rounding=ROUND_DOWN)
             if i == len(split) - 1:
                 qty = total_qty - sum(t.quantity for t in tranches)
-            # 마진 대비 tp_pct% 수익 = 가격 거리
-            tp_distance = (margin * Decimal(str(tp_pct / 100))) / total_qty
+            # 마진 tp_pct% = 가격 tp_pct/leverage % 이동
+            tp_distance = avg_entry * Decimal(str(tp_pct / 100 / lev))
             if side == PositionSide.LONG:
                 target = avg_entry + tp_distance
             else:
@@ -914,8 +915,8 @@ class PaperTradingEngine:
             pos.exit_tranches = filled_exits + self._create_exit_tranches(
                 pos.side, pos.avg_entry_price, remaining_qty,
                 pos.id, int(time.time() * 1000),
-                margin=pos.allocated_margin,
                 tp_margin_pcts=pos.tp_margin_pcts or None,
+                leverage=pos.leverage,
                 tp_split=pos.tp_split or None,
             )
 
