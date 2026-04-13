@@ -123,7 +123,7 @@ class LiveTradingEngine(PaperTradingEngine):
                 "🟢 <b>LIVE ENGINE STARTED</b>\n\n"
                 f"💰 Balance: ${real_balance}\n"
                 f"📊 Leverage: {self.settings.max_leverage}x\n"
-                f"🔒 Daily loss limit: -{self.settings.daily_loss_tier2_pct}%\n"
+                f"🔒 SL Risk: {self.settings.sl_balance_risk_pct}% | DD Halt: {self.settings.drawdown_halt_pct}%\n"
                 f"📍 Open positions: {len(self.open_positions)}"
             )
 
