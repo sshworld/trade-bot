@@ -164,57 +164,79 @@ class LiveTradingEngine(PaperTradingEngine):
                 logger.info("[LIVE] on_signal blocked: anomaly halt")
                 return None
 
-            # drawdown 체크
+            # ── 적응형 필터 (2026-04-13 회의록) ──
+            from app.trading.schemas import FilterState
+            daily_base = self.account.daily_start_balance if self.account.daily_start_balance > 0 else self.account.initial_capital
+            daily_pnl_pct = float(self.account.daily_pnl / daily_base * 100) if daily_base > 0 else 0.0
+            s = self.settings
+
+            # Drawdown 체크
             if self.account.peak_equity > 0:
-                dd = (self.account.peak_equity - self.account.equity) / self.account.peak_equity * 100
-                if dd >= Decimal(str(self.settings.drawdown_halt_pct)):
+                dd = float((self.account.peak_equity - self.account.equity) / self.account.peak_equity * 100)
+                if dd >= s.drawdown_halt_pct:
                     logger.warning(f"[LIVE] Drawdown halt: {dd:.1f}%")
                     today_end = (int(time.time() // 86400) + 1) * 86400 * 1000
                     self._halt_until = today_end
+                    self._filter_state = FilterState.STOP
                     return None
 
-            # 일일 손실 체크
-            daily_base = self.account.daily_start_balance if self.account.daily_start_balance > 0 else self.account.initial_capital
-            daily_loss_pct = float(-self.account.daily_pnl / daily_base * 100) if self.account.daily_pnl < 0 else 0.0
-            if daily_loss_pct >= self.settings.daily_loss_tier2_pct:
+            # 필터 상태 결정
+            prev_state = self._filter_state
+            if daily_pnl_pct <= -s.filter_stop_pnl_pct:
+                self._filter_state = FilterState.STOP
                 today_end = (int(time.time() // 86400) + 1) * 86400 * 1000
                 self._halt_until = today_end
-                logger.info(f"[LIVE] Daily loss halt: -{daily_loss_pct:.1f}%")
+                if prev_state != FilterState.STOP:
+                    logger.info(f"[LIVE] STOP: PnL {daily_pnl_pct:+.1f}%")
                 return None
+            elif daily_pnl_pct <= -s.filter_critical_pnl_pct:
+                self._filter_state = FilterState.CRITICAL
+            elif daily_pnl_pct <= -s.filter_caution_pnl_pct:
+                self._filter_state = FilterState.CAUTION
+            elif daily_pnl_pct >= s.filter_boost_pnl_pct:
+                self._filter_state = FilterState.BOOST
+            else:
+                self._filter_state = FilterState.NORMAL
 
-            # velocity brake
+            if self._filter_state != prev_state:
+                logger.info(f"[LIVE] Filter: {prev_state.value} → {self._filter_state.value} (PnL {daily_pnl_pct:+.1f}%)")
+
+            min_strength = {
+                FilterState.BOOST: s.filter_boost_strength,
+                FilterState.NORMAL: s.filter_normal_strength,
+                FilterState.CAUTION: s.filter_caution_strength,
+                FilterState.CRITICAL: s.filter_critical_strength,
+            }[self._filter_state]
+
+            # velocity brake: strength +0.15
             recent_sl = [
                 t for t in self.trade_history[-10:]
-                if t.close_reason == "stop_loss" and now - t.closed_at < self.settings.velocity_window_ms
+                if t.close_reason == "stop_loss" and now - t.closed_at < s.velocity_window_ms
             ]
-            if len(recent_sl) >= self.settings.velocity_max_consecutive_sl:
-                self._halt_until = now + self.settings.velocity_pause_ms
-                logger.info(f"[LIVE] REJECT: velocity brake ({len(recent_sl)} SLs in window)")
+            if len(recent_sl) >= s.velocity_max_consecutive_sl:
+                if self._velocity_bump_until < now:
+                    self._velocity_bump_until = now + s.velocity_bump_duration_ms
+                    logger.info(f"[LIVE] Velocity bump: +{s.velocity_strength_bump}")
+            if now < self._velocity_bump_until:
+                min_strength += s.velocity_strength_bump
+
+            signal_strength = signal.get("strength", 0)
+            if signal_strength < min_strength:
                 return None
 
-            # 시그널 스로틀 (5초, 2026-04-11 회의록)
+            # 시그널 스로틀
             expired = [k for k, t in self._recent_signals.items() if now - t > 60_000]
             for k in expired:
                 del self._recent_signals[k]
             sig_key = f"{signal['type']}_{signal['direction']}"
             if sig_key in self._recent_signals:
                 if now - self._recent_signals[sig_key] < 5_000:
-                    return None  # 5초 스로틀 — silent
+                    return None
             self._recent_signals[sig_key] = now
 
             side = PositionSide.LONG if signal["direction"] == "bullish" else PositionSide.SHORT
             is_consensus = signal.get("type", "").startswith("consensus_override")
             signal_tf = signal.get("timeframe", "1h")
-
-            # 연속 SL 쿨다운
-            recent_same_dir = [
-                t for t in self.trade_history[-10:]
-                if t.side == side and t.close_reason == "stop_loss"
-            ]
-            if len(recent_same_dir) >= 2:
-                if now - recent_same_dir[-1].closed_at < 1_800_000:
-                    logger.info(f"[LIVE] REJECT: 2 consecutive {side.value} SLs, 30min cooldown")
-                    return None
 
             # 기존 포지션 처리
             if self.open_positions:
@@ -291,15 +313,10 @@ class LiveTradingEngine(PaperTradingEngine):
             if atr <= 0:
                 atr = float(current_price) * 0.01
 
-            size_multiplier = Decimal("1.0")
-            if daily_loss_pct >= self.settings.daily_loss_tier1_pct:
-                size_multiplier = Decimal("0.5")
-                leverage = self.settings.min_leverage
-
-            # ── % 기반 포지션 사이징 (2026-04-13 회의록) ──
+            # ── % 기반 포지션 사이징 (사이즈 100%, 적응형 필터가 진입 품질 제어) ──
             real_balance = await self._get_real_balance()
             max_margin = real_balance * Decimal(str(self.settings.margin_cap_pct / 100))
-            margin = (max_margin * size_multiplier).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
+            margin = max_margin.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
             position_notional = margin * leverage
             position_notional = position_notional * Decimal(str(self.settings.slippage_buffer))
             position_notional = position_notional.quantize(Decimal("0.01"), rounding=ROUND_DOWN)
@@ -313,7 +330,7 @@ class LiveTradingEngine(PaperTradingEngine):
                 return None
 
             # SL 거리: 잔고 2% 고정 손실 역산
-            risk_amount = real_balance * Decimal(str(self.settings.sl_balance_risk_pct / 100)) * size_multiplier
+            risk_amount = real_balance * Decimal(str(self.settings.sl_balance_risk_pct / 100))
             sl_distance = risk_amount / total_qty
             min_sl = current_price * Decimal(str(self.settings.min_sl_distance_pct / 100))
             sl_distance = max(sl_distance, min_sl)

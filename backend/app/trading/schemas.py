@@ -113,6 +113,15 @@ class TradeTier(str, Enum):
     BLOCKED = "blocked"
 
 
+class FilterState(str, Enum):
+    """적응형 필터 상태 (2026-04-13 회의록)."""
+    BOOST = "boost"        # 일일 +3% 이상 → strength 0.50
+    NORMAL = "normal"      # 기본 → strength 0.55
+    CAUTION = "caution"    # 일일 -4% → strength 0.70
+    CRITICAL = "critical"  # 일일 -6% → strength 0.75
+    STOP = "stop"          # 일일 -8% 또는 DD -10% → 당일 중단
+
+
 class TrendContext(BaseModel):
     tf_directions: dict[str, str] = {}
     tf_strengths: dict[str, float] = {}
@@ -192,27 +201,34 @@ class TradingSettings(BaseModel):
     time_exit_tighten_hours: float = 48.0  # SL 50% 조임
     time_exit_force_hours: float = 72.0    # 시장가 청산
 
-    # 일일 제한 — 횟수 무제한, 손실만 제한
-    daily_loss_tier1_pct: float = 3.0    # -3% → 사이즈 절반
-    daily_loss_tier2_pct: float = 5.0    # -5% → 당일 중단 (다음 날 00시 복귀)
-    drawdown_halt_pct: float = 10.0      # 고점 대비 -10% → 중단
+    # ── 적응형 필터 (2026-04-13 회의록) ──
+    # 사이즈 절반/강제 중단 폐기 → 시그널 품질 필터링
+    filter_boost_pnl_pct: float = 3.0         # 일일 +3% → Boost
+    filter_boost_strength: float = 0.50
+    filter_normal_strength: float = 0.55
+    filter_caution_pnl_pct: float = 4.0       # 일일 -4% → Caution
+    filter_caution_strength: float = 0.70
+    filter_critical_pnl_pct: float = 6.0      # 일일 -6% → Critical
+    filter_critical_strength: float = 0.75
+    filter_stop_pnl_pct: float = 8.0          # 일일 -8% → Stop (당일 중단)
+    drawdown_halt_pct: float = 10.0           # DD -10% → 당일 중단
+
+    # velocity brake: 3연속 SL → strength +0.15 (30분간, 중단 아님)
+    velocity_max_consecutive_sl: int = 3
+    velocity_window_ms: int = 3_600_000       # 60분
+    velocity_strength_bump: float = 0.15      # strength 임계값 가산
+    velocity_bump_duration_ms: int = 1_800_000  # 30분간 유지
 
     # 교체 — 무제한, 품질 게이트
     replacement_cooldown_ms: int = 1_200_000  # 20분
-    replacement_min_score_diff: float = 0.5   # 새 시그널 > 기존 + 0.5
+    replacement_min_score_diff: float = 0.5
     same_signal_block_ms: int = 28_800_000    # 같은 시그널 8시간 차단
-
-    # 속도 제한 (velocity brake)
-    velocity_max_consecutive_sl: int = 3      # 60분 내 3연속 SL
-    velocity_window_ms: int = 3_600_000       # 60분
-    velocity_pause_ms: int = 1_800_000        # 30분 일시 중단
 
     counter_trend: CounterTrendSettings = CounterTrendSettings()
 
 
 class LiveTradingSettings(TradingSettings):
     """실거래용 리스크 파라미터 (2026-04-13 회의록 기준)."""
-    drawdown_halt_pct: float = 7.0        # Peak drawdown -7% → 당일 정지
     slippage_buffer: float = 0.95         # 계산 사이즈의 95%만 사용
     min_notional: Decimal = Decimal("100")  # Binance 최소 노셔널 (자연 하한)
     balance_cache_ttl_sec: float = 5.0    # 잔고 캐시 5초
