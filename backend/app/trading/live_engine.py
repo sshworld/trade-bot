@@ -907,6 +907,19 @@ class LiveTradingEngine(PaperTradingEngine):
         if change_pct >= 0.1:
             await self._place_sl_order(pos)
 
+    # ── Account 업데이트 오버라이드 (cross margin) ─────────
+
+    def _update_account(self, price: Decimal):
+        """Cross margin: equity = balance + unrealized (margin 중복 제거)."""
+        unrealized = Decimal("0")
+        for pos in self.open_positions.values():
+            if pos.avg_entry_price and pos.total_quantity > 0:
+                unrealized += self._calc_pnl(pos.side, pos.avg_entry_price, price, pos.total_quantity, pos.leverage)
+        self.account.unrealized_pnl = unrealized
+        self.account.equity = self.account.balance + unrealized
+        if self.account.equity > self.account.peak_equity:
+            self.account.peak_equity = self.account.equity
+
     # ── Reset (DB 초기화 + 바이낸스 주문 전부 취소) ───────────
 
     def reset(self):
