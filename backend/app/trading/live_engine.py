@@ -251,7 +251,11 @@ class LiveTradingEngine(PaperTradingEngine):
             if self.open_positions:
                 pos = list(self.open_positions.values())[0]
                 if pos.side == side:
+                    old_sl = pos.stop_loss_price
                     self._tighten_sl_on_confirmation(pos, current_price)
+                    if pos.stop_loss_price != old_sl:
+                        await self._update_sl_order_if_changed(pos, old_sl)
+                        save_position(pos)
                     return None
                 else:
                     if not self._should_replace(pos, current_price, now, signal):
