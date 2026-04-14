@@ -113,7 +113,15 @@ class LiveTradingEngine(PaperTradingEngine):
                 save_account(self.account)
                 logger.info(f"[LIVE] Account initialized with ${real_balance}")
 
-            # 5. WAITING 상태 주문 reconcile
+            # 5. 기존 Algo 주문 전부 취소 후 재배치 (중복 방지)
+            if self.open_positions:
+                await self._cancel_all_binance_algo_orders()
+                for pos in self.open_positions.values():
+                    await self._place_sl_order(pos)
+                    await self._place_exit_orders(pos)
+                logger.info(f"[LIVE] SL/TP re-placed for {len(self.open_positions)} positions")
+
+            # 6. WAITING 상태 주문 reconcile
             await self.reconcile_orders()
 
             self._initialized = True
@@ -886,6 +894,21 @@ class LiveTradingEngine(PaperTradingEngine):
                 pos.signal_details["_pending_exit_placement"] = True
 
     # ── SL 사전 배치 (STOP_MARKET + reduceOnly) ─────────────
+
+    async def _cancel_all_binance_algo_orders(self):
+        """바이낸스에 있는 모든 Algo 주문 취소 (중복 방지)."""
+        try:
+            params = binance_client._sign({"symbol": "BTCUSDT"})
+            resp = await binance_client.client.get(
+                "/fapi/v1/openAlgoOrders", params=params, headers=binance_client._auth_headers()
+            )
+            for a in resp.json():
+                try:
+                    await binance_client.cancel_algo_order("BTCUSDT", str(a["algoId"]))
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     async def _place_sl_order(self, pos: Position):
         """SL을 바이낸스 Algo API (STOP_MARKET)로 사전 배치."""
