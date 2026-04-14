@@ -860,7 +860,7 @@ class LiveTradingEngine(PaperTradingEngine):
         """Exit tranche들을 바이낸스 Algo API (TAKE_PROFIT_MARKET)로 발행."""
         close_side = "SELL" if pos.side == PositionSide.LONG else "BUY"
         for tranche in pos.exit_tranches:
-            if tranche.status != OrderStatus.PENDING:
+            if tranche.status not in (OrderStatus.PENDING, OrderStatus.WAITING):
                 continue
             try:
                 result = await binance_client.place_algo_order(
