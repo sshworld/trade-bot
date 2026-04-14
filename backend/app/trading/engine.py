@@ -258,9 +258,9 @@ class PaperTradingEngine:
 
             # SL 가격 계산
             if side == PositionSide.LONG:
-                stop_loss = (current_price - sl_distance).quantize(Decimal("0.01"))
+                stop_loss = (current_price - sl_distance).quantize(Decimal("0.10"))
             else:
-                stop_loss = (current_price + sl_distance).quantize(Decimal("0.01"))
+                stop_loss = (current_price + sl_distance).quantize(Decimal("0.10"))
 
             signal_details = signal.get("details") or {}
             signal_details["trade_tier"] = tier_name
@@ -800,7 +800,7 @@ class PaperTradingEngine:
                 target = base_price + offset_price
             tranches.append(TrancheOrder(
                 id=f"{pos_id}-e{i}", position_id=pos_id, side=side, is_entry=True,
-                target_price=target.quantize(Decimal("0.01")), quantity=qty, created_at=now,
+                target_price=target.quantize(Decimal("0.10")), quantity=qty, created_at=now,
             ))
         min_qty = self._calc_min_tranche_qty(base_price)
         return self._merge_small_tranches(tranches, min_qty)
@@ -835,7 +835,7 @@ class PaperTradingEngine:
                 target = avg_entry - tp_distance
             tranches.append(TrancheOrder(
                 id=f"{pos_id}-x{i}", position_id=pos_id, side=side, is_entry=False,
-                target_price=target.quantize(Decimal("0.01")), quantity=qty, created_at=now,
+                target_price=target.quantize(Decimal("0.10")), quantity=qty, created_at=now,
             ))
         min_qty = self._calc_min_tranche_qty(avg_entry)
         merged = self._merge_small_tranches(tranches, min_qty)
@@ -951,9 +951,9 @@ class PaperTradingEngine:
             min_sl = pos.avg_entry_price * Decimal(str(self.settings.min_sl_distance_pct / 100))
             sl_distance = max(sl_distance, min_sl)
             if pos.side == PositionSide.LONG:
-                new_sl = (pos.avg_entry_price - sl_distance).quantize(Decimal("0.01"))
+                new_sl = (pos.avg_entry_price - sl_distance).quantize(Decimal("0.10"))
             else:
-                new_sl = (pos.avg_entry_price + sl_distance).quantize(Decimal("0.01"))
+                new_sl = (pos.avg_entry_price + sl_distance).quantize(Decimal("0.10"))
             pos.stop_loss_price = new_sl
 
         # Exit tranche 생성/재생성 (마진 % 기반)
