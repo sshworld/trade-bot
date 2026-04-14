@@ -222,6 +222,7 @@ class LiveTradingEngine(PaperTradingEngine):
 
             signal_strength = signal.get("strength", 0)
             if signal_strength < min_strength:
+                logger.info(f"[LIVE] REJECT: strength {signal_strength:.2f} < min {min_strength:.2f} (filter={self._filter_state.value})")
                 return None
 
             # 시그널 스로틀
