@@ -458,11 +458,11 @@ class PaperTradingEngine:
 
         remaining_qty = Decimal("0")
         for t in pos.exit_tranches:
-            if t.status == OrderStatus.PENDING:
+            if t.status in (OrderStatus.PENDING, OrderStatus.WAITING):
                 t.status = OrderStatus.CANCELLED
                 remaining_qty += t.quantity
         for t in pos.entry_tranches:
-            if t.status == OrderStatus.PENDING:
+            if t.status in (OrderStatus.PENDING, OrderStatus.WAITING):
                 t.status = OrderStatus.CANCELLED
 
         if remaining_qty > 0 and pos.avg_entry_price:
