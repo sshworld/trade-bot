@@ -595,19 +595,15 @@ class LiveTradingEngine(PaperTradingEngine):
                         pass
                 tranche.status = OrderStatus.CANCELLED
 
-        # 2. 남은 수량 시장가 청산
-        remaining_qty = Decimal("0")
-        for t in pos.exit_tranches:
-            if t.status != OrderStatus.FILLED:
-                remaining_qty += t.quantity
-        # entry 중 미체결도 빼기
-        filled_entry_qty = sum(t.quantity for t in pos.entry_tranches if t.status == OrderStatus.FILLED)
-
-        close_qty = filled_entry_qty - sum(
-            t.quantity for t in pos.exit_tranches if t.status == OrderStatus.FILLED
-        )
-
+        # 2. 바이낸스 실제 포지션 수량으로 청산 (로컬과 불일치 방지)
         actual_close_price = price
+        try:
+            binance_pos = await binance_client.get_position_risk("BTCUSDT")
+            binance_qty = abs(Decimal(binance_pos["positionAmt"])) if binance_pos and float(binance_pos.get("positionAmt", 0)) != 0 else Decimal("0")
+        except Exception:
+            binance_qty = Decimal("0")
+
+        close_qty = binance_qty
         if close_qty > 0:
             close_side = "SELL" if pos.side == PositionSide.LONG else "BUY"
             try:
@@ -615,7 +611,7 @@ class LiveTradingEngine(PaperTradingEngine):
                     symbol="BTCUSDT",
                     side=close_side,
                     order_type="MARKET",
-                    quantity=close_qty,
+                    quantity=close_qty.quantize(Decimal("0.001")),
                     client_order_id=f"{pos_id}-close",
                 )
                 if resp.get("avgPrice"):
@@ -625,11 +621,27 @@ class LiveTradingEngine(PaperTradingEngine):
                 logger.error(f"[LIVE] Close order failed: {e}")
                 # 실패해도 로컬 상태는 업데이트 (다음 reconcile에서 처리)
 
-        # 3. 로컬 상태 업데이트 (Paper 로직 재사용)
+        # 3. 바이낸스에 포지션 남아있는지 확인
+        try:
+            check_pos = await binance_client.get_position_risk("BTCUSDT")
+            if check_pos and float(check_pos.get("positionAmt", 0)) != 0:
+                leftover = abs(Decimal(check_pos["positionAmt"]))
+                logger.warning(f"[LIVE] Position still exists after close! Remaining: {leftover}")
+                close_side2 = "SELL" if pos.side == PositionSide.LONG else "BUY"
+                await binance_client.place_order(
+                    symbol="BTCUSDT", side=close_side2, order_type="MARKET",
+                    quantity=leftover.quantize(Decimal("0.001")),
+                )
+                logger.info(f"[LIVE] Leftover closed: {leftover}")
+        except Exception as e:
+            logger.error(f"[LIVE] Leftover check failed: {e}")
+
+        # 4. 로컬 상태 업데이트 (Paper 로직 재사용)
         trade = self._close_position(pos_id, actual_close_price, reason)
 
         # 바이낸스 실잔고로 동기화
         try:
+            self._balance_cache = None  # 캐시 무효화
             real_bal = await self._get_real_balance()
             self.account.balance = real_bal
             self.account.margin_used = Decimal("0")
