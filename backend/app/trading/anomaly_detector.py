@@ -253,10 +253,10 @@ class AnomalyDetector:
         """거래 종료 후 검사."""
         now = int(time.time() * 1000)
 
-        # RULE 3: Fee Bleeding
-        alert = self._check_fee_bleeding(now, trade_history)
-        if alert:
-            return alert
+        # RULE 3: Fee Bleeding — 비활성화 (2026-04-26, 불필요한 halt 유발)
+        # alert = self._check_fee_bleeding(now, trade_history)
+        # if alert:
+        #     return alert
 
         # RULE 5: Consecutive Losses
         alert = self._check_consecutive_losses(now, trade_history)

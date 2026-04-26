@@ -566,75 +566,53 @@ class LiveTradingEngine(PaperTradingEngine):
 
             return events
 
-    # ── 실주문 청산 ───────────────────────────────────────────
+    # ── 실주문 청산 (원샷 전체 정리) ─────────────────────────
 
     async def _live_close_position(self, pos_id: str, price: Decimal, reason: str):
-        """바이낸스에서 시장가 청산 후 로컬 상태 업데이트."""
+        """바이낸스 원샷 전체 정리: 주문 전부 취소 → 포지션 청산 → 잔존 확인."""
         pos = self.open_positions.get(pos_id)
         if not pos:
             return None
 
-        # 1. SL 주문 취소
-        await self._cancel_sl_order(pos)
+        # ── STEP 1: 바이낸스 주문 전부 취소 (개별이 아닌 일괄) ──
+        await self._nuke_all_binance_orders()
 
-        # 2. 미체결 주문 전부 취소
-        for tranche in pos.entry_tranches:
-            if tranche.status in (OrderStatus.PENDING, OrderStatus.WAITING):
-                if tranche.client_order_id:
-                    try:
-                        await binance_client.cancel_order("BTCUSDT", tranche.client_order_id)
-                    except Exception:
-                        pass
-                tranche.status = OrderStatus.CANCELLED
-        for tranche in pos.exit_tranches:
-            if tranche.status in (OrderStatus.PENDING, OrderStatus.WAITING):
-                if tranche.binance_order_id:
-                    try:
-                        await binance_client.cancel_algo_order("BTCUSDT", tranche.binance_order_id)
-                    except Exception:
-                        pass
-                tranche.status = OrderStatus.CANCELLED
+        # 로컬 tranche 상태도 정리
+        for t in pos.entry_tranches + pos.exit_tranches:
+            if t.status in (OrderStatus.PENDING, OrderStatus.WAITING):
+                t.status = OrderStatus.CANCELLED
 
-        # 2. 바이낸스 실제 포지션 수량으로 청산 (로컬과 불일치 방지)
+        # ── STEP 2: 바이낸스 실제 포지션 청산 ──
         actual_close_price = price
         try:
             binance_pos = await binance_client.get_position_risk("BTCUSDT")
-            binance_qty = abs(Decimal(binance_pos["positionAmt"])) if binance_pos and float(binance_pos.get("positionAmt", 0)) != 0 else Decimal("0")
-        except Exception:
-            binance_qty = Decimal("0")
-
-        close_qty = binance_qty
-        if close_qty > 0:
-            close_side = "SELL" if pos.side == PositionSide.LONG else "BUY"
-            try:
+            if binance_pos and float(binance_pos.get("positionAmt", 0)) != 0:
+                amt = Decimal(binance_pos["positionAmt"])
+                close_side = "SELL" if amt > 0 else "BUY"
+                close_qty = abs(amt).quantize(Decimal("0.001"))
                 resp = await binance_client.place_order(
-                    symbol="BTCUSDT",
-                    side=close_side,
-                    order_type="MARKET",
-                    quantity=close_qty.quantize(Decimal("0.001")),
-                    client_order_id=f"{pos_id}-close",
+                    symbol="BTCUSDT", side=close_side, order_type="MARKET",
+                    quantity=close_qty,
                 )
                 if resp.get("avgPrice"):
                     actual_close_price = Decimal(str(resp["avgPrice"]))
-                logger.info(f"[LIVE] Close order filled @ {actual_close_price}")
-            except Exception as e:
-                logger.error(f"[LIVE] Close order failed: {e}")
-                # 실패해도 로컬 상태는 업데이트 (다음 reconcile에서 처리)
+                logger.info(f"[LIVE] Position closed: {close_side} {close_qty} @ {actual_close_price}")
+        except Exception as e:
+            logger.error(f"[LIVE] Close order failed: {e}")
 
-        # 3. 바이낸스에 포지션 남아있는지 확인
+        # ── STEP 3: 잔존 확인 (2차 시도) ──
         try:
-            check_pos = await binance_client.get_position_risk("BTCUSDT")
-            if check_pos and float(check_pos.get("positionAmt", 0)) != 0:
-                leftover = abs(Decimal(check_pos["positionAmt"]))
-                logger.warning(f"[LIVE] Position still exists after close! Remaining: {leftover}")
-                close_side2 = "SELL" if pos.side == PositionSide.LONG else "BUY"
+            check = await binance_client.get_position_risk("BTCUSDT")
+            if check and float(check.get("positionAmt", 0)) != 0:
+                leftover = abs(Decimal(check["positionAmt"]))
+                close_side2 = "SELL" if Decimal(check["positionAmt"]) > 0 else "BUY"
                 await binance_client.place_order(
                     symbol="BTCUSDT", side=close_side2, order_type="MARKET",
                     quantity=leftover.quantize(Decimal("0.001")),
                 )
-                logger.info(f"[LIVE] Leftover closed: {leftover}")
-        except Exception as e:
-            logger.error(f"[LIVE] Leftover check failed: {e}")
+                logger.warning(f"[LIVE] Leftover force-closed: {leftover}")
+        except Exception:
+            pass
 
         # 4. 로컬 상태 업데이트 (Paper 로직 재사용)
         trade = self._close_position(pos_id, actual_close_price, reason)
@@ -892,7 +870,8 @@ class LiveTradingEngine(PaperTradingEngine):
                 tranche.status = OrderStatus.WAITING
                 logger.info(f"[LIVE] TP algo order placed: {tranche.id} trigger={tranche.target_price} qty={tranche.quantity}")
             except Exception as e:
-                logger.error(f"[LIVE] TP algo order failed: {e}")
+                logger.error(f"[LIVE] TP algo order failed: {e} — will be managed by engine tick")
+                # 배치 실패해도 PENDING 유지 → 엔진이 on_price_update에서 직접 관리
 
     # ── recalculate 오버라이드: exit tranche 생성 후 실주문 ──
 
@@ -911,9 +890,10 @@ class LiveTradingEngine(PaperTradingEngine):
 
     # ── SL 사전 배치 (STOP_MARKET + reduceOnly) ─────────────
 
-    async def _cancel_all_binance_algo_orders(self):
-        """바이낸스에 있는 모든 Algo 주문 취소 (중복 방지)."""
+    async def _nuke_all_binance_orders(self):
+        """바이낸스 모든 주문 일괄 취소 (Algo + Regular)."""
         try:
+            # Algo 주문 전부 취소
             params = binance_client._sign({"symbol": "BTCUSDT"})
             resp = await binance_client.client.get(
                 "/fapi/v1/openAlgoOrders", params=params, headers=binance_client._auth_headers()
@@ -923,8 +903,19 @@ class LiveTradingEngine(PaperTradingEngine):
                     await binance_client.cancel_algo_order("BTCUSDT", str(a["algoId"]))
                 except Exception:
                     pass
-        except Exception:
-            pass
+            # 일반 주문 전부 취소
+            await binance_client.client.delete(
+                "/fapi/v1/allOpenOrders",
+                params=binance_client._sign({"symbol": "BTCUSDT"}),
+                headers=binance_client._auth_headers(),
+            )
+            logger.info("[LIVE] All Binance orders nuked")
+        except Exception as e:
+            logger.error(f"[LIVE] Nuke orders failed: {e}")
+
+    async def _cancel_all_binance_algo_orders(self):
+        """하위 호환용."""
+        await self._nuke_all_binance_orders()
 
     async def _place_sl_order(self, pos: Position):
         """SL을 바이낸스 Algo API (STOP_MARKET)로 사전 배치."""

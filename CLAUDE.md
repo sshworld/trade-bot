@@ -125,6 +125,9 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 - [x] 텔레그램 /status 상세 개선
 - [x] 적응형 필터 체계 (사이즈 절반/강제 중단 → 시그널 품질 필터링)
 - [x] 1분할 TP merge → TP1 가격 고정
+- [x] 포지션 청산 원샷 전체 정리 (_nuke_all_binance_orders)
+- [x] fee_bleeding halt 비활성화 (불필요한 halt 유발)
+- [x] 바이낸스 실제 수량 기반 청산 + 잔존 확인
 - [ ] PnL에 수수료 포함 표시
 - [ ] 자본 $10,000 도달 시 리스크 재검토 토론
 - [ ] TP 사전 배치 Phase 2 (트레일링 TP)
