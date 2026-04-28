@@ -45,7 +45,7 @@ class BinanceWSConsumer:
 
         while self._running:
             try:
-                async with websockets.connect(url) as ws:
+                async with websockets.connect(url, ping_interval=30, ping_timeout=10, close_timeout=5) as ws:
                     logger.info(f"Connected to Binance WS: {streams}")
                     await self.manager.broadcast({
                         "type": "status",
@@ -58,12 +58,12 @@ class BinanceWSConsumer:
                         await self._handle_message(raw_msg)
 
             except websockets.ConnectionClosed:
-                logger.warning("Binance WS connection closed. Reconnecting in 5s...")
+                logger.warning("Binance WS connection closed. Reconnecting in 3s...")
             except Exception as e:
-                logger.error(f"Binance WS error: {e}. Reconnecting in 5s...")
+                logger.error(f"Binance WS error: {e}. Reconnecting in 3s...")
 
             if self._running:
-                await asyncio.sleep(5)
+                await asyncio.sleep(3)
 
         tick_worker.cancel()
         candle_worker.cancel()
