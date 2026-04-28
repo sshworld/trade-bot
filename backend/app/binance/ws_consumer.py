@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 WS_BASE_URL = (
     "wss://stream.binancefuture.com"
     if settings.binance_testnet
-    else "wss://fstream.binance.com"
+    else "wss://stream.binancefuture.com"  # fstream.binance.com 불안정, 대체 도메인 사용
 )
 
 ANALYSIS_TIMEFRAMES = {"15m", "30m", "1h", "4h", "1d", "1w"}
