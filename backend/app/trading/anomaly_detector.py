@@ -216,32 +216,10 @@ class AnomalyDetector:
         entry_price: Decimal,
         current_price: Decimal,
     ) -> AnomalyAlert | None:
-        """주문 전 검사. 이상 감지 시 AnomalyAlert 반환, 정상이면 None.
+        """주문 전 검사. 모든 룰 비활성화 (2026-05-04 사용자 요청).
 
-        이 함수가 alert를 반환하면 주문을 거부해야 한다.
+        Daily Loss Tier와 Drawdown halt만 live_engine에서 직접 처리.
         """
-        now = int(time.time() * 1000)
-
-        # RULE 1: Rapid-Fire
-        alert = self._check_rapid_fire(now)
-        if alert:
-            return alert
-
-        # RULE 2: Flip-Flop
-        alert = self._check_flip_flop(now, direction)
-        if alert:
-            return alert
-
-        # RULE 6: Abnormal Position Size
-        alert = self._check_abnormal_size(now, margin, balance)
-        if alert:
-            return alert
-
-        # RULE 7: Price Sanity
-        alert = self._check_price_sanity(now, entry_price, current_price)
-        if alert:
-            return alert
-
         return None
 
     def check_post_trade(
@@ -250,40 +228,16 @@ class AnomalyDetector:
         daily_fees: Decimal,
         daily_volume: Decimal,
     ) -> AnomalyAlert | None:
-        """거래 종료 후 검사."""
-        now = int(time.time() * 1000)
-
-        # RULE 3: Fee Bleeding — 비활성화 (2026-04-26, 불필요한 halt 유발)
-        # alert = self._check_fee_bleeding(now, trade_history)
-        # if alert:
-        #     return alert
-
-        # RULE 5: Consecutive Losses
-        alert = self._check_consecutive_losses(now, trade_history)
-        if alert:
-            return alert
-
-        # RULE 8: Win Streak
-        alert = self._check_win_streak(now, trade_history)
-        if alert:
-            return alert
-
-        # RULE 10: Daily Fee Ratio
-        alert = self._check_daily_fee_ratio(now, daily_fees, daily_volume)
-        if alert:
-            return alert
-
+        """거래 종료 후 검사. 모든 룰 비활성화 (2026-05-04 사용자 요청)."""
         return None
 
     def check_replacement(self) -> AnomalyAlert | None:
-        """교체 발생 후 검사."""
-        now = int(time.time() * 1000)
-        return self._check_replacement_cascade(now)
+        """교체 발생 후 검사. 비활성화 (2026-05-04)."""
+        return None
 
     def check_heartbeat(self) -> AnomalyAlert | None:
-        """주기적으로 호출 (예: 매 tick). 가격 데이터 이상 감지."""
-        now = int(time.time() * 1000)
-        return self._check_stale_price(now)
+        """주기적 검사. 비활성화 (2026-05-04, stale_price halt 제거)."""
+        return None
 
     # ────────────────────────────────────────────────────────────
     # Rule 구현

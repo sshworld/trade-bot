@@ -180,7 +180,7 @@ class TradingSettings(BaseModel):
     min_sl_distance_pct: float = 0.3      # 최소 SL 거리 % (스프레드/슬리피지 보호)
 
     # ── 마진 캡 ──
-    margin_cap_pct: float = 55.0          # 잔고의 55%까지 마진 사용
+    margin_cap_pct: float = 95.0          # 잔고의 95%까지 마진 사용 (2026-05-04 사용자 요청)
 
     # ── 진입: 물타기 (ATR 기반 offset, 2026-04-13 간격 확대) ──
     entry_atr_offsets: list[float] = [0.0, 1.0, 2.0]      # ATR 배수 (역행) — 기존 0.5/1.0에서 2배
