@@ -3,7 +3,7 @@ import hashlib
 import hmac
 import logging
 import time
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 from urllib.parse import urlencode
 
 import httpx
@@ -18,6 +18,20 @@ BASE_URL = (
     if settings.binance_testnet
     else "https://fapi.binance.com"
 )
+
+# BTCUSDT futures filters (PRICE_FILTER.tickSize / LOT_SIZE.stepSize)
+PRICE_TICK = Decimal("0.1")
+QTY_STEP = Decimal("0.001")
+
+
+def round_price(p: Decimal | float | str) -> Decimal:
+    """Quantize price down to BTCUSDT tickSize (0.1). Binance rejects sub-tick prices on /fapi/v1/order."""
+    return Decimal(str(p)).quantize(PRICE_TICK, rounding=ROUND_DOWN)
+
+
+def round_qty(q: Decimal | float | str) -> Decimal:
+    """Quantize quantity down to BTCUSDT stepSize (0.001)."""
+    return Decimal(str(q)).quantize(QTY_STEP, rounding=ROUND_DOWN)
 
 
 class BinanceClient:
@@ -59,7 +73,7 @@ class BinanceClient:
             self._last_request_time = time.monotonic()
 
     async def _retry_request(self, client: httpx.AsyncClient, method: str, path: str, **kwargs):
-        """공통 retry 로직."""
+        """공통 retry 로직. 4xx 응답 본문(Binance code/msg)을 로그에 남김."""
         await self._rate_limit()
         for attempt in range(3):
             resp = await getattr(client, method)(path, **kwargs)
@@ -68,6 +82,10 @@ class BinanceClient:
                 logger.warning(f"Rate limited, retrying in {wait}s...")
                 await asyncio.sleep(wait)
                 continue
+            if resp.status_code >= 400:
+                logger.error(
+                    f"Binance {method.upper()} {path} → {resp.status_code}: {resp.text}"
+                )
             resp.raise_for_status()
             return resp
         resp.raise_for_status()
@@ -144,18 +162,19 @@ class BinanceClient:
         price: Decimal | None = None, stop_price: Decimal | None = None,
         client_order_id: str | None = None,
     ) -> dict:
-        """주문 실행."""
+        """주문 실행. 송신 직전 가격/수량을 tick/step에 맞춰 보정."""
+        qty_q = round_qty(quantity)
         params: dict = {
             "symbol": symbol,
             "side": side,           # BUY / SELL
             "type": order_type,     # LIMIT / MARKET / STOP_MARKET
-            "quantity": str(quantity),
+            "quantity": str(qty_q),
         }
         if price and order_type == "LIMIT":
-            params["price"] = str(price)
+            params["price"] = str(round_price(price))
             params["timeInForce"] = "GTC"
         if stop_price and order_type == "STOP_MARKET":
-            params["stopPrice"] = str(stop_price)
+            params["stopPrice"] = str(round_price(stop_price))
         if client_order_id:
             params["newClientOrderId"] = client_order_id
 
@@ -165,7 +184,7 @@ class BinanceClient:
             params=params, headers=self._auth_headers(),
         )
         result = resp.json()
-        logger.info(f"Order placed: {side} {order_type} {quantity} @ {price or 'market'} → {result.get('status')}")
+        logger.info(f"Order placed: {side} {order_type} {qty_q} @ {params.get('price', 'market')} → {result.get('status')}")
         return result
 
     async def get_order(self, symbol: str, client_order_id: str) -> dict | None:
@@ -199,18 +218,19 @@ class BinanceClient:
         trigger_price: Decimal, quantity: Decimal | None = None,
         close_position: bool = False, client_order_id: str | None = None,
     ) -> dict:
-        """Algo 조건부 주문 (STOP_MARKET, TAKE_PROFIT_MARKET 등)."""
+        """Algo 조건부 주문 (STOP_MARKET, TAKE_PROFIT_MARKET 등). 송신 직전 가격/수량 보정."""
+        trig_q = round_price(trigger_price)
         params: dict = {
             "algoType": "CONDITIONAL",
             "symbol": symbol,
             "side": side,
             "type": order_type,
-            "triggerPrice": str(trigger_price),
+            "triggerPrice": str(trig_q),
         }
         if close_position:
             params["closePosition"] = "true"
         elif quantity:
-            params["quantity"] = str(quantity)
+            params["quantity"] = str(round_qty(quantity))
         if client_order_id:
             params["newClientOrderId"] = client_order_id
 
@@ -220,7 +240,7 @@ class BinanceClient:
             params=params, headers=self._auth_headers(),
         )
         result = resp.json()
-        logger.info(f"Algo order placed: {side} {order_type} trigger={trigger_price} → algoId={result.get('algoId')}")
+        logger.info(f"Algo order placed: {side} {order_type} trigger={trig_q} → algoId={result.get('algoId')}")
         return result
 
     async def cancel_algo_order(self, symbol: str, algo_id: str) -> dict | None:

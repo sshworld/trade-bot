@@ -258,9 +258,9 @@ class PaperTradingEngine:
 
             # SL 가격 계산
             if side == PositionSide.LONG:
-                stop_loss = (current_price - sl_distance).quantize(Decimal("0.10"))
+                stop_loss = (current_price - sl_distance).quantize(Decimal("0.1"))
             else:
-                stop_loss = (current_price + sl_distance).quantize(Decimal("0.10"))
+                stop_loss = (current_price + sl_distance).quantize(Decimal("0.1"))
 
             signal_details = signal.get("details") or {}
             signal_details["trade_tier"] = tier_name
@@ -407,12 +407,12 @@ class PaperTradingEngine:
                         # 48시간 경과: SL을 현재가와 진입가 중간으로 50% 조임
                         if pos.side == PositionSide.LONG:
                             mid = (price + pos.avg_entry_price) / 2
-                            new_sl = mid.quantize(Decimal("0.10"))
+                            new_sl = mid.quantize(Decimal("0.1"))
                             if new_sl > pos.stop_loss_price:
                                 pos.stop_loss_price = new_sl
                         else:
                             mid = (price + pos.avg_entry_price) / 2
-                            new_sl = mid.quantize(Decimal("0.10"))
+                            new_sl = mid.quantize(Decimal("0.1"))
                             if new_sl < pos.stop_loss_price:
                                 pos.stop_loss_price = new_sl
 
@@ -600,8 +600,8 @@ class PaperTradingEngine:
         total_fee_pct = entry_fee_pct + exit_fee_pct
 
         if pos.side == PositionSide.LONG:
-            return (pos.avg_entry_price * (1 + total_fee_pct)).quantize(Decimal("0.10"))
-        return (pos.avg_entry_price * (1 - total_fee_pct)).quantize(Decimal("0.10"))
+            return (pos.avg_entry_price * (1 + total_fee_pct)).quantize(Decimal("0.1"))
+        return (pos.avg_entry_price * (1 - total_fee_pct)).quantize(Decimal("0.1"))
 
     def _tighten_sl_on_confirmation(self, pos: Position, current_price: Decimal):
         """같은 방향 시그널 → SL 조임. 회의록 기준."""
@@ -624,7 +624,7 @@ class PaperTradingEngine:
                 move = pos.avg_entry_price - current_price
                 new_sl = pos.avg_entry_price - move * Decimal("0.5")
 
-        new_sl = new_sl.quantize(Decimal("0.10"))
+        new_sl = new_sl.quantize(Decimal("0.1"))
         if pos.side == PositionSide.LONG and new_sl > pos.stop_loss_price:
             pos.stop_loss_price = new_sl
         elif pos.side == PositionSide.SHORT and new_sl < pos.stop_loss_price:
@@ -649,7 +649,7 @@ class PaperTradingEngine:
         else:
             return
 
-        new_sl = new_sl.quantize(Decimal("0.10"))
+        new_sl = new_sl.quantize(Decimal("0.1"))
         if pos.side == PositionSide.LONG and new_sl > pos.stop_loss_price:
             pos.stop_loss_price = new_sl
         elif pos.side == PositionSide.SHORT and new_sl < pos.stop_loss_price:
@@ -683,7 +683,7 @@ class PaperTradingEngine:
             # TP3 넘으면 1.5%, 아니면 3%
             trail_pct = self.settings.trailing_tight_pct if profit_distance > tp3_distance else self.settings.trailing_margin_pct
             trail_dist = float(pos.allocated_margin) * (trail_pct / 100) / float(remaining_qty)
-            new_sl = (highest - Decimal(str(trail_dist))).quantize(Decimal("0.10"))
+            new_sl = (highest - Decimal(str(trail_dist))).quantize(Decimal("0.1"))
 
             tp1_prices = [t.filled_price for t in pos.exit_tranches if t.status == OrderStatus.FILLED]
             if tp1_prices:
@@ -699,7 +699,7 @@ class PaperTradingEngine:
 
             trail_pct = self.settings.trailing_tight_pct if profit_distance > tp3_distance else self.settings.trailing_margin_pct
             trail_dist = float(pos.allocated_margin) * (trail_pct / 100) / float(remaining_qty)
-            new_sl = (lowest + Decimal(str(trail_dist))).quantize(Decimal("0.10"))
+            new_sl = (lowest + Decimal(str(trail_dist))).quantize(Decimal("0.1"))
 
             tp1_prices = [t.filled_price for t in pos.exit_tranches if t.status == OrderStatus.FILLED]
             if tp1_prices:
@@ -753,7 +753,7 @@ class PaperTradingEngine:
             prev = result[-1]
             total_val = prev.target_price * prev.quantity + last.target_price * last.quantity
             total_qty = prev.quantity + last.quantity
-            prev.target_price = (total_val / total_qty).quantize(Decimal("0.10"))
+            prev.target_price = (total_val / total_qty).quantize(Decimal("0.1"))
             prev.quantity = total_qty
         # 중간 미달 tranche도 뒤쪽과 합침
         merged = True
@@ -764,7 +764,7 @@ class PaperTradingEngine:
                     nxt = result[i + 1]
                     total_val = result[i].target_price * result[i].quantity + nxt.target_price * nxt.quantity
                     total_qty = result[i].quantity + nxt.quantity
-                    nxt.target_price = (total_val / total_qty).quantize(Decimal("0.10"))
+                    nxt.target_price = (total_val / total_qty).quantize(Decimal("0.1"))
                     nxt.quantity = total_qty
                     result.pop(i)
                     merged = True
@@ -800,7 +800,7 @@ class PaperTradingEngine:
                 target = base_price + offset_price
             tranches.append(TrancheOrder(
                 id=f"{pos_id}-e{i}", position_id=pos_id, side=side, is_entry=True,
-                target_price=target.quantize(Decimal("0.10")), quantity=qty, created_at=now,
+                target_price=target.quantize(Decimal("0.1")), quantity=qty, created_at=now,
             ))
         min_qty = self._calc_min_tranche_qty(base_price)
         return self._merge_small_tranches(tranches, min_qty)
@@ -821,7 +821,7 @@ class PaperTradingEngine:
         # TP1 가격 기억 (1분할 merge 시 사용)
         tp1_distance = avg_entry * Decimal(str(pcts[0] / 100 / lev))
         tp1_price = (avg_entry + tp1_distance if side == PositionSide.LONG
-                     else avg_entry - tp1_distance).quantize(Decimal("0.10"))
+                     else avg_entry - tp1_distance).quantize(Decimal("0.1"))
 
         tranches = []
         for i, (sp, tp_pct) in enumerate(zip(split, pcts)):
@@ -835,7 +835,7 @@ class PaperTradingEngine:
                 target = avg_entry - tp_distance
             tranches.append(TrancheOrder(
                 id=f"{pos_id}-x{i}", position_id=pos_id, side=side, is_entry=False,
-                target_price=target.quantize(Decimal("0.10")), quantity=qty, created_at=now,
+                target_price=target.quantize(Decimal("0.1")), quantity=qty, created_at=now,
             ))
         min_qty = self._calc_min_tranche_qty(avg_entry)
         merged = self._merge_small_tranches(tranches, min_qty)
@@ -853,8 +853,8 @@ class PaperTradingEngine:
     ) -> Decimal:
         price_pct = Decimal(str(sl_pct / leverage / 100))
         if side == PositionSide.LONG:
-            return (entry_price * (1 - price_pct)).quantize(Decimal("0.10"))
-        return (entry_price * (1 + price_pct)).quantize(Decimal("0.10"))
+            return (entry_price * (1 - price_pct)).quantize(Decimal("0.1"))
+        return (entry_price * (1 + price_pct)).quantize(Decimal("0.1"))
 
     def _apply_atr_guardrail(
         self, side: PositionSide, entry: Decimal, sl: Decimal, tf: str, leverage: int,
@@ -879,8 +879,8 @@ class PaperTradingEngine:
                 sl_distance = max_sl
 
             if side == PositionSide.LONG:
-                return (entry - Decimal(str(sl_distance))).quantize(Decimal("0.10"))
-            return (entry + Decimal(str(sl_distance))).quantize(Decimal("0.10"))
+                return (entry - Decimal(str(sl_distance))).quantize(Decimal("0.1"))
+            return (entry + Decimal(str(sl_distance))).quantize(Decimal("0.1"))
         except Exception:
             return sl
 
@@ -941,7 +941,7 @@ class PaperTradingEngine:
             return
         total_value = sum(t.filled_price * t.quantity for t in filled)
         total_qty = sum(t.quantity for t in filled)
-        pos.avg_entry_price = (total_value / total_qty).quantize(Decimal("0.10"))
+        pos.avg_entry_price = (total_value / total_qty).quantize(Decimal("0.1"))
         pos.total_quantity = total_qty
 
         # % 기반 SL 재계산 (2026-04-13 회의록)
@@ -951,9 +951,9 @@ class PaperTradingEngine:
             min_sl = pos.avg_entry_price * Decimal(str(self.settings.min_sl_distance_pct / 100))
             sl_distance = max(sl_distance, min_sl)
             if pos.side == PositionSide.LONG:
-                new_sl = (pos.avg_entry_price - sl_distance).quantize(Decimal("0.10"))
+                new_sl = (pos.avg_entry_price - sl_distance).quantize(Decimal("0.1"))
             else:
-                new_sl = (pos.avg_entry_price + sl_distance).quantize(Decimal("0.10"))
+                new_sl = (pos.avg_entry_price + sl_distance).quantize(Decimal("0.1"))
             pos.stop_loss_price = new_sl
 
         # Exit tranche 생성/재생성 (마진 % 기반)

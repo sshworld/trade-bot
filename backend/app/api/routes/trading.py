@@ -87,3 +87,11 @@ async def reset_account():
         "message": "계좌가 초기화되었습니다",
         "account": trading_engine.get_status(),
     }
+
+
+@router.post("/replace-cancelled-entries/{pos_id}")
+async def replace_cancelled_entries(pos_id: str):
+    """tick 버그로 취소된 entry tranche의 LIMIT 주문을 재배치 (admin, LiveEngine 전용)."""
+    if not hasattr(trading_engine, "replace_cancelled_entry_orders"):
+        return {"error": "engine does not support this operation"}
+    return await trading_engine.replace_cancelled_entry_orders(pos_id)

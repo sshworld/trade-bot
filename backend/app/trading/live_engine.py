@@ -367,9 +367,9 @@ class LiveTradingEngine(PaperTradingEngine):
 
             # SL 가격
             if side == PositionSide.LONG:
-                stop_loss = (current_price - sl_distance).quantize(Decimal("0.01"))
+                stop_loss = (current_price - sl_distance).quantize(Decimal("0.1"))
             else:
-                stop_loss = (current_price + sl_distance).quantize(Decimal("0.01"))
+                stop_loss = (current_price + sl_distance).quantize(Decimal("0.1"))
 
             signal_details = signal.get("details") or {}
             signal_details["trade_tier"] = tier_name
@@ -523,11 +523,11 @@ class LiveTradingEngine(PaperTradingEngine):
                             if pos.side == PositionSide.LONG:
                                 new_sl = be + bump
                                 if new_sl > pos.stop_loss_price:
-                                    pos.stop_loss_price = new_sl.quantize(Decimal("0.01"))
+                                    pos.stop_loss_price = new_sl.quantize(Decimal("0.1"))
                             else:
                                 new_sl = be + bump  # SHORT: SL을 진입가 쪽으로 조임
                                 if new_sl < pos.stop_loss_price:
-                                    pos.stop_loss_price = new_sl.quantize(Decimal("0.01"))
+                                    pos.stop_loss_price = new_sl.quantize(Decimal("0.1"))
 
                 # SL 변경 시 바이낸스 주문 재배치
                 if pos.stop_loss_price != old_sl:
@@ -861,7 +861,7 @@ class LiveTradingEngine(PaperTradingEngine):
                     symbol="BTCUSDT",
                     side=close_side,
                     order_type="TAKE_PROFIT_MARKET",
-                    trigger_price=tranche.target_price.quantize(Decimal("0.10")),
+                    trigger_price=tranche.target_price.quantize(Decimal("0.1")),
                     quantity=tranche.quantity.quantize(Decimal("0.001")),
                     client_order_id=tranche.id,
                 )
@@ -935,7 +935,7 @@ class LiveTradingEngine(PaperTradingEngine):
                 symbol="BTCUSDT",
                 side=close_side,
                 order_type="STOP_MARKET",
-                trigger_price=pos.stop_loss_price.quantize(Decimal("0.10")),
+                trigger_price=pos.stop_loss_price.quantize(Decimal("0.1")),
                 quantity=remaining.quantize(Decimal("0.001")),
             )
             pos.signal_details = pos.signal_details or {}
@@ -996,3 +996,51 @@ class LiveTradingEngine(PaperTradingEngine):
         """위험: 모든 데이터 초기화. 바이낸스 주문은 취소하지 않음."""
         logger.warning("[LIVE] Reset called — local state only")
         super().reset()
+
+    # ── Admin: tick 버그로 취소된 entry tranche 재배치 ─────────
+
+    async def replace_cancelled_entry_orders(self, pos_id: str) -> dict:
+        """포지션의 CANCELLED entry tranche를 LIMIT 주문으로 다시 배치.
+        tick size 버그(`Decimal("0.10")`) 수정 직후 한 번 회수용으로 사용."""
+        async with self._lock:
+            pos = self.open_positions.get(pos_id)
+            if not pos:
+                return {"error": "position not found", "pos_id": pos_id}
+
+            binance_side = "BUY" if pos.side == PositionSide.LONG else "SELL"
+            results: list[dict] = []
+
+            for tranche in pos.entry_tranches:
+                if tranche.status != OrderStatus.CANCELLED:
+                    continue
+                new_cid = f"{tranche.id}-r"
+                try:
+                    resp = await binance_client.place_order(
+                        symbol="BTCUSDT",
+                        side=binance_side,
+                        order_type="LIMIT",
+                        quantity=tranche.quantity,
+                        price=tranche.target_price,
+                        client_order_id=new_cid,
+                    )
+                    tranche.client_order_id = new_cid
+                    tranche.binance_order_id = str(resp.get("orderId", ""))
+                    tranche.status = OrderStatus.WAITING
+                    results.append({
+                        "tranche": tranche.id,
+                        "status": "replaced",
+                        "price": str(tranche.target_price),
+                        "qty": str(tranche.quantity),
+                        "binance_order_id": tranche.binance_order_id,
+                    })
+                    logger.info(f"[LIVE] Re-placed cancelled entry: {tranche.id} @ {tranche.target_price}")
+                except Exception as e:
+                    results.append({
+                        "tranche": tranche.id,
+                        "status": "failed",
+                        "error": str(e),
+                    })
+                    logger.error(f"[LIVE] Replace cancelled entry failed: {tranche.id} — {e}")
+
+            save_position(pos)
+            return {"position_id": pos_id, "results": results}
