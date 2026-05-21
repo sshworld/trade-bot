@@ -731,7 +731,16 @@ class LiveTradingEngine(PaperTradingEngine):
                     except Exception:
                         continue
 
-                    if algo_status == "EXECUTED":
+                    # Binance Futures Algo terminal states:
+                    #   NEW / WORKING — 트리거 대기
+                    #   FINISHED — 트리거 + 시장가 체결 완료 (actualQty>0)
+                    #   CANCELLED / EXPIRED / FAILED — 미체결 종료
+                    if algo_status == "FINISHED":
+                        actual_qty = Decimal(str(algo.get("actualQty") or "0"))
+                        if actual_qty <= 0:
+                            # 비정상: FINISHED 인데 체결량 0 → 다음 cycle 재시도
+                            logger.warning(f"[LIVE] TP algo FINISHED but actualQty=0: {tranche.id}")
+                            continue
                         tranche.status = OrderStatus.FILLED
                         tranche.filled_price = Decimal(str(algo.get("triggerPrice", tranche.target_price)))
                         tranche.filled_at = int(algo.get("triggerTime", time.time() * 1000))
@@ -774,9 +783,14 @@ class LiveTradingEngine(PaperTradingEngine):
                             ))
                             break
 
-                    elif algo_status in ("CANCELLED", "EXPIRED"):
+                    elif algo_status in ("CANCELLED", "EXPIRED", "FAILED"):
                         tranche.status = OrderStatus.CANCELLED
                         changed = True
+                    elif algo_status not in ("NEW", "WORKING"):
+                        logger.warning(
+                            f"[LIVE] Unknown algoStatus {algo_status!r} for tranche {tranche.id} "
+                            f"(algoId={algo_id}); treating as still WAITING"
+                        )
 
                 if changed and pos_id in self.open_positions:
                     save_position(pos)
@@ -918,7 +932,11 @@ class LiveTradingEngine(PaperTradingEngine):
         await self._nuke_all_binance_orders()
 
     async def _place_sl_order(self, pos: Position):
-        """SL을 바이낸스 Algo API (STOP_MARKET)로 사전 배치."""
+        """SL을 바이낸스 Algo API (STOP_MARKET, closePosition=True)로 사전 배치.
+
+        closePosition=True 사용 이유: 트리거 시점에 Binance 가 잔여 포지션 전체를 시장가로
+        청산하므로, 로컬 추적 수량과 실제 포지션 수량이 잠시 어긋나도 over-close 가 발생하지 않음.
+        """
         close_side = "SELL" if pos.side == PositionSide.LONG else "BUY"
 
         # 기존 SL 주문 취소
@@ -936,13 +954,13 @@ class LiveTradingEngine(PaperTradingEngine):
                 side=close_side,
                 order_type="STOP_MARKET",
                 trigger_price=pos.stop_loss_price.quantize(Decimal("0.1")),
-                quantity=remaining.quantize(Decimal("0.001")),
+                close_position=True,
             )
             pos.signal_details = pos.signal_details or {}
             algo_id = str(result.get("algoId", ""))
             if algo_id:
                 pos.signal_details["sl_algo_id"] = algo_id
-            logger.info(f"[LIVE] SL algo order placed: {close_side} STOP_MARKET trigger={pos.stop_loss_price} qty={remaining} algoId={algo_id}")
+            logger.info(f"[LIVE] SL algo order placed: {close_side} STOP_MARKET trigger={pos.stop_loss_price} closePosition=true algoId={algo_id}")
         except Exception as e:
             logger.error(f"[LIVE] SL algo order failed: {e}")
 
