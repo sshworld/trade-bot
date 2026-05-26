@@ -20,6 +20,10 @@ WS_BASE_URL = (
 
 ANALYSIS_TIMEFRAMES = {"15m", "30m", "1h", "4h", "1d", "1w"}
 
+# Binance read loop 와 broadcast 를 분리하기 위한 outgoing 큐 크기.
+# slow client / broadcast 지연 발생 시 read loop backpressure 차단.
+OUTGOING_QUEUE_MAXSIZE = 200
+
 
 class BinanceWSConsumer:
     KLINE_INTERVALS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"]
@@ -30,7 +34,22 @@ class BinanceWSConsumer:
         self._running = False
         self._tick_queue: asyncio.Queue[Decimal] = asyncio.Queue(maxsize=1000)
         self._candle_close_queue: asyncio.Queue[tuple[str, dict]] = asyncio.Queue(maxsize=50)
+        self._outgoing_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=OUTGOING_QUEUE_MAXSIZE)
         self._tick_count = 0
+
+    def _enqueue_outgoing(self, message: dict) -> None:
+        """broadcast 용 메시지를 큐에 넣는다. 큐가 full 이면 가장 오래된 항목 drop."""
+        try:
+            self._outgoing_queue.put_nowait(message)
+        except asyncio.QueueFull:
+            try:
+                self._outgoing_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                self._outgoing_queue.put_nowait(message)
+            except asyncio.QueueFull:
+                pass
 
     async def start(self):
         self._running = True
@@ -42,6 +61,7 @@ class BinanceWSConsumer:
 
         tick_worker = asyncio.create_task(self._process_ticks())
         candle_worker = asyncio.create_task(self._process_candle_closes())
+        outgoing_worker = asyncio.create_task(self._process_outgoing())
 
         while self._running:
             try:
@@ -67,6 +87,7 @@ class BinanceWSConsumer:
 
         tick_worker.cancel()
         candle_worker.cancel()
+        outgoing_worker.cancel()
 
     async def _handle_message(self, raw_msg: str):
         msg = json.loads(raw_msg)
@@ -85,7 +106,7 @@ class BinanceWSConsumer:
                 should_broadcast = (self._tick_count % 2 == 0)
 
             if should_broadcast:
-                await self.manager.broadcast({
+                self._enqueue_outgoing({
                     "type": "tick",
                     "data": {
                         "symbol": data["s"],
@@ -121,7 +142,7 @@ class BinanceWSConsumer:
                 },
             )
 
-            await self.manager.broadcast({
+            self._enqueue_outgoing({
                 "type": "kline",
                 "data": {
                     "symbol": k["s"],
@@ -155,7 +176,7 @@ class BinanceWSConsumer:
 
                 events = await trading_engine.on_price_update(price)
                 for event in events:
-                    await self.manager.broadcast(event)
+                    self._enqueue_outgoing(event)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -173,6 +194,17 @@ class BinanceWSConsumer:
                 break
             except Exception as e:
                 logger.error(f"Candle close error: {e}")
+
+    async def _process_outgoing(self):
+        """outgoing 큐의 메시지를 manager 로 broadcast — Binance read loop 와 분리."""
+        while self._running:
+            try:
+                message = await self._outgoing_queue.get()
+                await self.manager.broadcast(message)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Outgoing broadcast error: {e}")
 
     def stop(self):
         self._running = False

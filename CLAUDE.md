@@ -130,6 +130,7 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 - [x] 바이낸스 실제 수량 기반 청산 + 잔존 확인
 - [x] 분할 진입 LIMIT tick size 버그 수정 (`Decimal("0.10")` → `Decimal("0.1")`, binance client 경계에 round_price/round_qty 헬퍼 도입)
 - [x] Algo `algoStatus` 매핑 수정 (`"EXECUTED"` → `"FINISHED"`), SL `closePosition=True` 적용 — TP 체결 미감지 + SL stale qty 핫픽스 (2026-05-21)
+- [x] WebSocket broadcast 직렬→병렬화 + 2s send timeout, Binance read loop 와 outgoing 큐 분리 (2026-05-27)
 - [ ] PnL에 수수료 포함 표시
 - [ ] 자본 $10,000 도달 시 리스크 재검토 토론
 - [ ] TP 사전 배치 Phase 2 (트레일링 TP)
