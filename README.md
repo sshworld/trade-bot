@@ -34,11 +34,11 @@
 - **동적 분할 진입**: 소자본 자동 조정 (3분할→2분할→1분할, tail merge)
 - **텔레그램 봇**: /status, /position, /help 명령어로 실시간 상태 확인
 
-### 실시간 대시보드
-- **캔들스틱 차트**: TradingView lightweight-charts, rAF 60fps
-- **시그널 파이프라인**: TF별 진행도, confluence, 부족 요소 (접기/펼치기)
-- **지표 오버레이**: 시그널 클릭 → 차트에 RSI/MACD/BB/SMA/Fibonacci/Elliott 표시
-- **토스트 알림**: 거래 이벤트 실시간 팝업
+### Telegram 모니터링 (UI 일원화)
+- **상태 명령**: `/status` `/signal` `/detail` `/history` `/equity`
+- **운영 명령**: `/halt` `/resume`
+- **차트 on-demand**: `/chart [TF]` → 캔들 + 진입/TP/SL 마커 PNG 전송
+- **실시간 push**: 진입 / TP 체결 / SL 체결 / 트레일링 조임 / 교체 / 이상 감지
 
 ---
 
@@ -47,8 +47,7 @@
 | 영역 | 기술 |
 |------|------|
 | **Backend** | Python 3.12+, FastAPI, pandas, ta, scipy |
-| **Frontend** | Next.js 16, React 19, TypeScript, TailwindCSS 4 |
-| **Chart** | TradingView lightweight-charts 5 |
+| **모니터링** | Telegram bot (명령어 + push, matplotlib PNG 차트) |
 | **Data** | In-memory KlineStore, SQLite (거래 영속화) |
 | **Exchange** | Binance Futures API (REST + WebSocket, HMAC-SHA256) |
 
@@ -85,9 +84,7 @@ Binance WebSocket ──→ KlineStore ──→ 1초 전 TF 분석
 git clone https://github.com/sshworld/trade-bot.git
 cd trade-bot
 make setup      # 아래 대화형 설정 진행
-make backend    # 터미널 1
-make frontend   # 터미널 2
-# http://localhost:3000
+make backend    # 백엔드 단독 (모니터링은 Telegram bot)
 ```
 
 ### Setup 과정
@@ -160,10 +157,6 @@ trade-bot/
 │   ├── binance/            # API 클라이언트 + KlineStore + WebSocket
 │   ├── api/routes/         # REST API
 │   └── tasks/              # 1초 스케줄러
-├── frontend/src/
-│   ├── app/                # Dashboard + Trading 페이지
-│   ├── components/         # 차트, 시그널, 거래 UI
-│   └── hooks/              # WebSocket, 데이터 훅
 ├── docs/meeting-minutes/   # 전문가 토론 회의록
 ├── .claude/commands/       # AI slash commands
 ├── CLAUDE.md               # AI 작업 가이드

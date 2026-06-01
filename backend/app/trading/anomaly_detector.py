@@ -158,11 +158,14 @@ class AnomalyDetector:
         """거래 가능 여부. True면 거래 금지."""
         now = int(time.time() * 1000)
         if self._manual_halt:
-            if self.config.anomaly_manual_resume:
+            if getattr(self.config, "anomaly_manual_resume", False):
                 # config에서 resume 플래그가 켜졌으면 해제
                 self._manual_halt = False
                 self._halt_reason = ""
-                self.config.anomaly_manual_resume = False
+                try:
+                    self.config.anomaly_manual_resume = False
+                except Exception:
+                    pass
                 logger.info("Manual halt released via config flag")
                 return False
             return True
@@ -178,6 +181,25 @@ class AnomalyDetector:
     def get_size_multiplier(self) -> Decimal:
         """현재 사이즈 축소 배율. 1.0 = 정상, 0.5 = 절반."""
         return Decimal("0.5") if self._size_reduction_active else Decimal("1.0")
+
+    def set_manual_halt(self, reason: str = "manual via telegram /halt") -> dict:
+        self._manual_halt = True
+        self._halt_reason = reason
+        logger.warning(f"[ANOMALY] Manual halt SET: {reason}")
+        return self.get_halt_info()
+
+    def release_manual_halt(self) -> dict:
+        was = self._manual_halt
+        self._manual_halt = False
+        if was:
+            self._halt_reason = ""
+            if hasattr(self.config, "anomaly_manual_resume"):
+                try:
+                    self.config.anomaly_manual_resume = False
+                except Exception:
+                    pass
+            logger.info("[ANOMALY] Manual halt RELEASED via telegram /resume")
+        return self.get_halt_info()
 
     def get_halt_info(self) -> dict:
         """현재 halt 상태 정보."""

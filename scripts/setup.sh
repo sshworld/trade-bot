@@ -85,18 +85,8 @@ cd "$ROOT_DIR/backend"
 uv sync --quiet
 echo "  Python 패키지 설치 완료"
 
-# ── 4. Node 의존성 ──────────────────────────────────────────
-step 4 "프론트엔드 의존성 설치 (pnpm)"
-if ! command -v pnpm &> /dev/null; then
-  echo "  pnpm 설치 중..."
-  npm install -g pnpm
-fi
-cd "$ROOT_DIR/frontend"
-pnpm install --silent
-echo "  Node 패키지 설치 완료"
-
-# ── 5. 알림 채널 설정 ───────────────────────────────────────
-step 5 "알림 채널 설정 (선택)"
+# ── 4. 알림 채널 설정 ───────────────────────────────────────
+step 4 "알림 채널 설정 (선택)"
 CURRENT_TG=$(grep "^ALERT_TELEGRAM_BOT_TOKEN=" "$ROOT_DIR/.env" | cut -d'=' -f2)
 if [ -z "$CURRENT_TG" ]; then
   echo ""
@@ -126,13 +116,13 @@ else
   echo "  Telegram 알림 설정됨"
 fi
 
-# ── 6. 데이터 디렉토리 ─────────────────────────────────────
-step 6 "데이터 디렉토리 생성"
+# ── 5. 데이터 디렉토리 ─────────────────────────────────────
+step 5 "데이터 디렉토리 생성"
 mkdir -p "$ROOT_DIR/backend/data"
 echo "  backend/data/ (SQLite DB)"
 
-# ── 7. API 연결 테스트 ──────────────────────────────────────
-step 7 "Binance API 연결 테스트"
+# ── 6. API 연결 테스트 ──────────────────────────────────────
+step 6 "Binance API 연결 테스트"
 cd "$ROOT_DIR/backend"
 API_KEY=$(grep "^BINANCE_API_KEY=" "$ROOT_DIR/.env" | cut -d'=' -f2)
 if [ -n "$API_KEY" ]; then
@@ -165,10 +155,9 @@ echo ""
 echo "=== 설치 완료 ==="
 echo ""
 echo "실행:"
-echo "  make backend    (터미널 1)"
-echo "  make frontend   (터미널 2)"
+echo "  make backend"
 echo ""
-echo "브라우저: http://localhost:3000"
+echo "모니터링: Telegram bot (/help 명령어)"
 echo ""
 echo "설정 변경: .env 파일 수정 후 서버 재시작"
 echo ""

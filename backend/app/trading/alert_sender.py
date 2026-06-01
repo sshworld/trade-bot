@@ -157,6 +157,29 @@ class AlertSender:
         if resp.status_code != 200:
             logger.error(f"Telegram send error: {resp.status_code} {resp.text}")
 
+    # public alias — bot 명령 핸들러 / 신규 호출 지점에서 사용
+    async def send_text(self, text: str):
+        await self._send_telegram_text(text)
+
+    async def send_photo(self, image_bytes: bytes, caption: str = ""):
+        """PNG/JPG 이미지 전송. /chart 명령 등에서 사용."""
+        if not self._telegram_token or not self._telegram_chat_id:
+            logger.warning("Telegram not configured, skipping photo")
+            return
+        if len(caption) > 1000:
+            caption = caption[:997] + "..."
+        url = f"https://api.telegram.org/bot{self._telegram_token}/sendPhoto"
+        client = await self._get_client()
+        files = {"photo": ("chart.png", image_bytes, "image/png")}
+        data = {
+            "chat_id": self._telegram_chat_id,
+            "caption": caption,
+            "parse_mode": "HTML",
+        }
+        resp = await client.post(url, data=data, files=files)
+        if resp.status_code != 200:
+            logger.error(f"Telegram sendPhoto error: {resp.status_code} {resp.text}")
+
     async def close(self):
         if self._client and not self._client.is_closed:
             await self._client.aclose()

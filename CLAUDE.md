@@ -8,10 +8,10 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 
 ## 기술 스택
 - **Backend**: Python FastAPI, pandas, ta, httpx, websockets
-- **Frontend**: Next.js 16, React, TypeScript, TailwindCSS, lightweight-charts
+- **모니터링**: Telegram bot (명령어 + 실시간 push 알림, 차트 PNG on-demand)
 - **Data**: 인메모리 KlineStore (8 TF × 500 캔들, WebSocket 실시간 갱신)
 - **DB**: SQLite (`backend/data/trading.db`)
-- **Infra**: uv (Python), pnpm (Node.js)
+- **Infra**: uv (Python)
 
 ## 핵심 원칙
 
@@ -131,6 +131,7 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 - [x] 분할 진입 LIMIT tick size 버그 수정 (`Decimal("0.10")` → `Decimal("0.1")`, binance client 경계에 round_price/round_qty 헬퍼 도입)
 - [x] Algo `algoStatus` 매핑 수정 (`"EXECUTED"` → `"FINISHED"`), SL `closePosition=True` 적용 — TP 체결 미감지 + SL stale qty 핫픽스 (2026-05-21)
 - [x] WebSocket broadcast 직렬→병렬화 + 2s send timeout, Binance read loop 와 outgoing 큐 분리 (2026-05-27)
+- [x] Frontend(Next.js) 제거, Telegram bot 모니터링 일원화 (2026-06-01)
 - [ ] PnL에 수수료 포함 표시
 - [ ] 자본 $10,000 도달 시 리스크 재검토 토론
 - [ ] TP 사전 배치 Phase 2 (트레일링 TP)
@@ -143,16 +144,12 @@ backend/app/
 ├── trading/live_engine.py    # LiveTradingEngine (실거래, Binance 주문)
 ├── trading/schemas.py        # TF_ATR_PARAMS + 설정 + LiveTradingSettings
 ├── trading/persistence.py    # SQLite
-├── trading/telegram_bot.py   # 텔레그램 봇 명령어 (/status, /position)
-├── trading/alert_sender.py   # Telegram + Webhook 알림
+├── trading/telegram_bot.py   # 텔레그램 봇 명령어 (/status /signal /detail /history /equity /halt /resume /chart)
+├── trading/alert_sender.py   # Telegram + Webhook 알림 (send_text, send_photo)
+├── trading/charting.py       # matplotlib 캔들 차트 PNG 렌더
 ├── binance/client.py         # REST + Algo Order API (인증+공개)
 ├── binance/kline_store.py    # 8TF 캔들 스토어
 ├── tasks/scheduler.py        # 1초 스캔
-
-frontend/src/
-├── app/dashboard/page.tsx    # 차트 + 시그널 + 오버레이
-├── app/trading/page.tsx      # 포지션 + 거래내역
-├── components/indicators/TFSignalPanel.tsx
 
 docs/meeting-minutes/         # 전문가 회의록
 .claude/commands/             # slash commands
@@ -160,11 +157,11 @@ docs/meeting-minutes/         # 전문가 회의록
 
 ## 실행
 ```bash
-make setup && make backend && make frontend
+make setup && make backend
 ```
 
 ## 주의
-- `backend/` 에서 uvicorn (**--reload 사용 금지**, 실거래 안정성), `frontend/` 에서 pnpm dev
+- `backend/` 에서 uvicorn (**--reload 사용 금지**, 실거래 안정성)
 - 본전 = 진입가 ± 왕복 수수료
 - `/recalculate` API로 열린 포지션 TP/SL 재계산
 - 코드 수정 후 서버 재시작 시 **반드시 사용자 승인** 필요
