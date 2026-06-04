@@ -15,7 +15,7 @@ import logging
 import time
 from decimal import Decimal, ROUND_DOWN
 
-from app.binance.client import binance_client
+from app.binance.client import AlgoWouldImmediatelyTrigger, binance_client
 from app.config import settings
 from app.trading.engine import PaperTradingEngine
 from app.trading.schemas import (
@@ -116,9 +116,10 @@ class LiveTradingEngine(PaperTradingEngine):
             # 5. 기존 Algo 주문 전부 취소 후 재배치 (중복 방지)
             if self.open_positions:
                 await self._cancel_all_binance_algo_orders()
-                for pos in self.open_positions.values():
+                for pos in list(self.open_positions.values()):
                     await self._place_sl_order(pos)
                     await self._place_exit_orders(pos)
+                    await self._assert_sl_armed(pos)
                 logger.info(f"[LIVE] SL/TP re-placed for {len(self.open_positions)} positions")
 
             # 6. WAITING 상태 주문 reconcile
@@ -391,6 +392,11 @@ class LiveTradingEngine(PaperTradingEngine):
                 opened_at=now,
             )
 
+            # ── 진입 전 clean book 검증 (고아 주문 위 진입 방지) ──
+            if not await self._ensure_clean_book():
+                logger.warning("[LIVE] on_signal aborted: book not clean after nuke")
+                return None
+
             # ── 실주문: 첫 tranche 시장가 ──
             first = entry_tranches[0]
             binance_side = "BUY" if side == PositionSide.LONG else "SELL"
@@ -411,7 +417,6 @@ class LiveTradingEngine(PaperTradingEngine):
                     first.filled_at = now
                     fee = self._calc_fee(first.filled_price, first.quantity, is_market=True)
                     position.total_fees += fee
-                    self.account.total_fees += fee
                 else:
                     first.status = OrderStatus.WAITING
                     logger.info(f"[LIVE] First tranche status: {resp.get('status')}")
@@ -449,7 +454,6 @@ class LiveTradingEngine(PaperTradingEngine):
             self.open_positions[pos_id] = position
 
             if first.status == OrderStatus.FILLED:
-                self.account.total_fees += position.total_fees
                 self._recalculate_position(position)
 
             # Exit tranche 주문 발행 (await로 확실히 처리)
@@ -497,6 +501,8 @@ class LiveTradingEngine(PaperTradingEngine):
         실제 체결은 reconcile_orders()에서 처리."""
         self._last_price = price
         self.anomaly_detector.record_price_update(int(time.time() * 1000))
+        if not self._initialized:
+            return []  # 초기화 race 방지 (initialize 변이 중 tick 차단)
         if not self.open_positions:
             return []
 
@@ -617,12 +623,11 @@ class LiveTradingEngine(PaperTradingEngine):
         # 4. 로컬 상태 업데이트 (Paper 로직 재사용)
         trade = self._close_position(pos_id, actual_close_price, reason)
 
-        # 바이낸스 실잔고로 동기화
+        # 바이낸스 실잔고로 동기화 + daily_pnl 실잔고 기반 재계산
         try:
             self._balance_cache = None  # 캐시 무효화
             real_bal = await self._get_real_balance()
-            self.account.balance = real_bal
-            self.account.margin_used = Decimal("0")
+            self._resync_after_close(real_bal)
         except Exception:
             pass
 
@@ -649,152 +654,158 @@ class LiveTradingEngine(PaperTradingEngine):
 
     async def reconcile_orders(self):
         """WAITING 상태인 주문을 바이낸스에서 조회하여 상태 동기화."""
+        if not getattr(self, "_initialized", False):
+            return  # 초기화 race 방지
         if not self.open_positions:
             return
 
         async with self._lock:
             for pos_id, pos in list(self.open_positions.items()):
-                changed = False
+                try:
+                    changed = False
 
-                # Entry tranche reconciliation
-                for tranche in pos.entry_tranches:
-                    if tranche.status != OrderStatus.WAITING:
-                        continue
-                    if not tranche.client_order_id:
-                        continue
+                    # SL 존재 검증 (무방비 포지션 방지, 매 사이클)
+                    await self._assert_sl_armed(pos)
 
-                    order = await binance_client.get_order("BTCUSDT", tranche.client_order_id)
-                    if not order:
-                        continue
-
-                    status = order.get("status", "")
-                    if status == "FILLED":
-                        tranche.status = OrderStatus.FILLED
-                        tranche.filled_price = Decimal(str(order.get("avgPrice", tranche.target_price)))
-                        tranche.filled_at = int(order.get("updateTime", time.time() * 1000))
-                        fee = self._calc_fee(tranche.filled_price, tranche.quantity, is_market=False)
-                        pos.total_fees += fee
-                        self.account.total_fees += fee
-                        # balance는 바이낸스 잔고 동기화에서 처리 (직접 차감 안 함)
-                        self._recalculate_position(pos)
-
-                        # exit tranche 발행 (새로 생겼으면)
-                        if (pos.signal_details or {}).get("_pending_exit_placement"):
-                            # 기존 TP 주문 취소 후 재발행
-                            for et in pos.exit_tranches:
-                                if et.status == OrderStatus.WAITING and et.binance_order_id:
-                                    await binance_client.cancel_algo_order("BTCUSDT", et.binance_order_id)
-                                    et.status = OrderStatus.PENDING
-                            await self._place_exit_orders(pos)
-                            pos.signal_details.pop("_pending_exit_placement", None)
-
-                        # SL 항상 재배치 (평단/수량 변경)
-                        await self._place_sl_order(pos)
-                        changed = True
-
-                        filled_entries = sum(1 for t in pos.entry_tranches if t.status == OrderStatus.FILLED)
-                        if filled_entries == len(pos.entry_tranches):
-                            pos.status = "open"
-
-                        logger.info(f"[LIVE] Entry tranche filled: {tranche.id} @ {tranche.filled_price}")
-
-                        # 텔레그램 알림
-                        side_kr = "롱" if pos.side == PositionSide.LONG else "숏"
-                        await self.alert_sender._send_telegram_text(
-                            f"📥 <b>추매 체결 ({filled_entries}/{len(pos.entry_tranches)})</b>\n\n"
-                            f"Side: {side_kr}\n"
-                            f"Price: ${tranche.filled_price:,.2f}\n"
-                            f"Qty: {tranche.quantity}\n"
-                            f"평단: ${pos.avg_entry_price:,.2f}\n"
-                            f"총수량: {pos.total_quantity}\n"
-                            f"새 SL: ${pos.stop_loss_price:,.2f}"
-                        )
-
-                    elif status in ("CANCELED", "REJECTED", "EXPIRED"):
-                        tranche.status = OrderStatus.CANCELLED
-                        changed = True
-                        logger.info(f"[LIVE] Entry tranche {status}: {tranche.id}")
-
-                # Exit tranche reconciliation (Algo API)
-                for tranche in pos.exit_tranches:
-                    if tranche.status != OrderStatus.WAITING:
-                        continue
-                    algo_id = tranche.binance_order_id
-                    if not algo_id:
-                        continue
-
-                    try:
-                        algo = await binance_client.get_algo_order("BTCUSDT", algo_id)
-                        if not algo:
+                    # Entry tranche reconciliation
+                    for tranche in pos.entry_tranches:
+                        if tranche.status != OrderStatus.WAITING:
                             continue
-                        algo_status = algo.get("algoStatus", "")
-                    except Exception:
-                        continue
-
-                    # Binance Futures Algo terminal states:
-                    #   NEW / WORKING — 트리거 대기
-                    #   FINISHED — 트리거 + 시장가 체결 완료 (actualQty>0)
-                    #   CANCELLED / EXPIRED / FAILED — 미체결 종료
-                    if algo_status == "FINISHED":
-                        actual_qty = Decimal(str(algo.get("actualQty") or "0"))
-                        if actual_qty <= 0:
-                            # 비정상: FINISHED 인데 체결량 0 → 다음 cycle 재시도
-                            logger.warning(f"[LIVE] TP algo FINISHED but actualQty=0: {tranche.id}")
+                        if not tranche.client_order_id:
                             continue
-                        tranche.status = OrderStatus.FILLED
-                        tranche.filled_price = Decimal(str(algo.get("triggerPrice", tranche.target_price)))
-                        tranche.filled_at = int(algo.get("triggerTime", time.time() * 1000))
-                        pnl = self._calc_tranche_pnl(pos, tranche)
-                        pos.realized_pnl += pnl
-                        fee = self._calc_fee(tranche.filled_price, tranche.quantity, is_market=True)
-                        pos.total_fees += fee
-                        self.account.total_fees += fee
 
-                        filled_exits = sum(1 for t in pos.exit_tranches if t.status == OrderStatus.FILLED)
-                        self._trailing_sl_after_tp(pos, filled_exits)
-                        changed = True
-                        logger.info(f"[LIVE] TP algo filled: {tranche.id} @ {tranche.filled_price}")
+                        order = await binance_client.get_order("BTCUSDT", tranche.client_order_id)
+                        if not order:
+                            continue
 
-                        # SL 재배치 (수량 + 가격 변경)
-                        await self._place_sl_order(pos)
-                        logger.info(f"[LIVE] SL updated after TP{filled_exits}: SL={pos.stop_loss_price}")
+                        status = order.get("status", "")
+                        if status == "FILLED":
+                            tranche.status = OrderStatus.FILLED
+                            tranche.filled_price = Decimal(str(order.get("avgPrice", tranche.target_price)))
+                            tranche.filled_at = int(order.get("updateTime", time.time() * 1000))
+                            fee = self._calc_fee(tranche.filled_price, tranche.quantity, is_market=False)
+                            pos.total_fees += fee
+                            # balance는 바이낸스 잔고 동기화에서 처리 (직접 차감 안 함)
+                            self._recalculate_position(pos)
 
-                        # 텔레그램 알림
-                        side_kr = "롱" if pos.side == PositionSide.LONG else "숏"
-                        asyncio.create_task(self.alert_sender._send_telegram_text(
-                            f"💰 <b>TP{filled_exits} HIT</b>\n\n"
-                            f"Side: {side_kr}\n"
-                            f"Price: ${tranche.filled_price:,.2f}\n"
-                            f"Qty: {tranche.quantity}\n"
-                            f"PnL: {'+'if pnl >= 0 else ''}${pnl:.2f}\n"
-                            f"New SL: ${pos.stop_loss_price:,.2f}"
-                        ))
+                            # exit tranche 발행 (새로 생겼으면)
+                            if (pos.signal_details or {}).get("_pending_exit_placement"):
+                                # 기존 TP 주문 취소 후 재발행
+                                for et in pos.exit_tranches:
+                                    if et.status == OrderStatus.WAITING and et.binance_order_id:
+                                        await binance_client.cancel_algo_order("BTCUSDT", et.binance_order_id)
+                                        et.status = OrderStatus.PENDING
+                                await self._place_exit_orders(pos)
+                                pos.signal_details.pop("_pending_exit_placement", None)
 
-                        # 모든 exit 체결 → 포지션 종료
-                        if filled_exits == len(pos.exit_tranches):
-                            await self._cancel_sl_order(pos)
-                            await self._cancel_all_exit_orders(pos)
-                            trade = self._close_position(pos_id, tranche.filled_price, "take_profit")
-                            asyncio.create_task(self.alert_sender._send_telegram_text(
-                                f"💚 <b>ALL TPs HIT</b>\n\n"
+                            # SL 항상 재배치 (평단/수량 변경)
+                            await self._place_sl_order(pos)
+                            changed = True
+
+                            filled_entries = sum(1 for t in pos.entry_tranches if t.status == OrderStatus.FILLED)
+                            if filled_entries == len(pos.entry_tranches):
+                                pos.status = "open"
+
+                            logger.info(f"[LIVE] Entry tranche filled: {tranche.id} @ {tranche.filled_price}")
+
+                            # 텔레그램 알림
+                            side_kr = "롱" if pos.side == PositionSide.LONG else "숏"
+                            await self.alert_sender._send_telegram_text(
+                                f"📥 <b>추매 체결 ({filled_entries}/{len(pos.entry_tranches)})</b>\n\n"
                                 f"Side: {side_kr}\n"
-                                f"PnL: +${trade.realized_pnl:.2f} ({trade.pnl_percent:+.2f}%)\n"
-                                f"Balance: ${self.account.balance:,.2f}"
+                                f"Price: ${tranche.filled_price:,.2f}\n"
+                                f"Qty: {tranche.quantity}\n"
+                                f"평단: ${pos.avg_entry_price:,.2f}\n"
+                                f"총수량: {pos.total_quantity}\n"
+                                f"새 SL: ${pos.stop_loss_price:,.2f}"
+                            )
+
+                        elif status in ("CANCELED", "REJECTED", "EXPIRED"):
+                            tranche.status = OrderStatus.CANCELLED
+                            changed = True
+                            logger.info(f"[LIVE] Entry tranche {status}: {tranche.id}")
+
+                    # Exit tranche reconciliation (Algo API)
+                    for tranche in pos.exit_tranches:
+                        if tranche.status != OrderStatus.WAITING:
+                            continue
+                        algo_id = tranche.binance_order_id
+                        if not algo_id:
+                            continue
+
+                        try:
+                            algo = await binance_client.get_algo_order("BTCUSDT", algo_id)
+                            if not algo:
+                                continue
+                            algo_status = algo.get("algoStatus", "")
+                        except Exception:
+                            continue
+
+                        # Binance Futures Algo terminal states:
+                        #   NEW / WORKING — 트리거 대기
+                        #   FINISHED — 트리거 + 시장가 체결 완료 (actualQty>0)
+                        #   CANCELLED / EXPIRED / FAILED — 미체결 종료
+                        if algo_status == "FINISHED":
+                            actual_qty = Decimal(str(algo.get("actualQty") or "0"))
+                            if actual_qty <= 0:
+                                # 비정상: FINISHED 인데 체결량 0 → 다음 cycle 재시도
+                                logger.warning(f"[LIVE] TP algo FINISHED but actualQty=0: {tranche.id}")
+                                continue
+                            tranche.status = OrderStatus.FILLED
+                            tranche.filled_price = Decimal(str(algo.get("triggerPrice", tranche.target_price)))
+                            tranche.filled_at = int(algo.get("triggerTime", time.time() * 1000))
+                            pnl = self._calc_tranche_pnl(pos, tranche)
+                            pos.realized_pnl += pnl
+                            fee = self._calc_fee(tranche.filled_price, tranche.quantity, is_market=True)
+                            pos.total_fees += fee
+
+                            filled_exits = sum(1 for t in pos.exit_tranches if t.status == OrderStatus.FILLED)
+                            self._trailing_sl_after_tp(pos, filled_exits)
+                            changed = True
+                            logger.info(f"[LIVE] TP algo filled: {tranche.id} @ {tranche.filled_price}")
+
+                            # SL 재배치 (수량 + 가격 변경)
+                            await self._place_sl_order(pos)
+                            logger.info(f"[LIVE] SL updated after TP{filled_exits}: SL={pos.stop_loss_price}")
+
+                            # 텔레그램 알림
+                            side_kr = "롱" if pos.side == PositionSide.LONG else "숏"
+                            asyncio.create_task(self.alert_sender._send_telegram_text(
+                                f"💰 <b>TP{filled_exits} HIT</b>\n\n"
+                                f"Side: {side_kr}\n"
+                                f"Price: ${tranche.filled_price:,.2f}\n"
+                                f"Qty: {tranche.quantity}\n"
+                                f"PnL: {'+'if pnl >= 0 else ''}${pnl:.2f}\n"
+                                f"New SL: ${pos.stop_loss_price:,.2f}"
                             ))
-                            break
 
-                    elif algo_status in ("CANCELLED", "EXPIRED", "FAILED"):
-                        tranche.status = OrderStatus.CANCELLED
-                        changed = True
-                    elif algo_status not in ("NEW", "WORKING"):
-                        logger.warning(
-                            f"[LIVE] Unknown algoStatus {algo_status!r} for tranche {tranche.id} "
-                            f"(algoId={algo_id}); treating as still WAITING"
-                        )
+                            # 모든 exit 체결 → 포지션 종료 (고아 방지: 전체 nuke)
+                            if filled_exits == len(pos.exit_tranches):
+                                await self._nuke_all_binance_orders()
+                                trade = self._close_position(pos_id, tranche.filled_price, "take_profit")
+                                asyncio.create_task(self.alert_sender._send_telegram_text(
+                                    f"💚 <b>ALL TPs HIT</b>\n\n"
+                                    f"Side: {side_kr}\n"
+                                    f"PnL: +${trade.realized_pnl:.2f} ({trade.pnl_percent:+.2f}%)\n"
+                                    f"Balance: ${self.account.balance:,.2f}"
+                                ))
+                                break
 
-                if changed and pos_id in self.open_positions:
-                    save_position(pos)
-                    save_account(self.account)
+                        elif algo_status in ("CANCELLED", "EXPIRED", "FAILED"):
+                            tranche.status = OrderStatus.CANCELLED
+                            changed = True
+                        elif algo_status not in ("NEW", "WORKING"):
+                            logger.warning(
+                                f"[LIVE] Unknown algoStatus {algo_status!r} for tranche {tranche.id} "
+                                f"(algoId={algo_id}); treating as still WAITING"
+                            )
+
+                    if changed and pos_id in self.open_positions:
+                        save_position(pos)
+                        save_account(self.account)
+                except Exception as e:
+                    logger.error(f"[RECONCILE] per-position {pos_id} error: {e}")
+                    continue
 
             # 바이낸스 포지션 소멸 감지 (SL/TP가 바이낸스에서 실행된 경우)
             if self.open_positions:
@@ -821,14 +832,12 @@ class LiveTradingEngine(PaperTradingEngine):
 
                             logger.info(f"[LIVE] Binance position gone! {reason} PnL≈${pnl:.2f} @ ~${close_price}")
 
-                            # 잔존 Algo 주문 전부 취소
-                            await self._cancel_sl_order(pos)
-                            await self._cancel_all_exit_orders(pos)
+                            # 잔존 주문 전부 nuke (고아 방지: pos-scoped 대신 전체 + read-back)
+                            await self._nuke_all_binance_orders()
 
                             trade = self._close_position(pos_id, close_price, reason)
 
-                            self.account.balance = real_bal
-                            self.account.margin_used = Decimal("0")
+                            self._resync_after_close(real_bal)
                             save_account(self.account)
 
                             side_kr = "롱" if trade.side == PositionSide.LONG else "숏"
@@ -905,64 +914,189 @@ class LiveTradingEngine(PaperTradingEngine):
     # ── SL 사전 배치 (STOP_MARKET + reduceOnly) ─────────────
 
     async def _nuke_all_binance_orders(self):
-        """바이낸스 모든 주문 일괄 취소 (Algo + Regular)."""
-        try:
-            # Algo 주문 전부 취소
-            params = binance_client._sign({"symbol": "BTCUSDT"})
-            resp = await binance_client.client.get(
-                "/fapi/v1/openAlgoOrders", params=params, headers=binance_client._auth_headers()
-            )
-            for a in resp.json():
+        """바이낸스 모든 주문 일괄 취소 + read-back 검증 (고아 주문 제거).
+
+        정책 (2026-06-04 회의록 안건2):
+          - _retry_request 경유 (raw httpx 금지)
+          - 취소 후 openAlgoOrders + openOrders 재조회, 비워질 때까지 최대 3회
+          - 3회 후에도 더러우면 HALT + 텔레그램 alert
+        """
+        for attempt in range(3):
+            algos = await binance_client.get_open_algo_orders("BTCUSDT")
+            for a in algos:
                 try:
-                    await binance_client.cancel_algo_order("BTCUSDT", str(a["algoId"]))
+                    await binance_client.cancel_algo_order("BTCUSDT", str(a.get("algoId", "")))
                 except Exception:
                     pass
-            # 일반 주문 전부 취소
-            await binance_client.client.delete(
-                "/fapi/v1/allOpenOrders",
-                params=binance_client._sign({"symbol": "BTCUSDT"}),
-                headers=binance_client._auth_headers(),
+            await binance_client.cancel_all_open_orders("BTCUSDT")
+
+            # read-back 검증
+            algos_left = await binance_client.get_open_algo_orders("BTCUSDT")
+            orders_left = await binance_client.get_open_orders("BTCUSDT")
+            if not algos_left and not orders_left:
+                logger.info(f"[LIVE] All Binance orders nuked & verified (attempt {attempt+1})")
+                return
+            logger.warning(
+                f"[LIVE] Nuke read-back dirty (attempt {attempt+1}/3): "
+                f"algos={len(algos_left)} orders={len(orders_left)}"
             )
-            logger.info("[LIVE] All Binance orders nuked")
-        except Exception as e:
-            logger.error(f"[LIVE] Nuke orders failed: {e}")
+            await asyncio.sleep(0.5)
+
+        # 3회 후에도 잔존 → HALT + alert
+        logger.critical("[LIVE] Nuke failed to clear orders after 3 attempts → HALT")
+        self.anomaly_detector.set_manual_halt("orphan orders persist after nuke")
+        try:
+            await self.alert_sender._send_telegram_text(
+                "🆘 <b>CRITICAL: 고아 주문 제거 실패</b>\n\n"
+                "3회 시도 후에도 잔존 주문이 있습니다. 거래 HALT. 수동 확인 필요."
+            )
+        except Exception:
+            pass
 
     async def _cancel_all_binance_algo_orders(self):
         """하위 호환용."""
         await self._nuke_all_binance_orders()
 
+    async def _ensure_clean_book(self) -> bool:
+        """새 진입 전 clean book 검증. 잔존 주문 있으면 nuke 선행.
+
+        Returns: True = 진입 가능(clean), False = 정리 실패(진입 보류).
+        """
+        algos = await binance_client.get_open_algo_orders("BTCUSDT")
+        orders = await binance_client.get_open_orders("BTCUSDT")
+        if not algos and not orders:
+            return True
+        logger.warning(f"[LIVE] Dirty book before entry: algos={len(algos)} orders={len(orders)} → nuke")
+        await self._nuke_all_binance_orders()
+        # nuke 후 재확인
+        algos = await binance_client.get_open_algo_orders("BTCUSDT")
+        orders = await binance_client.get_open_orders("BTCUSDT")
+        return not algos and not orders
+
     async def _place_sl_order(self, pos: Position):
         """SL을 바이낸스 Algo API (STOP_MARKET, closePosition=True)로 사전 배치.
 
-        closePosition=True 사용 이유: 트리거 시점에 Binance 가 잔여 포지션 전체를 시장가로
-        청산하므로, 로컬 추적 수량과 실제 포지션 수량이 잠시 어긋나도 over-close 가 발생하지 않음.
+        신뢰성 정책 (2026-06-04 회의록 안건1):
+          - place-before-cancel: 새 SL 을 먼저 배치/확인한 뒤에만 기존 SL 취소 (무방비 윈도우 제거)
+          - algoId 미확인 시 3회 재시도 (0.5s 백오프)
+          - 전부 실패 → 즉시 시장가 청산 + HALT + 텔레그램 CRITICAL
+          - -2021 (would immediately trigger) → SL 이미 돌파 → 즉시 청산(stop_loss)
+          - remaining <= 0 이면 취소도 보류 (기존 SL 유지)
+
+        closePosition=True: 트리거 시 Binance 가 잔여 포지션 전체를 시장가 청산 → over-close 없음.
         """
         close_side = "SELL" if pos.side == PositionSide.LONG else "BUY"
-
-        # 기존 SL 주문 취소
-        await self._cancel_sl_order(pos)
 
         filled_qty = sum(t.quantity for t in pos.entry_tranches if t.status == OrderStatus.FILLED)
         exited_qty = sum(t.quantity for t in pos.exit_tranches if t.status == OrderStatus.FILLED)
         remaining = filled_qty - exited_qty
         if remaining <= 0:
+            # 청산할 수량 없음 → 기존 SL 그대로 유지 (취소 금지)
             return
 
-        try:
-            result = await binance_client.place_algo_order(
-                symbol="BTCUSDT",
-                side=close_side,
-                order_type="STOP_MARKET",
-                trigger_price=pos.stop_loss_price.quantize(Decimal("0.1")),
-                close_position=True,
+        pos.signal_details = pos.signal_details or {}
+        old_algo_id = str(pos.signal_details.get("sl_algo_id") or "").strip()
+
+        new_algo_id = ""
+        for attempt in range(3):
+            try:
+                result = await binance_client.place_algo_order(
+                    symbol="BTCUSDT",
+                    side=close_side,
+                    order_type="STOP_MARKET",
+                    trigger_price=pos.stop_loss_price.quantize(Decimal("0.1")),
+                    close_position=True,
+                )
+                new_algo_id = str(result.get("algoId", "") or "").strip()
+                if new_algo_id:
+                    break
+                logger.warning(f"[LIVE] SL place returned no algoId (attempt {attempt+1}/3)")
+            except AlgoWouldImmediatelyTrigger as e:
+                logger.error(f"[LIVE] SL would immediately trigger → emergency close: {e}")
+                await self._emergency_close(pos, reason="stop_loss")
+                return
+            except Exception as e:
+                logger.error(f"[LIVE] SL algo place failed (attempt {attempt+1}/3): {e}")
+            await asyncio.sleep(0.5)
+
+        if not new_algo_id:
+            # 3회 모두 실패 → 무방비 방지: 즉시 청산 + HALT
+            logger.critical("[LIVE] SL placement failed 3x → emergency close + HALT")
+            self.anomaly_detector.set_manual_halt("SL place failed 3x")
+            await self.alert_sender._send_telegram_text(
+                "🆘 <b>CRITICAL: SL 배치 3회 실패</b>\n\n"
+                "포지션을 즉시 시장가 청산하고 거래를 HALT 합니다.\n"
+                f"Side: {pos.side.value} | trigger=${pos.stop_loss_price}"
             )
-            pos.signal_details = pos.signal_details or {}
-            algo_id = str(result.get("algoId", ""))
-            if algo_id:
-                pos.signal_details["sl_algo_id"] = algo_id
-            logger.info(f"[LIVE] SL algo order placed: {close_side} STOP_MARKET trigger={pos.stop_loss_price} closePosition=true algoId={algo_id}")
+            await self._emergency_close(pos, reason="sl_place_failed")
+            return
+
+        # 새 SL 확인됨 → 이제서야 기존 SL 취소 (place-before-cancel)
+        pos.signal_details["sl_algo_id"] = new_algo_id
+        if old_algo_id and old_algo_id != new_algo_id:
+            try:
+                await binance_client.cancel_algo_order("BTCUSDT", old_algo_id)
+            except Exception:
+                pass
+        logger.info(f"[LIVE] SL algo placed: {close_side} STOP_MARKET trigger={pos.stop_loss_price} closePosition=true algoId={new_algo_id}")
+
+    async def _emergency_close(self, pos: Position, reason: str):
+        """SL 배치 불가/돌파 시 즉시 시장가 청산 (무방비 포지션 제거)."""
+        logger.critical(f"[LIVE] EMERGENCY CLOSE: pos={pos.id} reason={reason}")
+        close_price = self._last_price or pos.avg_entry_price or Decimal("0")
+        try:
+            binance_pos = await binance_client.get_position_risk("BTCUSDT")
+            if binance_pos and float(binance_pos.get("positionAmt", 0)) != 0:
+                amt = Decimal(str(binance_pos["positionAmt"]))
+                close_side = "SELL" if amt > 0 else "BUY"
+                resp = await binance_client.place_order(
+                    symbol="BTCUSDT", side=close_side, order_type="MARKET",
+                    quantity=abs(amt).quantize(Decimal("0.001")),
+                )
+                if resp.get("avgPrice"):
+                    close_price = Decimal(str(resp["avgPrice"]))
         except Exception as e:
-            logger.error(f"[LIVE] SL algo order failed: {e}")
+            logger.error(f"[LIVE] Emergency market close failed: {e}")
+        # 잔존 주문 전부 취소
+        try:
+            await self._nuke_all_binance_orders()
+        except Exception:
+            pass
+        # 로컬 청산 기록
+        if pos.id in self.open_positions:
+            try:
+                self._close_position(pos.id, close_price, reason)
+            except Exception as e:
+                logger.error(f"[LIVE] Emergency local close failed: {e}")
+        try:
+            await self.alert_sender._send_telegram_text(
+                f"🆘 <b>EMERGENCY CLOSE — {reason}</b>\n\n"
+                f"Side: {pos.side.value}\nClose: ~${close_price}"
+            )
+        except Exception:
+            pass
+
+    async def _assert_sl_armed(self, pos: Position):
+        """열린 포지션에 live STOP algo 가 실재하는지 검증. 없으면 1회 재무장, 실패 시 비상청산."""
+        try:
+            binance_pos = await binance_client.get_position_risk("BTCUSDT")
+        except Exception:
+            return  # 조회 실패 시 이번 사이클은 건너뜀 (다음 사이클 재시도)
+        if not binance_pos or float(binance_pos.get("positionAmt", 0)) == 0:
+            return  # 포지션 없음 → SL 불필요
+
+        algo_id = str((pos.signal_details or {}).get("sl_algo_id") or "").strip()
+        armed = False
+        if algo_id:
+            try:
+                algo = await binance_client.get_algo_order("BTCUSDT", algo_id)
+                if algo and algo.get("algoStatus", "") in ("NEW", "WORKING"):
+                    armed = True
+            except Exception:
+                armed = False
+        if not armed:
+            logger.warning(f"[LIVE] SL not armed for open position → re-arming (algo_id={algo_id!r})")
+            await self._place_sl_order(pos)
 
     async def _cancel_sl_order(self, pos: Position):
         """기존 SL algo 주문 취소."""
@@ -994,6 +1128,38 @@ class LiveTradingEngine(PaperTradingEngine):
         change_pct = abs(float(pos.stop_loss_price - old_sl) / float(old_sl) * 100)
         if change_pct >= 0.1:
             await self._place_sl_order(pos)
+
+    # ── 청산 회계 오버라이드 (실잔고 기반 일원화, 2026-06-04 회의록 안건5) ─────
+
+    def _close_position(self, pos_id: str, price: Decimal, reason: str):
+        """Live: trade record/통계는 super 재사용하되 로컬 balance 가감은 무효화.
+
+        Live 잔고는 Binance 실잔고 동기화가 권위 (caller 가 self.account.balance = real_bal).
+        super()._close_position 의 balance ±(fee/margin/pnl) 를 되돌려, 실잔고 sync 실패 시에도
+        로컬 추정치로 오염되지 않게 한다. daily_pnl 은 청산 후 caller 가 실잔고 기준으로 재계산.
+        """
+        bal_before = self.account.balance
+        trade = super()._close_position(pos_id, price, reason)
+        # super 의 로컬 balance 가감 되돌림 (실잔고 sync 가 권위)
+        self.account.balance = bal_before
+        return trade
+
+    def _resync_after_close(self, real_bal: Decimal):
+        """청산 후 실잔고 동기화 + daily_pnl 실잔고 기반 재계산."""
+        self.account.balance = real_bal
+        self.account.margin_used = Decimal("0")
+        base = self.account.daily_start_balance
+        if base and base > 0:
+            self.account.daily_pnl = real_bal - base
+
+    def _check_daily_reset(self, now: int):
+        """Live: daily_start_balance 는 실잔고만 (cross margin — margin_used 더하지 않음)."""
+        mu = self.account.margin_used
+        self.account.margin_used = Decimal("0")  # 스냅샷 계산에서 margin 제외
+        try:
+            super()._check_daily_reset(now)
+        finally:
+            self.account.margin_used = mu
 
     # ── Account 업데이트 오버라이드 (cross margin) ─────────
 

@@ -149,7 +149,6 @@ class TelegramBot:
         margin_used = Decimal(status["margin_used"])
         unrealized = Decimal(status["unrealized_pnl"])
         daily_pnl = Decimal(status["daily_pnl"])
-        total_fees = Decimal(status["total_fees"])
         trades = status["daily_trades"]
         total_trades = status["total_trades"]
         positions_count = status["open_positions_count"]
@@ -218,8 +217,7 @@ class TelegramBot:
             f"{daily_icon} <b>금일 PnL:</b> <code>${daily_pnl:,.2f}</code>"
             f" | 거래 {trades}건\n"
             f"📊 <b>누적:</b> 총 {total_trades}건"
-            f" | 승률 {win_rate}%"
-            f" | 수수료 ${total_fees:,.2f}\n"
+            f" | 승률 {win_rate}%\n"
         )
         if pos_summary:
             msg += f"\n{'━' * 28}\n<b>📌 포지션</b>{pos_summary}\n"

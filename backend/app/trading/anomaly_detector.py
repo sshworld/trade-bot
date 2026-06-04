@@ -258,7 +258,27 @@ class AnomalyDetector:
         return None
 
     def check_heartbeat(self) -> AnomalyAlert | None:
-        """주기적 검사. 비활성화 (2026-05-04, stale_price halt 제거)."""
+        """주기적 검사 (2026-06-04 회의록 안건5 보너스): stale-price 경고만 (중단 아님).
+
+        가격 업데이트가 stale_price_max_sec 이상 끊기면 ALERT(거래 계속). 5분 쿨다운.
+        SL 은 Binance 사전배치라 가격 stale 와 무관하게 작동 — 따라서 halt 가 아닌 경고.
+        """
+        now = int(time.time() * 1000)
+        elapsed_sec = (now - self._last_price_update_ms) / 1000
+        if elapsed_sec > self.config.stale_price_max_sec:
+            return self._trigger(
+                rule_name="stale_price_heartbeat",
+                severity="WARNING",
+                action=AnomalyAction.ALERT,   # 경고만, 거래 계속
+                halt_sec=0,
+                message=(
+                    f"Price feed stale: {elapsed_sec:.0f}s 동안 가격 업데이트 없음 "
+                    f"(limit {self.config.stale_price_max_sec}s). WS 연결 점검 필요. "
+                    f"(SL 은 Binance 사전배치로 계속 작동)"
+                ),
+                details={"elapsed_sec": elapsed_sec},
+                now=now,
+            )
         return None
 
     # ────────────────────────────────────────────────────────────

@@ -191,6 +191,10 @@ class TradingSettings(BaseModel):
     # ── 트레일링 (TP2 이후) ──
     trailing_margin_pct: float = 3.0      # 기본: 최고가 - 마진 3%
     trailing_tight_pct: float = 1.5       # TP3 넘으면: 최고가 - 마진 1.5%
+    # 분할 TP 체결 후 SL 바닥 (2026-06-04 회의록 안건3): 체결 TP 가격 위로 잠금
+    #   SL_floor = best_filled_TP ∓ (best_TP − entry) × ratio
+    #   TP1(+0.6%) → +0.42%, TP2(+1.2%) → +0.84% (본전/직전 TP 위)
+    tp_sl_buffer_ratio: float = 0.30
 
     # 포지션
     max_open_positions: int = 1

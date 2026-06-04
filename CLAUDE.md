@@ -60,19 +60,23 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 ### TP — 마진 대비 % (2026-04-13 회의록, ATR 폐기)
 | 단계 | 마진 수익% | BTC 이동% (@5x) | 물량 | 후속 |
 |------|:---:|:---:|:---:|:---:|
-| TP1 | **3%** | 0.6% | **50%** | SL → 본전(수수료 포함) |
-| TP2 | **6%** | 1.2% | **30%** | SL → TP1 가격 |
+| TP1 | **3%** | 0.6% | **50%** | SL → 체결 TP 위 (+0.42%) |
+| TP2 | **6%** | 1.2% | **30%** | SL → 체결 TP 위 (+0.84%) |
 | TP3 | **10%** | 2.0% | **20%** | 트레일링 조임 |
 
 ### SL — 잔고 2% 고정 손실
 - 전량 1건 청산 (분할 SL 없음)
 - 최소 SL 거리: **0.3%** (스프레드/슬리피지 보호)
 - 물타기 시 평단 기준 재계산
-- **SL 사전 배치**: STOP_MARKET + reduceOnly (서버 꺼져도 작동)
+- **SL 사전 배치**: STOP_MARKET + closePosition=True (서버 꺼져도 작동)
+- **배치 신뢰성 (2026-06-04 회의록)**: place→confirm→cancel 순서, 3회 재시도(0.5s), 실패 시 즉시 시장가 청산+HALT, reconcile/init 마다 SL 존재 검증(`_assert_sl_armed`), Binance -2021 → 즉시 청산
+- **고아 주문 제거**: 모든 닫힘 경로 `_nuke_all_binance_orders` 통일 + read-back 3회 검증, 진입 전 clean book 확인
 
-### 트레일링
-- TP1 → SL을 본전(수수료 포함)
-- TP2 → SL을 TP1 가격
+### 트레일링 (2026-06-04 회의록: 체결 TP 위로 이익 잠금)
+- `tp_sl_buffer_ratio = 0.30`
+- 분할 TP 체결 → SL = `best_filled_TP ∓ (best_TP − 평단) × 0.30` (LONG/SHORT 대칭)
+- TP1 체결 → SL ≈ 평단 +0.42% (본전 위), TP2 → +0.84% (TP1 위)
+- 동적 트레일 가드 바닥 = 가장 유리한 체결 TP 이익구간 (그 아래로 안 내려감)
 - TP2 이후: 최고가 - **마진 3%** / TP3 넘으면 **마진 1.5%**
 
 ### 진입 (물타기, ATR 기반 offset, 2026-04-13 간격 확대)
@@ -132,7 +136,8 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 - [x] Algo `algoStatus` 매핑 수정 (`"EXECUTED"` → `"FINISHED"`), SL `closePosition=True` 적용 — TP 체결 미감지 + SL stale qty 핫픽스 (2026-05-21)
 - [x] WebSocket broadcast 직렬→병렬화 + 2s send timeout, Binance read loop 와 outgoing 큐 분리 (2026-05-27)
 - [x] Frontend(Next.js) 제거, Telegram bot 모니터링 일원화 (2026-06-01)
-- [ ] PnL에 수수료 포함 표시
+- [x] SL 배치 신뢰성 (place-before-cancel/재시도/실패시 청산+HALT/존재검증/-2021), 고아주문 nuke 통일+read-back, 분할 TP 후 SL 체결가 위 잠금(buffer 0.30), 수수료 누적 제거+Live 회계 실잔고 일원화, reconcile phantom 방지 (2026-06-04 회의록)
+- [x] ~~PnL에 수수료 포함 표시~~ → 수수료 개념 제거 (account.total_fees 누적 폐기, per-trade만 기록)
 - [ ] 자본 $10,000 도달 시 리스크 재검토 토론
 - [ ] TP 사전 배치 Phase 2 (트레일링 TP)
 

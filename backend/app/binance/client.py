@@ -24,6 +24,14 @@ PRICE_TICK = Decimal("0.1")
 QTY_STEP = Decimal("0.001")
 
 
+class AlgoWouldImmediatelyTrigger(Exception):
+    """Binance -2021: Order would immediately trigger.
+
+    STOP_MARKET SL 의 trigger 가격이 이미 현재가 반대편에 있을 때 발생.
+    = SL 이 이미 돌파된 상태 → 호출부는 재시도 말고 즉시 시장가 청산해야 함.
+    """
+
+
 def round_price(p: Decimal | float | str) -> Decimal:
     """Quantize price down to BTCUSDT tickSize (0.1). Binance rejects sub-tick prices on /fapi/v1/order."""
     return Decimal(str(p)).quantize(PRICE_TICK, rounding=ROUND_DOWN)
@@ -196,7 +204,9 @@ class BinanceClient:
                 params=params, headers=self._auth_headers(),
             )
             return resp.json()
-        except Exception:
+        except Exception as e:
+            # silent swallow 금지: stuck WAITING tranche 가시화 (S5)
+            logger.warning(f"get_order failed ({client_order_id}): {e}")
             return None
 
     async def cancel_order(self, symbol: str, client_order_id: str) -> dict | None:
@@ -235,13 +245,65 @@ class BinanceClient:
             params["newClientOrderId"] = client_order_id
 
         params = self._sign(params)
-        resp = await self._retry_request(
-            self.client, "post", "/fapi/v1/algoOrder",
-            params=params, headers=self._auth_headers(),
-        )
+        try:
+            resp = await self._retry_request(
+                self.client, "post", "/fapi/v1/algoOrder",
+                params=params, headers=self._auth_headers(),
+            )
+        except httpx.HTTPStatusError as e:
+            body: dict = {}
+            try:
+                body = e.response.json()
+            except Exception:
+                pass
+            msg = str(body.get("msg", "")).lower()
+            if body.get("code") == -2021 or "immediately trigger" in msg:
+                raise AlgoWouldImmediatelyTrigger(str(body)) from e
+            raise
         result = resp.json()
         logger.info(f"Algo order placed: {side} {order_type} trigger={trig_q} → algoId={result.get('algoId')}")
         return result
+
+    async def get_open_algo_orders(self, symbol: str = "BTCUSDT") -> list[dict]:
+        """열린 Algo 주문 목록 (read-back 검증용)."""
+        try:
+            params = self._sign({"symbol": symbol})
+            resp = await self._retry_request(
+                self.client, "get", "/fapi/v1/openAlgoOrders",
+                params=params, headers=self._auth_headers(),
+            )
+            data = resp.json()
+            return data if isinstance(data, list) else data.get("orders", []) or []
+        except Exception as e:
+            logger.error(f"get_open_algo_orders failed: {e}")
+            return []
+
+    async def get_open_orders(self, symbol: str = "BTCUSDT") -> list[dict]:
+        """열린 일반 주문 목록 (read-back 검증용)."""
+        try:
+            params = self._sign({"symbol": symbol})
+            resp = await self._retry_request(
+                self.client, "get", "/fapi/v1/openOrders",
+                params=params, headers=self._auth_headers(),
+            )
+            data = resp.json()
+            return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.error(f"get_open_orders failed: {e}")
+            return []
+
+    async def cancel_all_open_orders(self, symbol: str = "BTCUSDT") -> dict | None:
+        """일반 주문 전부 취소 (DELETE /fapi/v1/allOpenOrders)."""
+        try:
+            params = self._sign({"symbol": symbol})
+            resp = await self._retry_request(
+                self.client, "delete", "/fapi/v1/allOpenOrders",
+                params=params, headers=self._auth_headers(),
+            )
+            return resp.json()
+        except Exception as e:
+            logger.error(f"cancel_all_open_orders failed: {e}")
+            return None
 
     async def cancel_algo_order(self, symbol: str, algo_id: str) -> dict | None:
         """Algo 주문 취소."""
@@ -264,7 +326,8 @@ class BinanceClient:
                 params=params, headers=self._auth_headers(),
             )
             return resp.json()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"get_algo_order failed ({algo_id}): {e}")
             return None
 
     async def set_leverage(self, symbol: str, leverage: int) -> dict:

@@ -299,7 +299,6 @@ class PaperTradingEngine:
             fee = self._calc_fee(current_price, first.quantity, is_market=True)
             position.total_fees += fee
             self.account.balance -= fee
-            self.account.total_fees += fee
             self._recalculate_position(position)
 
             self.account.daily_trades += 1
@@ -335,7 +334,6 @@ class PaperTradingEngine:
                         fee = self._calc_fee(price, tranche.quantity, is_market=False)
                         pos.total_fees += fee
                         self.account.balance -= fee
-                        self.account.total_fees += fee
                         self._recalculate_position(pos)
                         save_position(pos)
 
@@ -369,7 +367,6 @@ class PaperTradingEngine:
                         fee = self._calc_fee(price, tranche.quantity, is_market=False)
                         pos.total_fees += fee
                         self.account.balance -= fee
-                        self.account.total_fees += fee
 
                         filled_exits = sum(1 for t in pos.exit_tranches if t.status == OrderStatus.FILLED)
                         total_exits = len(pos.exit_tranches)
@@ -471,7 +468,6 @@ class PaperTradingEngine:
             fee = self._calc_fee(price, remaining_qty, is_market=True)
             pos.total_fees += fee
             self.account.balance -= fee
-            self.account.total_fees += fee
 
         margin = pos.allocated_margin
         self.account.balance += margin + pos.realized_pnl
@@ -521,7 +517,7 @@ class PaperTradingEngine:
         )
         post_alert = self.anomaly_detector.check_post_trade(
             trade_history=self.trade_history,
-            daily_fees=self.account.total_fees,
+            daily_fees=self._sum_fees(today_only=True),
             daily_volume=Decimal(str(daily_volume)) if daily_volume else Decimal("0"),
         )
         if post_alert:
@@ -530,6 +526,14 @@ class PaperTradingEngine:
         return trade
 
     # ── Helpers ─────────────────────────────────────────────────────
+
+    def _sum_fees(self, today_only: bool = False) -> Decimal:
+        """수수료 합산은 trade_history(per-trade) 기준 (account.total_fees 누적 폐기, 2026-06-04)."""
+        trades = self.trade_history
+        if today_only:
+            today_start = int(time.time() // 86400) * 86400 * 1000
+            trades = [t for t in trades if t.closed_at >= today_start]
+        return sum((t.total_fees for t in trades), Decimal("0"))
 
     def _check_daily_reset(self, now: int):
         """자정 리셋. 당일 시작 잔고 스냅샷."""
@@ -546,7 +550,7 @@ class PaperTradingEngine:
                     str(close_bal),
                     str(self.account.daily_pnl),
                     self.account.daily_trades,
-                    str(self.account.total_fees),
+                    str(self._sum_fees(today_only=True)),
                 )
 
             # 신규 일일 리셋
@@ -630,24 +634,42 @@ class PaperTradingEngine:
         elif pos.side == PositionSide.SHORT and new_sl < pos.stop_loss_price:
             pos.stop_loss_price = new_sl
 
+    def _tp_sl_floor(self, pos: Position) -> Decimal | None:
+        """체결된 가장 유리한 TP 가격 기준 SL 바닥 (이익 잠금, 2026-06-04 회의록 안건3).
+
+        LONG:  best_tp - (best_tp - entry) * ratio   (체결 TP 바로 아래, 이익 구간)
+        SHORT: best_tp + (entry - best_tp) * ratio
+        체결 TP 가 없거나 평단 미정이면 None.
+        """
+        filled = [t.filled_price for t in pos.exit_tranches
+                  if t.status == OrderStatus.FILLED and t.filled_price]
+        if not filled or not pos.avg_entry_price:
+            return None
+        ratio = Decimal(str(self.settings.tp_sl_buffer_ratio))
+        if pos.side == PositionSide.LONG:
+            best_tp = max(filled)
+            return (best_tp - (best_tp - pos.avg_entry_price) * ratio).quantize(Decimal("0.1"))
+        best_tp = min(filled)
+        return (best_tp + (pos.avg_entry_price - best_tp) * ratio).quantize(Decimal("0.1"))
+
     def _trailing_sl_after_tp(self, pos: Position, filled_exits: int):
-        """TP 체결 후 트레일링. TP1→본전, TP2→TP1, TP3→동적 트레일."""
+        """TP 체결 후 트레일링. 체결 TP 가격 위로 SL 잠금 (회의록 안건3).
+
+        SL = max(breakeven, tp_floor) (LONG) / min(...) (SHORT).
+        tp_floor 는 가장 유리한 체결 TP 기준이라 TP1 체결 시 +0.42%, TP2 시 +0.84% (본전/TP1 위).
+        """
         total_exits = len(pos.exit_tranches)
         if filled_exits >= total_exits:
             return
 
-        filled_exit_list = [t for t in pos.exit_tranches if t.status == OrderStatus.FILLED]
-
-        if filled_exits == 1:
-            new_sl = self._breakeven_price(pos)
-        elif filled_exits >= 2 and len(filled_exit_list) >= 2:
-            sorted_prices = sorted(
-                [t.filled_price for t in filled_exit_list],
-                key=lambda p: p if pos.side == PositionSide.LONG else -p,
-            )
-            new_sl = sorted_prices[0]
-        else:
+        floor = self._tp_sl_floor(pos)
+        if floor is None:
             return
+        be = self._breakeven_price(pos)
+        if pos.side == PositionSide.LONG:
+            new_sl = max(be, floor)
+        else:
+            new_sl = min(be, floor)
 
         new_sl = new_sl.quantize(Decimal("0.1"))
         if pos.side == PositionSide.LONG and new_sl > pos.stop_loss_price:
@@ -685,9 +707,10 @@ class PaperTradingEngine:
             trail_dist = float(pos.allocated_margin) * (trail_pct / 100) / float(remaining_qty)
             new_sl = (highest - Decimal(str(trail_dist))).quantize(Decimal("0.1"))
 
-            tp1_prices = [t.filled_price for t in pos.exit_tranches if t.status == OrderStatus.FILLED]
-            if tp1_prices:
-                new_sl = max(new_sl, min(tp1_prices))
+            # 가드 바닥: 가장 유리한 체결 TP 이익구간 아래로 안 내려감 (회의록 안건3)
+            floor = self._tp_sl_floor(pos)
+            if floor is not None:
+                new_sl = max(new_sl, floor)
 
             if new_sl > pos.stop_loss_price:
                 pos.stop_loss_price = new_sl
@@ -701,9 +724,10 @@ class PaperTradingEngine:
             trail_dist = float(pos.allocated_margin) * (trail_pct / 100) / float(remaining_qty)
             new_sl = (lowest + Decimal(str(trail_dist))).quantize(Decimal("0.1"))
 
-            tp1_prices = [t.filled_price for t in pos.exit_tranches if t.status == OrderStatus.FILLED]
-            if tp1_prices:
-                new_sl = min(new_sl, max(tp1_prices))
+            # 가드 바닥(SHORT): 가장 유리한 체결 TP 이익구간 위로 안 올라감 (회의록 안건3)
+            floor = self._tp_sl_floor(pos)
+            if floor is not None:
+                new_sl = min(new_sl, floor)
 
             if new_sl < pos.stop_loss_price:
                 pos.stop_loss_price = new_sl
@@ -1000,7 +1024,7 @@ class PaperTradingEngine:
             "equity": str(self.account.equity),
             "unrealized_pnl": str(self.account.unrealized_pnl),
             "margin_used": str(self.account.margin_used),
-            "total_fees": str(self.account.total_fees),
+            "total_fees": str(self._sum_fees()),
             "daily_pnl": str(self.account.daily_pnl),
             "daily_trades": self.account.daily_trades,
             "open_positions_count": len(self.open_positions),
