@@ -70,6 +70,7 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 - 물타기 시 평단 기준 재계산
 - **SL 사전 배치**: STOP_MARKET + closePosition=True (서버 꺼져도 작동)
 - **배치 신뢰성 (2026-06-04 회의록)**: place→confirm→cancel 순서, 3회 재시도(0.5s), 실패 시 즉시 시장가 청산+HALT, reconcile/init 마다 SL 존재 검증(`_assert_sl_armed`), Binance -2021 → 즉시 청산
+- -4130(방향당 closePosition 유니크) → 충돌 SL 취소 후 1회 재시도(백오프 0), read-back 후 무방비/확인불가만 청산+HALT (2026-06-07 회의록)
 - **고아 주문 제거**: 모든 닫힘 경로 `_nuke_all_binance_orders` 통일 + read-back 3회 검증, 진입 전 clean book 확인
 
 ### 트레일링 (2026-06-04 회의록: 체결 TP 위로 이익 잠금)
@@ -138,6 +139,7 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 - [x] Frontend(Next.js) 제거, Telegram bot 모니터링 일원화 (2026-06-01)
 - [x] SL 배치 신뢰성 (place-before-cancel/재시도/실패시 청산+HALT/존재검증/-2021), 고아주문 nuke 통일+read-back, 분할 TP 후 SL 체결가 위 잠금(buffer 0.30), 수수료 누적 제거+Live 회계 실잔고 일원화, reconcile phantom 방지 (2026-06-04 회의록)
 - [x] ~~PnL에 수수료 포함 표시~~ → 수수료 개념 제거 (account.total_fees 누적 폐기, per-trade만 기록)
+- [x] SL -4130 closePosition 충돌 복구 (cancel-then-replace + read-back 분기, 2026-06-07 회의록)
 - [ ] 자본 $10,000 도달 시 리스크 재검토 토론
 - [ ] TP 사전 배치 Phase 2 (트레일링 TP)
 

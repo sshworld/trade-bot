@@ -32,6 +32,12 @@ class AlgoWouldImmediatelyTrigger(Exception):
     """
 
 
+class AlgoConflictClosePosition(Exception):
+    """Binance -4130: 방향당 closePosition STOP/TP 가 이미 존재.
+    = 기존 SL 이 포지션을 이미 보호 중. cancel-then-replace 복구 대상.
+    """
+
+
 def round_price(p: Decimal | float | str) -> Decimal:
     """Quantize price down to BTCUSDT tickSize (0.1). Binance rejects sub-tick prices on /fapi/v1/order."""
     return Decimal(str(p)).quantize(PRICE_TICK, rounding=ROUND_DOWN)
@@ -257,8 +263,11 @@ class BinanceClient:
             except Exception:
                 pass
             msg = str(body.get("msg", "")).lower()
-            if body.get("code") == -2021 or "immediately trigger" in msg:
+            code = body.get("code")
+            if code == -2021 or "immediately trigger" in msg:
                 raise AlgoWouldImmediatelyTrigger(str(body)) from e
+            if code == -4130 or "closeposition in the direction is existing" in msg:
+                raise AlgoConflictClosePosition(str(body)) from e
             raise
         result = resp.json()
         logger.info(f"Algo order placed: {side} {order_type} trigger={trig_q} → algoId={result.get('algoId')}")

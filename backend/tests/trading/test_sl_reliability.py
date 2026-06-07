@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 import app.trading.engine  # noqa: F401  — engine 먼저 로드해 순환 import 회피
-from app.binance.client import AlgoWouldImmediatelyTrigger
+from app.binance.client import AlgoConflictClosePosition, AlgoWouldImmediatelyTrigger
 from app.trading import live_engine as le_mod
 from app.trading.live_engine import LiveTradingEngine
 from app.trading.schemas import OrderStatus, Position, PositionSide, TrancheOrder
@@ -75,6 +75,8 @@ async def test_sl_place_retry_then_emergency(eng, monkeypatch):
     monkeypatch.setattr(le_mod.binance_client, "place_order", market_mock)
     monkeypatch.setattr(eng, "_nuke_all_binance_orders", AsyncMock())
 
+    monkeypatch.setattr(le_mod.binance_client, "get_open_algo_orders", AsyncMock(return_value=[]))
+
     pos = _pos()
     eng.open_positions[pos.id] = pos
     await eng._place_sl_order(pos)
@@ -129,3 +131,88 @@ async def test_assert_sl_armed_rearm(eng, monkeypatch):
     pos = _pos()
     await eng._assert_sl_armed(pos)
     assert rearm.await_count == 1                 # 재무장 호출
+
+
+@pytest.mark.asyncio
+async def test_sl_4130_recovery_cancel_then_replace(eng, monkeypatch):
+    """-4130 발생 → cancel-then-replace → 새 algoId 등록, 청산/HALT 없음."""
+    place_mock = AsyncMock(side_effect=[AlgoConflictClosePosition("-4130"), {"algoId": "NEW"}])
+    cancel_mock = AsyncMock(return_value={})
+    monkeypatch.setattr(le_mod.binance_client, "place_algo_order", place_mock)
+    monkeypatch.setattr(le_mod.binance_client, "cancel_algo_order", cancel_mock)
+    monkeypatch.setattr(le_mod.binance_client, "get_open_algo_orders", AsyncMock(return_value=[]))
+    market_mock = AsyncMock(return_value={"avgPrice": "79500"})
+    monkeypatch.setattr(le_mod.binance_client, "place_order", market_mock)
+
+    pos = _pos(sl_algo_id="OLD")
+    await eng._place_sl_order(pos)
+
+    assert cancel_mock.await_count >= 1           # cancel 호출됨
+    assert pos.signal_details["sl_algo_id"] == "NEW"
+    assert eng.anomaly_detector._manual_halt is False
+    assert market_mock.await_count == 0           # emergency 미발생
+
+
+@pytest.mark.asyncio
+async def test_sl_4130_then_readback_alive_no_close(eng, monkeypatch):
+    """-4130 복구 실패 but 방향 내 closePosition SL 살아있음 → 청산 안 함."""
+    place_mock = AsyncMock(side_effect=AlgoConflictClosePosition("-4130"))
+    cancel_mock = AsyncMock(return_value={})
+    alive_order = {"type": "STOP_MARKET", "side": "SELL", "closePosition": True, "algoId": "OLD"}
+    monkeypatch.setattr(le_mod.binance_client, "place_algo_order", place_mock)
+    monkeypatch.setattr(le_mod.binance_client, "cancel_algo_order", cancel_mock)
+    monkeypatch.setattr(le_mod.binance_client, "get_open_algo_orders", AsyncMock(return_value=[alive_order]))
+    market_mock = AsyncMock(return_value={"avgPrice": "79500"})
+    monkeypatch.setattr(le_mod.binance_client, "place_order", market_mock)
+    monkeypatch.setattr(eng, "_nuke_all_binance_orders", AsyncMock())
+
+    pos = _pos(sl_algo_id="OLD")  # LONG → close_side = SELL
+    await eng._place_sl_order(pos)
+
+    assert market_mock.await_count == 0           # 청산 안 함
+    assert eng.anomaly_detector._manual_halt is False
+
+
+@pytest.mark.asyncio
+async def test_sl_4130_readback_empty_emergency(eng, monkeypatch):
+    """-4130 복구 실패, read-back 0개 → emergency + HALT."""
+    place_mock = AsyncMock(side_effect=AlgoConflictClosePosition("-4130"))
+    cancel_mock = AsyncMock(return_value={})
+    monkeypatch.setattr(le_mod.binance_client, "place_algo_order", place_mock)
+    monkeypatch.setattr(le_mod.binance_client, "cancel_algo_order", cancel_mock)
+    monkeypatch.setattr(le_mod.binance_client, "get_open_algo_orders", AsyncMock(return_value=[]))
+    monkeypatch.setattr(le_mod.binance_client, "get_position_risk",
+                        AsyncMock(return_value={"positionAmt": "0.01"}))
+    market_mock = AsyncMock(return_value={"avgPrice": "79500"})
+    monkeypatch.setattr(le_mod.binance_client, "place_order", market_mock)
+    monkeypatch.setattr(eng, "_nuke_all_binance_orders", AsyncMock())
+
+    pos = _pos()
+    eng.open_positions[pos.id] = pos
+    await eng._place_sl_order(pos)
+
+    assert market_mock.await_count >= 1           # emergency 호출
+    assert eng.anomaly_detector._manual_halt is True
+
+
+@pytest.mark.asyncio
+async def test_sl_4130_readback_apierror_emergency(eng, monkeypatch):
+    """-4130 복구 실패, get_open_algo_orders API 에러 → emergency + HALT."""
+    place_mock = AsyncMock(side_effect=AlgoConflictClosePosition("-4130"))
+    cancel_mock = AsyncMock(return_value={})
+    monkeypatch.setattr(le_mod.binance_client, "place_algo_order", place_mock)
+    monkeypatch.setattr(le_mod.binance_client, "cancel_algo_order", cancel_mock)
+    monkeypatch.setattr(le_mod.binance_client, "get_open_algo_orders",
+                        AsyncMock(side_effect=Exception("network error")))
+    monkeypatch.setattr(le_mod.binance_client, "get_position_risk",
+                        AsyncMock(return_value={"positionAmt": "0.01"}))
+    market_mock = AsyncMock(return_value={"avgPrice": "79500"})
+    monkeypatch.setattr(le_mod.binance_client, "place_order", market_mock)
+    monkeypatch.setattr(eng, "_nuke_all_binance_orders", AsyncMock())
+
+    pos = _pos()
+    eng.open_positions[pos.id] = pos
+    await eng._place_sl_order(pos)
+
+    assert market_mock.await_count >= 1           # emergency 호출
+    assert eng.anomaly_detector._manual_halt is True

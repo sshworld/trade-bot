@@ -15,7 +15,7 @@ import logging
 import time
 from decimal import Decimal, ROUND_DOWN
 
-from app.binance.client import AlgoWouldImmediatelyTrigger, binance_client
+from app.binance.client import AlgoConflictClosePosition, AlgoWouldImmediatelyTrigger, binance_client
 from app.config import settings
 from app.trading.engine import PaperTradingEngine
 from app.trading.schemas import (
@@ -1015,16 +1015,56 @@ class LiveTradingEngine(PaperTradingEngine):
                 logger.error(f"[LIVE] SL would immediately trigger → emergency close: {e}")
                 await self._emergency_close(pos, reason="stop_loss")
                 return
+            except AlgoConflictClosePosition as e:
+                # -4130: 기존 closePosition SL 이 포지션 보호 중 → 충돌분 취소 후 즉시 1회 재시도 (백오프 0)
+                logger.warning(f"[LIVE] SL -4130 conflict → cancel-then-replace recovery: {e}")
+                await self._cancel_conflicting_sl(close_side, old_algo_id)
+                try:
+                    result = await binance_client.place_algo_order(
+                        symbol="BTCUSDT", side=close_side, order_type="STOP_MARKET",
+                        trigger_price=pos.stop_loss_price.quantize(Decimal("0.1")),
+                        close_position=True,
+                    )
+                    new_algo_id = str(result.get("algoId", "") or "").strip()
+                    if new_algo_id:
+                        break
+                except AlgoWouldImmediatelyTrigger as e2:
+                    logger.error(f"[LIVE] SL would immediately trigger (post-4130) → emergency close: {e2}")
+                    await self._emergency_close(pos, reason="stop_loss")
+                    return
+                except Exception as e2:
+                    logger.error(f"[LIVE] SL -4130 recovery retry failed: {e2}")
+                # 재시도 실패 → 루프 빠져나가 fallback read-back 분기로
+                break
             except Exception as e:
                 logger.error(f"[LIVE] SL algo place failed (attempt {attempt+1}/3): {e}")
             await asyncio.sleep(0.5)
 
         if not new_algo_id:
-            # 3회 모두 실패 → 무방비 방지: 즉시 청산 + HALT
-            logger.critical("[LIVE] SL placement failed 3x → emergency close + HALT")
+            # read-back: 방향 내 closePosition SL 이 실제 살아있는지 확인 후 분기 (합의 #3)
+            protected = None  # None=확인불가
+            try:
+                cp = await self._count_closeposition_sl(close_side)
+                protected = cp >= 1
+            except Exception as e:
+                logger.error(f"[LIVE] SL read-back failed (treat as unprotected): {e}")
+                protected = None
+            if protected:
+                # 기존 SL 이 포지션 보호 중 → 청산/HALT 안 함, 다음 사이클 재시도
+                logger.warning("[LIVE] SL re-place failed but existing closePosition SL alive → keep, retry next cycle")
+                try:
+                    await self.alert_sender._send_telegram_text(
+                        "⚠️ <b>SL 재배치 실패 — 기존 SL 보호 유지</b>\n\n"
+                        f"Side: {pos.side.value} | trigger=${pos.stop_loss_price}\n다음 사이클 재시도."
+                    )
+                except Exception:
+                    pass
+                return
+            # 무방비(0개) 또는 확인불가(None) → emergency_close + HALT (기존 동작)
+            logger.critical("[LIVE] SL placement failed → no live SL confirmed → emergency close + HALT")
             self.anomaly_detector.set_manual_halt("SL place failed 3x")
             await self.alert_sender._send_telegram_text(
-                "🆘 <b>CRITICAL: SL 배치 3회 실패</b>\n\n"
+                "🆘 <b>CRITICAL: SL 배치 실패 (무방비/확인불가)</b>\n\n"
                 "포지션을 즉시 시장가 청산하고 거래를 HALT 합니다.\n"
                 f"Side: {pos.side.value} | trigger=${pos.stop_loss_price}"
             )
@@ -1039,6 +1079,56 @@ class LiveTradingEngine(PaperTradingEngine):
             except Exception:
                 pass
         logger.info(f"[LIVE] SL algo placed: {close_side} STOP_MARKET trigger={pos.stop_loss_price} closePosition=true algoId={new_algo_id}")
+        # read-back: 방향 내 closePosition SL 이 정확히 1개인지 검증 (초과분 방어 취소)
+        try:
+            await self._dedupe_closeposition_sl(close_side, keep_algo_id=new_algo_id)
+        except Exception:
+            pass
+
+    def _is_closeposition_stop(self, o: dict, close_side: str) -> bool:
+        t = str(o.get("type", "") or o.get("orderType", "")).upper()
+        side = str(o.get("side", "")).upper()
+        cp = o.get("closePosition")
+        cp_true = cp is True or str(cp).lower() == "true"
+        return "STOP" in t and side == close_side and cp_true
+
+    async def _count_closeposition_sl(self, close_side: str) -> int:
+        orders = await binance_client.get_open_algo_orders("BTCUSDT")
+        return sum(1 for o in orders if self._is_closeposition_stop(o, close_side))
+
+    async def _cancel_conflicting_sl(self, close_side: str, old_algo_id: str):
+        """충돌하는 기존 closePosition SL 취소: old_algo_id 우선, 없으면 방향 스캔."""
+        cancelled = False
+        if old_algo_id:
+            try:
+                await binance_client.cancel_algo_order("BTCUSDT", old_algo_id)
+                cancelled = True
+            except Exception:
+                pass
+        try:
+            orders = await binance_client.get_open_algo_orders("BTCUSDT")
+            for o in orders:
+                if self._is_closeposition_stop(o, close_side):
+                    aid = str(o.get("algoId", "") or "").strip()
+                    if aid:
+                        await binance_client.cancel_algo_order("BTCUSDT", aid)
+                        cancelled = True
+        except Exception:
+            pass
+        return cancelled
+
+    async def _dedupe_closeposition_sl(self, close_side: str, keep_algo_id: str):
+        """방향 내 closePosition SL 이 2개 이상이면 keep 제외 초과분 취소 (방어)."""
+        orders = await binance_client.get_open_algo_orders("BTCUSDT")
+        for o in orders:
+            if self._is_closeposition_stop(o, close_side):
+                aid = str(o.get("algoId", "") or "").strip()
+                if aid and aid != str(keep_algo_id):
+                    try:
+                        await binance_client.cancel_algo_order("BTCUSDT", aid)
+                        logger.info(f"[LIVE] dedupe extra closePosition SL: {aid}")
+                    except Exception:
+                        pass
 
     async def _emergency_close(self, pos: Position, reason: str):
         """SL 배치 불가/돌파 시 즉시 시장가 청산 (무방비 포지션 제거)."""
