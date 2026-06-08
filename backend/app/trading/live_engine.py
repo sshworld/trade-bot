@@ -1019,6 +1019,9 @@ class LiveTradingEngine(PaperTradingEngine):
                 # -4130: 기존 closePosition SL 이 포지션 보호 중 → 충돌분 취소 후 즉시 1회 재시도 (백오프 0)
                 logger.warning(f"[LIVE] SL -4130 conflict → cancel-then-replace recovery: {e}")
                 await self._cancel_conflicting_sl(close_side, old_algo_id)
+                # 충돌분(old_algo_id 포함)은 이미 취소됨 → 아래 place-before-cancel 블록의
+                # 중복 DELETE(-2011 "Unknown order sent" 노이즈) 방지를 위해 클리어
+                old_algo_id = ""
                 try:
                     result = await binance_client.place_algo_order(
                         symbol="BTCUSDT", side=close_side, order_type="STOP_MARKET",
