@@ -684,7 +684,7 @@ def main() -> None:
     print(f"[Klines] {len(all_klines)}개 봉 준비 완료")
 
     # ── 시뮬레이션 ────────────────────────────────────────────────────────────
-    sweep_margins = [2, 3, 6, 10]
+    sweep_margins = [2, 3, 4, 5, 6, 7, 8, 10]
     strategies_names = ["Current", "Flat±2%", "Middle"] + [f"[sweep]TP{m}%" for m in sweep_margins]
 
     current_results: list[SimResult] = []

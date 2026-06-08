@@ -171,13 +171,16 @@ class TradingSettings(BaseModel):
     fee_maker_pct: float = 0.02
     fee_taker_pct: float = 0.04
 
-    # ── TP: 마진 대비 % (2026-04-13 회의록, ATR 폐기) ──
-    tp_margin_pcts: list[float] = [3.0, 6.0, 10.0]   # TP1/2/3 마진 수익%
-    tp_split: list[float] = [0.50, 0.30, 0.20]        # TP 분할 비율
+    # ── TP: 마진 대비 % (2026-06-08 회의록: 풀물량 단일 TP 8%, 분할+트레일 폐기) ──
+    #   백테스트(실거래 63건 진입 고정·청산규칙만): 분할+트레일 net 61.9%/MDD10 vs
+    #   풀 TP8% net 120%/MDD19 — 승리 70%가 본전 트레일("찔끔")로 깔리는 구조 결함 제거.
+    #   견고성 위해 순수 1위 TP10%(생존편향 과대) 대신 TP8%(PF 동률·적중↑) 채택.
+    tp_margin_pcts: list[float] = [8.0]   # 풀물량 단일 TP — 마진 8% (가격 ≈1.6% @5x)
+    tp_split: list[float] = [1.0]         # 100% 한 번에 익절 (러너 없음)
 
     # ── SL: 잔고 고정 % 손실 ──
     sl_balance_risk_pct: float = 2.0      # 잔고의 2% 고정 손실
-    min_sl_distance_pct: float = 0.3      # 최소 SL 거리 % (스프레드/슬리피지 보호)
+    min_sl_distance_pct: float = 0.5      # 최소 SL 거리 % (2026-06-08: 0.3→0.5, 노이즈 스톱 완화)
 
     # ── 마진 캡 ──
     margin_cap_pct: float = 95.0          # 잔고의 95%까지 마진 사용 (2026-05-04 사용자 요청)
