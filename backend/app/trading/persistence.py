@@ -228,6 +228,47 @@ def load_daily_snapshots() -> list[dict]:
         return []
 
 
+# ── Quarantine Helpers ────────────────────────────────────────
+
+def update_account_stats(total_realized_pnl: str, total_trades: int, winning_trades: int):
+    """account_state(main) JSON의 통계 3필드만 갱신, 나머지 보존."""
+    try:
+        conn = _ensure_db()
+        row = conn.execute("SELECT value FROM account_state WHERE key = 'main'").fetchone()
+        if row:
+            d = json.loads(row[0])
+            d["total_realized_pnl"] = total_realized_pnl
+            d["total_trades"] = total_trades
+            d["winning_trades"] = winning_trades
+            conn.execute(
+                "UPDATE account_state SET value = ? WHERE key = 'main'",
+                (json.dumps(d, default=str),),
+            )
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Failed to update account stats: {e}")
+
+
+def flag_trade_invalid(trade_id: str, reason: str):
+    """trade_history 한 행의 data JSON에 invalid/invalid_reason 추가 (삭제 금지)."""
+    try:
+        conn = _ensure_db()
+        row = conn.execute("SELECT data FROM trade_history WHERE id = ?", (trade_id,)).fetchone()
+        if row:
+            d = json.loads(row[0])
+            d["invalid"] = True
+            d["invalid_reason"] = reason
+            conn.execute(
+                "UPDATE trade_history SET data = ? WHERE id = ?",
+                (json.dumps(d, default=str), trade_id),
+            )
+            conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Failed to flag trade invalid: {e}")
+
+
 # ── Reset All ──────────────────────────────────────────────────
 
 def reset_all():
