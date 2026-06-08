@@ -61,15 +61,14 @@ def test_resync_after_close_daily_pnl_real_based():
     assert eng.account.daily_pnl == Decimal("7")    # 실잔고 기반
 
 
-def test_status_total_fees_from_trade_history():
-    """get_status total_fees 는 account 누적이 아니라 trade_history 합산 (회의록 안건4)."""
+def test_status_no_total_fees_has_real_profit():
+    """get_status 에 total_fees 키 없음(수수료 개념 폐기), real_profit 키 존재."""
     eng = PaperTradingEngine()
     eng.open_positions.clear()
     eng.trade_history.clear()
-    eng.account.total_fees = Decimal("999")          # 누적 필드는 더 이상 출처 아님
     status = eng.get_status()
-    assert "total_fees" in status                    # 키 유지 (하위호환)
-    assert Decimal(status["total_fees"]) == Decimal("0")  # 빈 history → 0 (account 999 무시)
+    assert "total_fees" not in status                # 수수료 개념 폐기
+    assert "real_profit" in status                   # 실수익 권위 지표
 
 
 def test_account_total_fees_field_never_accumulates():

@@ -149,6 +149,8 @@ class TelegramBot:
         margin_used = Decimal(status["margin_used"])
         unrealized = Decimal(status["unrealized_pnl"])
         daily_pnl = Decimal(status["daily_pnl"])
+        real_profit = Decimal(status["real_profit"])
+        real_profit_pct = status["real_profit_pct"]
         trades = status["daily_trades"]
         total_trades = status["total_trades"]
         positions_count = status["open_positions_count"]
@@ -204,6 +206,7 @@ class TelegramBot:
         state = "🔴 HALTED" if halted else ("📈 포지션 보유" if positions_count > 0 else "⏳ 대기 중")
         daily_icon = "📈" if daily_pnl >= 0 else "📉"
         unreal_icon = "💚" if unrealized >= 0 else "💔"
+        profit_icon = "📈" if real_profit >= 0 else "📉"
 
         msg = (
             f"📊 <b>STATUS</b> — {state}\n"
@@ -214,6 +217,8 @@ class TelegramBot:
             f"🏦 <b>가용:</b> <code>${available:,.2f}</code>\n"
             f"🔒 <b>마진:</b> <code>${margin_used:,.2f}</code>\n"
             f"{unreal_icon} <b>미실현:</b> <code>${unrealized:,.2f}</code>\n\n"
+            f"{profit_icon} <b>실수익:</b> <code>${real_profit:,.2f}</code>"
+            f" ({real_profit_pct:+.2f}%)\n"
             f"{daily_icon} <b>금일 PnL:</b> <code>${daily_pnl:,.2f}</code>"
             f" | 거래 {trades}건\n"
             f"📊 <b>누적:</b> 총 {total_trades}건"

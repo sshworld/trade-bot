@@ -643,7 +643,6 @@ class LiveTradingEngine(PaperTradingEngine):
             f"Exit: ${actual_close_price:,.2f}\n"
             f"PnL: {'+'if trade.realized_pnl >= 0 else ''}${trade.realized_pnl:.2f} "
             f"({trade.pnl_percent:+.2f}%)\n"
-            f"Fees: ${trade.total_fees:.2f}\n"
             f"Duration: {trade.duration_seconds}s\n\n"
             f"Balance: ${self.account.balance:,.2f}"
         ))
@@ -1230,11 +1229,19 @@ class LiveTradingEngine(PaperTradingEngine):
         Live 잔고는 Binance 실잔고 동기화가 권위 (caller 가 self.account.balance = real_bal).
         super()._close_position 의 balance ±(fee/margin/pnl) 를 되돌려, 실잔고 sync 실패 시에도
         로컬 추정치로 오염되지 않게 한다. daily_pnl 은 청산 후 caller 가 실잔고 기준으로 재계산.
+
+        price <= 0 (emergency 등 가격 불명): total_realized_pnl 에 garbage 가 누적되지 않도록
+        super 가 더한 realized_pnl 을 되돌리고 trade.realized_pnl=0 으로 무효화.
         """
         bal_before = self.account.balance
+        pnl_before = self.account.total_realized_pnl
         trade = super()._close_position(pos_id, price, reason)
         # super 의 로컬 balance 가감 되돌림 (실잔고 sync 가 권위)
         self.account.balance = bal_before
+        # price <= 0: 계산된 PnL 은 신뢰불가 → total_realized_pnl 오염 방지
+        if price <= Decimal("0") and trade is not None:
+            self.account.total_realized_pnl = pnl_before
+            trade.realized_pnl = Decimal("0")
         return trade
 
     def _resync_after_close(self, real_bal: Decimal):

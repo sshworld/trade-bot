@@ -30,6 +30,9 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 ### 4. 데이터 보존
 거래 기록 reset 금지. SQLite 영속화.
 
+### 5. 수익 지표
+**수익 지표 = 실잔고 − initial_capital (balance-anchored). total_realized_pnl/수수료 개념 폐기(표시 안 함).** `get_status()`의 `real_profit` 키가 권위 지표.
+
 ## Slash Commands
 | 명령 | 용도 |
 |------|------|
@@ -140,6 +143,7 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 - [x] SL 배치 신뢰성 (place-before-cancel/재시도/실패시 청산+HALT/존재검증/-2021), 고아주문 nuke 통일+read-back, 분할 TP 후 SL 체결가 위 잠금(buffer 0.30), 수수료 누적 제거+Live 회계 실잔고 일원화, reconcile phantom 방지 (2026-06-04 회의록)
 - [x] ~~PnL에 수수료 포함 표시~~ → 수수료 개념 제거 (account.total_fees 누적 폐기, per-trade만 기록)
 - [x] SL -4130 closePosition 충돌 복구 (cancel-then-replace + read-back 분기, 2026-06-07 회의록)
+- [x] 수익 정직화: real_profit = balance − initial_capital 권위 지표화, emergency-close PnL 오염 방지, 수수료 표시 제거 (2026-06-08 honest-accounting)
 - [ ] 자본 $10,000 도달 시 리스크 재검토 토론
 - [ ] TP 사전 배치 Phase 2 (트레일링 TP)
 

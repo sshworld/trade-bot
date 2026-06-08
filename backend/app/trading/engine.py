@@ -1019,12 +1019,15 @@ class PaperTradingEngine:
 
     def get_status(self) -> dict:
         win_rate = round(self.account.winning_trades / self.account.total_trades * 100, 1) if self.account.total_trades > 0 else 0.0
+        real_profit = self.account.balance - self.account.initial_capital
         return {
             "balance": str(self.account.balance),
             "equity": str(self.account.equity),
             "unrealized_pnl": str(self.account.unrealized_pnl),
             "margin_used": str(self.account.margin_used),
-            "total_fees": str(self._sum_fees()),
+            "real_profit": str(real_profit),
+            "real_profit_pct": round(float(real_profit / self.account.initial_capital * 100), 2) if self.account.initial_capital > 0 else 0.0,
+            "initial_capital": str(self.account.initial_capital),
             "daily_pnl": str(self.account.daily_pnl),
             "daily_trades": self.account.daily_trades,
             "open_positions_count": len(self.open_positions),
@@ -1081,7 +1084,7 @@ class PaperTradingEngine:
         total_wr = round(self.account.winning_trades / self.account.total_trades * 100, 1) if self.account.total_trades > 0 else 0.0
         return {
             "today_pnl": str(today_pnl), "today_trades": len(today_trades), "today_win_rate": today_wr,
-            "total_pnl": str(self.account.total_realized_pnl), "total_trades": self.account.total_trades,
+            "total_pnl": str(self.account.balance - self.account.initial_capital), "total_trades": self.account.total_trades,
             "overall_win_rate": total_wr,
         }
 
