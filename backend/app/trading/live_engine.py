@@ -542,9 +542,7 @@ class LiveTradingEngine(PaperTradingEngine):
                 # SL 체크 → 시장가 청산
                 if pos.avg_entry_price and pos.status in ("opening", "open"):
                     if self._should_stop_loss(pos, price):
-                        filled_tp = sum(1 for t in pos.exit_tranches if t.status == OrderStatus.FILLED)
-                        reason = "breakeven" if filled_tp > 0 else "stop_loss"
-                        positions_to_close.append((pos_id, reason))
+                        positions_to_close.append((pos_id, self._sl_exit_reason(pos)))
 
             for pos_id, reason in positions_to_close:
                 if pos_id in self.open_positions:
@@ -894,6 +892,20 @@ class LiveTradingEngine(PaperTradingEngine):
             except Exception as e:
                 logger.error(f"[LIVE] TP algo order failed: {e} — will be managed by engine tick")
                 # 배치 실패해도 PENDING 유지 → 엔진이 on_price_update에서 직접 관리
+
+    def _sl_exit_reason(self, pos: Position) -> str:
+        """SL 트리거 시 청산 사유 — SL 가격과 평단 비교(실현손익 부호)."""
+        avg = pos.avg_entry_price
+        if avg is None:
+            return "stop_loss"
+        sl = pos.stop_loss_price
+        # LONG: SL<평단 → 손실, SL>평단 → 이익. SHORT 반대.
+        diff = (sl - avg) if pos.side == PositionSide.LONG else (avg - sl)
+        if diff < 0:
+            return "stop_loss"
+        if diff > 0:
+            return "take_profit"
+        return "breakeven"
 
     # ── recalculate 오버라이드: exit tranche 생성 후 실주문 ──
 
