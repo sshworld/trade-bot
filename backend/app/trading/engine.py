@@ -243,12 +243,6 @@ class PaperTradingEngine:
             if total_qty <= 0:
                 return None
 
-            # SL 거리: 잔고 2% 고정 손실 역산
-            risk_amount = self.account.balance * Decimal(str(self.settings.sl_balance_risk_pct / 100))
-            sl_distance = risk_amount / total_qty
-            min_sl = current_price * Decimal(str(self.settings.min_sl_distance_pct / 100))
-            sl_distance = max(sl_distance, min_sl)
-
             pos_id = str(uuid.uuid4())[:8]
 
             # 진입: 물타기 (ATR 기반 offset)
@@ -256,11 +250,8 @@ class PaperTradingEngine:
                 side, current_price, total_qty, pos_id, now, atr=atr,
             )
 
-            # SL 가격 계산
-            if side == PositionSide.LONG:
-                stop_loss = (current_price - sl_distance).quantize(Decimal("0.1"))
-            else:
-                stop_loss = (current_price + sl_distance).quantize(Decimal("0.1"))
+            # SL 가격: 마진 % 기반 (S2)
+            stop_loss = self._calculate_stop_loss(side, current_price, self.settings.sl_margin_pct, leverage)
 
             signal_details = signal.get("details") or {}
             signal_details["trade_tier"] = tier_name
@@ -416,9 +407,7 @@ class PaperTradingEngine:
                 # 손절 체크
                 if pos.avg_entry_price and pos.status in ("opening", "open"):
                     if self._should_stop_loss(pos, price):
-                        filled_tp = sum(1 for t in pos.exit_tranches if t.status == OrderStatus.FILLED)
-                        reason = "breakeven" if filled_tp > 0 else "stop_loss"
-                        positions_to_close.append((pos_id, reason))
+                        positions_to_close.append((pos_id, self._sl_exit_reason(pos)))
 
             for pos_id, reason in positions_to_close:
                 if pos_id in self.open_positions:
@@ -871,6 +860,19 @@ class PaperTradingEngine:
 
         return merged
 
+    def _sl_exit_reason(self, pos: "Position") -> str:
+        """SL 트리거 시 청산 사유 — SL 가격과 평단 비교(실현손익 부호)."""
+        avg = pos.avg_entry_price
+        if avg is None:
+            return "stop_loss"
+        sl = pos.stop_loss_price
+        diff = (sl - avg) if pos.side == PositionSide.LONG else (avg - sl)
+        if diff < 0:
+            return "stop_loss"
+        if diff > 0:
+            return "take_profit"
+        return "breakeven"
+
     def _calculate_stop_loss(
         self, side: PositionSide, entry_price: Decimal,
         sl_pct: float = 5.0, leverage: int = 5,
@@ -968,17 +970,11 @@ class PaperTradingEngine:
         pos.avg_entry_price = (total_value / total_qty).quantize(Decimal("0.1"))
         pos.total_quantity = total_qty
 
-        # % 기반 SL 재계산 (2026-04-13 회의록)
+        # 마진 % 기반 SL 재계산 (S2)
         if pos.allocated_margin > 0 and total_qty > 0:
-            risk_amount = self.account.balance * Decimal(str(self.settings.sl_balance_risk_pct / 100))
-            sl_distance = risk_amount / total_qty
-            min_sl = pos.avg_entry_price * Decimal(str(self.settings.min_sl_distance_pct / 100))
-            sl_distance = max(sl_distance, min_sl)
-            if pos.side == PositionSide.LONG:
-                new_sl = (pos.avg_entry_price - sl_distance).quantize(Decimal("0.1"))
-            else:
-                new_sl = (pos.avg_entry_price + sl_distance).quantize(Decimal("0.1"))
-            pos.stop_loss_price = new_sl
+            pos.stop_loss_price = self._calculate_stop_loss(
+                pos.side, pos.avg_entry_price, self.settings.sl_margin_pct, pos.leverage
+            )
 
         # Exit tranche 생성/재생성 (마진 % 기반)
         filled_exits = [t for t in pos.exit_tranches if t.status == OrderStatus.FILLED]

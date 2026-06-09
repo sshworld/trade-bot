@@ -132,7 +132,7 @@ class LiveTradingEngine(PaperTradingEngine):
                 "🟢 <b>LIVE ENGINE STARTED</b>\n\n"
                 f"💰 Balance: ${real_balance}\n"
                 f"📊 Leverage: {self.settings.max_leverage}x\n"
-                f"🔒 SL Risk: {self.settings.sl_balance_risk_pct}% | DD Halt: {self.settings.drawdown_halt_pct}%\n"
+                f"🔒 SL/TP: ±{self.settings.sl_margin_pct}% margin (0.4% @{self.settings.max_leverage}x) | DD Halt: {self.settings.drawdown_halt_pct}%\n"
                 f"📍 Open positions: {len(self.open_positions)}"
             )
 
@@ -343,12 +343,6 @@ class LiveTradingEngine(PaperTradingEngine):
             if total_qty <= 0:
                 return None
 
-            # SL 거리: 잔고 2% 고정 손실 역산
-            risk_amount = real_balance * Decimal(str(self.settings.sl_balance_risk_pct / 100))
-            sl_distance = risk_amount / total_qty
-            min_sl = current_price * Decimal(str(self.settings.min_sl_distance_pct / 100))
-            sl_distance = max(sl_distance, min_sl)
-
             # 마진 재계산 (슬리피지 적용 후)
             margin = (position_notional / leverage).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
 
@@ -366,11 +360,8 @@ class LiveTradingEngine(PaperTradingEngine):
                 side, current_price, total_qty, pos_id, now, atr=atr,
             )
 
-            # SL 가격
-            if side == PositionSide.LONG:
-                stop_loss = (current_price - sl_distance).quantize(Decimal("0.1"))
-            else:
-                stop_loss = (current_price + sl_distance).quantize(Decimal("0.1"))
+            # SL 가격: 마진 % 기반 (S2)
+            stop_loss = self._calculate_stop_loss(side, current_price, self.settings.sl_margin_pct, leverage)
 
             signal_details = signal.get("details") or {}
             signal_details["trade_tier"] = tier_name
@@ -685,15 +676,13 @@ class LiveTradingEngine(PaperTradingEngine):
                             # balance는 바이낸스 잔고 동기화에서 처리 (직접 차감 안 함)
                             self._recalculate_position(pos)
 
-                            # exit tranche 발행 (새로 생겼으면)
-                            if (pos.signal_details or {}).get("_pending_exit_placement"):
-                                # 기존 TP 주문 취소 후 재발행
-                                for et in pos.exit_tranches:
-                                    if et.status == OrderStatus.WAITING and et.binance_order_id:
-                                        await binance_client.cancel_algo_order("BTCUSDT", et.binance_order_id)
-                                        et.status = OrderStatus.PENDING
-                                await self._place_exit_orders(pos)
-                                pos.signal_details.pop("_pending_exit_placement", None)
+                            # 추매 체결 → 평단 변경 → WAITING TP algo 취소 후 새 평단으로 재배치
+                            for et in pos.exit_tranches:
+                                if et.status == OrderStatus.WAITING and et.binance_order_id:
+                                    await binance_client.cancel_algo_order("BTCUSDT", et.binance_order_id)
+                                    et.status = OrderStatus.PENDING
+                            await self._place_exit_orders(pos)
+                            (pos.signal_details or {}).pop("_pending_exit_placement", None)
 
                             # SL 항상 재배치 (평단/수량 변경)
                             await self._place_sl_order(pos)
@@ -893,19 +882,7 @@ class LiveTradingEngine(PaperTradingEngine):
                 logger.error(f"[LIVE] TP algo order failed: {e} — will be managed by engine tick")
                 # 배치 실패해도 PENDING 유지 → 엔진이 on_price_update에서 직접 관리
 
-    def _sl_exit_reason(self, pos: Position) -> str:
-        """SL 트리거 시 청산 사유 — SL 가격과 평단 비교(실현손익 부호)."""
-        avg = pos.avg_entry_price
-        if avg is None:
-            return "stop_loss"
-        sl = pos.stop_loss_price
-        # LONG: SL<평단 → 손실, SL>평단 → 이익. SHORT 반대.
-        diff = (sl - avg) if pos.side == PositionSide.LONG else (avg - sl)
-        if diff < 0:
-            return "stop_loss"
-        if diff > 0:
-            return "take_profit"
-        return "breakeven"
+    # _sl_exit_reason 은 PaperTradingEngine(부모)에서 상속
 
     # ── recalculate 오버라이드: exit tranche 생성 후 실주문 ──
 

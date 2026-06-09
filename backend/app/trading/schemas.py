@@ -171,24 +171,23 @@ class TradingSettings(BaseModel):
     fee_maker_pct: float = 0.02
     fee_taker_pct: float = 0.04
 
-    # ── TP: 마진 대비 % (2026-06-08 회의록: 풀물량 단일 TP 8%, 분할+트레일 폐기) ──
-    #   백테스트(실거래 63건 진입 고정·청산규칙만): 분할+트레일 net 61.9%/MDD10 vs
-    #   풀 TP8% net 120%/MDD19 — 승리 70%가 본전 트레일("찔끔")로 깔리는 구조 결함 제거.
-    #   견고성 위해 순수 1위 TP10%(생존편향 과대) 대신 TP8%(PF 동률·적중↑) 채택.
-    tp_margin_pcts: list[float] = [8.0]   # 풀물량 단일 TP — 마진 8% (가격 ≈1.6% @5x)
+    # ── TP/SL: 0.4% 대칭 스캘프 (2026-06-09 S2: sl_margin_pct 기반 전환) ──
+    #   SL/TP = 마진 2% 손실/이익 = 가격 ±0.4% @5x. 추매 체결마다 평단 기준 재계산.
+    tp_margin_pcts: list[float] = [2.0]   # 풀물량 단일 TP — 마진 2% (가격 ≈0.4% @5x)
     tp_split: list[float] = [1.0]         # 100% 한 번에 익절 (러너 없음)
 
-    # ── SL: 잔고 고정 % 손실 ──
-    sl_balance_risk_pct: float = 2.0      # 잔고의 2% 고정 손실
-    min_sl_distance_pct: float = 0.5      # 최소 SL 거리 % (2026-06-08: 0.3→0.5, 노이즈 스톱 완화)
+    # ── SL: 마진 % 기반 (S2 전환) ──
+    sl_margin_pct: float = 2.0            # 증거금 2% 손실 = 가격 0.4% @5x
+    sl_balance_risk_pct: float = 2.0      # 참조용 보존 (startup 메시지 등) — SL 거리 산출에 미사용
+    min_sl_distance_pct: float = 0.0      # floor 제거 (0.0 → max(.,0) no-op)
 
     # ── 마진 캡 ──
     margin_cap_pct: float = 95.0          # 잔고의 95%까지 마진 사용 (2026-05-04 사용자 요청)
 
     # ── 진입: 물타기 (ATR 기반 offset, 2026-04-13 간격 확대) ──
     entry_atr_offsets: list[float] = [0.0, 1.0, 2.0]      # ATR 배수 (역행) — 기존 0.5/1.0에서 2배
-    entry_atr_offset_floors: list[float] = [0.0, 0.3, 0.7]  # 최소 % 하한 (저변동성 보호)
-    entry_atr_offset_caps: list[float] = [0.0, 1.0, 1.5]  # 최대 % 캡
+    entry_atr_offset_floors: list[float] = [0.0, 0.1, 0.2]  # 최소 % 하한 (S2 축소: 0.4% 안쪽)
+    entry_atr_offset_caps: list[float] = [0.0, 0.2, 0.35]  # 최대 % 캡 (S2 축소: SL 이전 막힘 방지)
     entry_split: list[float] = [0.50, 0.30, 0.20]
 
     # ── 트레일링 (TP2 이후) ──

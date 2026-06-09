@@ -11,11 +11,11 @@ from app.trading.engine import PaperTradingEngine
 from app.trading.schemas import PositionSide
 
 
-def test_settings_single_tp8():
+def test_settings_single_tp():
     eng = PaperTradingEngine()
-    assert eng.settings.tp_margin_pcts == [8.0]
+    assert eng.settings.tp_margin_pcts == [2.0]   # S2: 8% → 2%
     assert eng.settings.tp_split == [1.0]
-    assert eng.settings.min_sl_distance_pct == 0.5
+    assert eng.settings.min_sl_distance_pct == 0.0  # S2: floor 제거
     assert eng.settings.sl_balance_risk_pct == 2.0
 
 
@@ -27,8 +27,8 @@ def test_exit_tranches_single_full_long():
     )
     assert len(tr) == 1, "단일 TP 여야 함 (러너 없음)"
     assert tr[0].quantity == Decimal("0.010"), "전량 익절"
-    # target = 60000 * (1 + 8/100/5) = 60000 * 1.016 = 60960.0
-    assert tr[0].target_price == Decimal("60960.0")
+    # S2: target = 60000 * (1 + 2/100/5) = 60000 * 1.004 = 60240.0
+    assert tr[0].target_price == Decimal("60240.0")
 
 
 def test_exit_tranches_single_full_short():
@@ -39,5 +39,5 @@ def test_exit_tranches_single_full_short():
     )
     assert len(tr) == 1
     assert tr[0].quantity == Decimal("0.010")
-    # target = 60000 * (1 - 0.016) = 59040.0
-    assert tr[0].target_price == Decimal("59040.0")
+    # S2: target = 60000 * (1 - 0.004) = 59760.0
+    assert tr[0].target_price == Decimal("59760.0")
