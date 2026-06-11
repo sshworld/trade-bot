@@ -77,6 +77,7 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 - **SL 사전 배치**: STOP_MARKET + closePosition=True (서버 꺼져도 작동)
 - **배치 신뢰성 (2026-06-04 회의록)**: place→confirm→cancel 순서, 3회 재시도(0.5s), 실패 시 즉시 시장가 청산+HALT, reconcile/init 마다 SL 존재 검증(`_assert_sl_armed`), Binance -2021 → 즉시 청산
 - -4130(방향당 closePosition 유니크) → 충돌 SL 취소 후 1회 재시도(백오프 0), read-back 후 무방비/확인불가만 청산+HALT (2026-06-07 회의록)
+- **-4509(GTE TIF, 포지션 없음)**: 0.4% 초타이트 TP 동시 체결로 포지션이 이미 청산된 정상 상황 → SL 재배치 실패해도 emergency close·HALT **안 함**(position-gone reconciler가 청산 처리). 포지션이 실제 존재할 때만 무방비 HALT 유지 (2026-06-12).
 - **고아 주문 제거**: 모든 닫힘 경로 `_nuke_all_binance_orders` 통일 + read-back 3회 검증, 진입 전 clean book 확인
 
 ### 트레일링 (2026-06-04 회의록) — ⚠️ 단일 TP8% 전환(2026-06-08)으로 **비활성** (분할 TP 없어 트리거 안 됨, 코드는 보존)
@@ -151,6 +152,7 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 - [x] phantom 거래 격리 스크립트 + 청산전략 백테스트 도구 (2026-06-08)
 - [x] **청산전략: 분할TP+트레일 → 풀물량 단일 TP 8% 전환** (2026-06-08 회의록, 백테스트 근거)
 - [x] **0.4% 대칭 스캘프 전환** (TP 8→2%, SL 마진 2%=0.4% 대칭, floor 제거, 진입 간격 축소, 추매마다 SL/TP 재배치) + 손절 본절 오분류 수정 (2026-06-09)
+- [x] **SL -4509(포지션 없음) 오판 HALT 수정** — 추매 후 SL 재배치 찰나 TP 동시 체결 시 불필요한 emergency/HALT 제거 (2026-06-12)
 - [ ] TP8% +30 실거래 모니터링 → $196 회복 시 TP 상향 재검토
 - [ ] 자본 $10,000 도달 시 리스크 재검토 토론
 - [ ] TP 사전 배치 Phase 2 (트레일링 TP)
