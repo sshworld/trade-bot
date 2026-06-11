@@ -38,6 +38,11 @@ class AlgoConflictClosePosition(Exception):
     """
 
 
+class AlgoNoOpenPosition(Exception):
+    """Binance -4509: closePosition(GTE TIF) 주문인데 열린 포지션이 없음.
+    = 포지션이 이미 청산됨 → 재시도/HALT 금지, 청산 처리로 분기."""
+
+
 def round_price(p: Decimal | float | str) -> Decimal:
     """Quantize price down to BTCUSDT tickSize (0.1). Binance rejects sub-tick prices on /fapi/v1/order."""
     return Decimal(str(p)).quantize(PRICE_TICK, rounding=ROUND_DOWN)
@@ -268,6 +273,8 @@ class BinanceClient:
                 raise AlgoWouldImmediatelyTrigger(str(body)) from e
             if code == -4130 or "closeposition in the direction is existing" in msg:
                 raise AlgoConflictClosePosition(str(body)) from e
+            if code == -4509 or "can only be used with open positions" in msg:
+                raise AlgoNoOpenPosition(str(body)) from e
             raise
         result = resp.json()
         logger.info(f"Algo order placed: {side} {order_type} trigger={trig_q} → algoId={result.get('algoId')}")

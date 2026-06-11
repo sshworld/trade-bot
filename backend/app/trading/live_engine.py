@@ -15,7 +15,7 @@ import logging
 import time
 from decimal import Decimal, ROUND_DOWN
 
-from app.binance.client import AlgoConflictClosePosition, AlgoWouldImmediatelyTrigger, binance_client
+from app.binance.client import AlgoConflictClosePosition, AlgoNoOpenPosition, AlgoWouldImmediatelyTrigger, binance_client
 from app.config import settings
 from app.trading.engine import PaperTradingEngine
 from app.trading.schemas import (
@@ -999,6 +999,9 @@ class LiveTradingEngine(PaperTradingEngine):
                 if new_algo_id:
                     break
                 logger.warning(f"[LIVE] SL place returned no algoId (attempt {attempt+1}/3)")
+            except AlgoNoOpenPosition as e:
+                logger.warning(f"[LIVE] SL place -4509: 포지션 이미 청산됨 → HALT 스킵, position-gone reconciler가 청산 처리: {e}")
+                return
             except AlgoWouldImmediatelyTrigger as e:
                 logger.error(f"[LIVE] SL would immediately trigger → emergency close: {e}")
                 await self._emergency_close(pos, reason="stop_loss")
@@ -1032,6 +1035,14 @@ class LiveTradingEngine(PaperTradingEngine):
             await asyncio.sleep(0.5)
 
         if not new_algo_id:
+            # 포지션이 이미 청산됐으면 무방비가 아님 → HALT 금지 (position-gone reconciler가 청산)
+            try:
+                bpos = await binance_client.get_position_risk("BTCUSDT")
+                if not bpos or float(bpos.get("positionAmt", 0)) == 0:
+                    logger.warning("[LIVE] SL place failed but no open position on Binance → already closed, skip HALT")
+                    return
+            except Exception:
+                pass
             # read-back: 방향 내 closePosition SL 이 실제 살아있는지 확인 후 분기 (합의 #3)
             protected = None  # None=확인불가
             try:
