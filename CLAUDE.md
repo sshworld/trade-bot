@@ -153,6 +153,8 @@ Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 - [x] **청산전략: 분할TP+트레일 → 풀물량 단일 TP 8% 전환** (2026-06-08 회의록, 백테스트 근거)
 - [x] **0.4% 대칭 스캘프 전환** (TP 8→2%, SL 마진 2%=0.4% 대칭, floor 제거, 진입 간격 축소, 추매마다 SL/TP 재배치) + 손절 본절 오분류 수정 (2026-06-09)
 - [x] **SL -4509(포지션 없음) 오판 HALT 수정** — 추매 후 SL 재배치 찰나 TP 동시 체결 시 불필요한 emergency/HALT 제거 (2026-06-12)
+- [x] **churn 사건 수정 (2026-06-29)**: 시장가 청산 PnL=0 회계 버그 수정(`_close_position`이 실제 청산 수량 기준 계산) + 손절 직후 같은 방향 재진입 쿨다운(`reentry_cooldown_after_sl_ms` 기본 5분). 회의록: `docs/meeting-minutes/2026-06-29-churn-pnl-incident.md`
+- [ ] (권고/별건) 비활성 anomaly 자동 halt(rapid-fire 등) 재가동 검토 — 2026-05-04 결정 재검토
 - [ ] TP8% +30 실거래 모니터링 → $196 회복 시 TP 상향 재검토
 - [ ] 자본 $10,000 도달 시 리스크 재검토 토론
 - [ ] TP 사전 배치 Phase 2 (트레일링 TP)
@@ -185,5 +187,7 @@ make setup && make backend
 - `backend/` 에서 uvicorn (**--reload 사용 금지**, 실거래 안정성)
 - 본전 = 진입가 ± 왕복 수수료
 - 청산 사유 분류: **실현손익 부호 기준** (`_sl_exit_reason`) — 손익 ≥ 0 → 본전/TP, < 0 → SL (이전 가격 비교 방식 폐기)
+- **청산 손익 회계**: 시장가 청산 PnL 은 tranche 상태가 아니라 **실제 청산 수량**(`total_quantity − 체결된 exit 수량`) 기준으로만 계산 (2026-06-29 churn 버그). 이미 체결된 exit PnL 중복 가산 금지.
+- **손절 후 재진입**: 같은 방향 `stop_loss` 청산 후 `reentry_cooldown_after_sl_ms`(기본 5분) 동안 그 방향 신규 진입 차단 (churn 방지, 반대방향·TP후는 허용)
 - `/recalculate` API로 열린 포지션 TP/SL 재계산
 - 코드 수정 후 서버 재시작 시 **반드시 사용자 승인** 필요
