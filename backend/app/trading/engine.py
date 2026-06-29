@@ -442,19 +442,26 @@ class PaperTradingEngine:
         pos.status = "closed"
         pos.closed_at = now
 
-        remaining_qty = Decimal("0")
+        # 미체결 주문 정리(주문 취소 목적). PnL 은 여기 remaining_qty 에 의존하지 않는다.
         for t in pos.exit_tranches:
             if t.status in (OrderStatus.PENDING, OrderStatus.WAITING):
                 t.status = OrderStatus.CANCELLED
-                remaining_qty += t.quantity
         for t in pos.entry_tranches:
             if t.status in (OrderStatus.PENDING, OrderStatus.WAITING):
                 t.status = OrderStatus.CANCELLED
 
-        if remaining_qty > 0 and pos.avg_entry_price:
-            pnl = self._calc_pnl(pos.side, pos.avg_entry_price, price, remaining_qty, pos.leverage)
+        # 청산 PnL 은 tranche 상태가 아니라 실제 열려있던 수량 기준으로 계산.
+        # 이미 FILLED 된 exit tranche 의 PnL 은 reconcile 에서 적립됐으므로 중복 가산 금지.
+        filled_exit_qty = sum(
+            (t.quantity for t in pos.exit_tranches if t.status == OrderStatus.FILLED),
+            Decimal("0"),
+        )
+        closed_open_qty = pos.total_quantity - filled_exit_qty
+
+        if closed_open_qty > 0 and pos.avg_entry_price:
+            pnl = self._calc_pnl(pos.side, pos.avg_entry_price, price, closed_open_qty, pos.leverage)
             pos.realized_pnl += pnl
-            fee = self._calc_fee(price, remaining_qty, is_market=True)
+            fee = self._calc_fee(price, closed_open_qty, is_market=True)
             pos.total_fees += fee
             self.account.balance -= fee
 
@@ -475,8 +482,8 @@ class PaperTradingEngine:
         else:
             avg_exit = price
 
-        if remaining_qty > 0 and pos.total_quantity > 0:
-            total_val = avg_exit * (pos.total_quantity - remaining_qty) + price * remaining_qty
+        if closed_open_qty > 0 and pos.total_quantity > 0:
+            total_val = avg_exit * (pos.total_quantity - closed_open_qty) + price * closed_open_qty
             avg_exit = (total_val / pos.total_quantity).quantize(Decimal("0.01"))
 
         pnl_margin = pos.allocated_margin if pos.allocated_margin > 0 else Decimal("1")
