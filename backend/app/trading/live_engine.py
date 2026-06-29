@@ -248,6 +248,17 @@ class LiveTradingEngine(PaperTradingEngine):
             is_consensus = signal.get("type", "").startswith("consensus_override")
             signal_tf = signal.get("timeframe", "1h")
 
+            # 손절 직후 같은 방향 재진입 쿨다운 (churn 방지)
+            cooldown_ms = self.settings.reentry_cooldown_after_sl_ms
+            if cooldown_ms > 0 and self.trade_history:
+                last = self.trade_history[-1]
+                last_dir_side = PositionSide.LONG if last.side == PositionSide.LONG else PositionSide.SHORT
+                if (last.close_reason == "stop_loss"
+                        and last_dir_side == side
+                        and now - last.closed_at < cooldown_ms):
+                    logger.info(f"[LIVE] REJECT: reentry cooldown after SL ({(now-last.closed_at)/1000:.0f}s < {cooldown_ms/1000:.0f}s)")
+                    return None
+
             # 기존 포지션 처리
             if self.open_positions:
                 pos = list(self.open_positions.values())[0]

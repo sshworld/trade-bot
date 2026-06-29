@@ -226,6 +226,9 @@ class TradingSettings(BaseModel):
     velocity_strength_bump: float = 0.15      # strength 임계값 가산
     velocity_bump_duration_ms: int = 1_800_000  # 30분간 유지
 
+    # 손절 직후 같은 방향 재진입 차단 (churn 방지, 2026-06-29 incident)
+    reentry_cooldown_after_sl_ms: int = 300_000   # 5분
+
     # 교체 — 무제한, 품질 게이트
     replacement_cooldown_ms: int = 1_200_000  # 20분
     replacement_min_score_diff: float = 0.5
