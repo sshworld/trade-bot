@@ -30,6 +30,7 @@ from app.trading.persistence import (
     save_account, load_account, save_position, delete_position,
     reset_all,
 )
+from app.trading.tg_format import SIDE_KR, fmt_alert, fmt_entry, fmt_exit, trade_net_pnl
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +68,10 @@ class LiveTradingEngine(PaperTradingEngine):
                         "[LIVE] HALT: Untracked position on Binance! "
                         "Investigate before resuming."
                     )
-                    await self.alert_sender._send_telegram_text(
-                        "🚨 <b>LIVE ENGINE HALT</b>\n\n"
-                        f"Untracked position detected on Binance:\n"
-                        f"<code>{pos_amt} BTCUSDT @ ${entry_price}</code>\n\n"
-                        "Bot will NOT trade until this is resolved.\n"
-                        "Check Binance and close manually if needed."
+                    await self.alert_sender.push_alert(
+                        "포지션 불일치 — 매매 중단",
+                        f"바이낸스에 기록 없는 포지션 {pos_amt} BTC @ {entry_price}",
+                        "바이낸스 확인 후 수동 정리 필요",
                     )
                     self._halt_until = int(time.time() * 1000) + 86400_000
                     self._initialized = True
@@ -128,8 +127,8 @@ class LiveTradingEngine(PaperTradingEngine):
             self._initialized = True
             logger.info("[LIVE] Engine initialized successfully")
 
-            await self.alert_sender._send_telegram_text(
-                "🟢 <b>LIVE ENGINE STARTED</b>\n\n"
+            logger.info(  # 시작 알림은 푸시하지 않음 (텔레그램 단순화)
+                "[LIVE] STARTED "
                 f"💰 Balance: ${real_balance}\n"
                 f"📊 Leverage: {self.settings.max_leverage}x\n"
                 f"🔒 SL/TP: ±{self.settings.sl_margin_pct}% margin (0.4% @{self.settings.max_leverage}x) | DD Halt: {self.settings.drawdown_halt_pct}%\n"
@@ -425,11 +424,10 @@ class LiveTradingEngine(PaperTradingEngine):
 
             except Exception as e:
                 logger.error(f"[LIVE] Order placement failed: {e}")
-                await self.alert_sender._send_telegram_text(
-                    f"🚨 <b>ORDER FAILED</b>\n\n"
-                    f"Side: {binance_side}\n"
-                    f"Qty: {first.quantity}\n"
-                    f"Error: <code>{e}</code>"
+                await self.alert_sender.push_alert(
+                    "진입 주문 실패",
+                    f"{binance_side} {first.quantity} BTC",
+                    f"오류: {str(e)[:100]}",
                 )
                 return None
 
@@ -483,15 +481,14 @@ class LiveTradingEngine(PaperTradingEngine):
             )
 
             # 텔레그램 알림
-            side_kr = "롱" if side == PositionSide.LONG else "숏"
+            risk_usdt = (abs(current_price - stop_loss) * total_qty).quantize(Decimal("0.01"))
+            if position.signal_details is None:
+                position.signal_details = {}
+            position.signal_details["tg_risk_usdt"] = str(risk_usdt)  # 청산 시 R 계산용 (메타데이터)
+            save_position(position)
+            tp1 = position.exit_tranches[0].target_price if position.exit_tranches else None
             asyncio.create_task(self.alert_sender._send_telegram_text(
-                f"📈 <b>POSITION OPENED</b>\n\n"
-                f"Side: {side_kr.upper()} ({tier_label})\n"
-                f"Size: {total_qty} BTC (${position_notional:,.0f})\n"
-                f"Leverage: {leverage}x\n"
-                f"Entry: ~${current_price:,.2f}\n"
-                f"SL: ${stop_loss:,.2f}\n"
-                f"Margin: ${margin:,.2f}"
+                fmt_entry(side, current_price, stop_loss, tp1, risk_usdt)
             ))
 
             return position
@@ -632,19 +629,8 @@ class LiveTradingEngine(PaperTradingEngine):
             pass
 
         # 4. 텔레그램 알림
-        side_kr = "롱" if trade.side == PositionSide.LONG else "숏"
-        reason_kr = {"take_profit": "익절", "breakeven": "본전", "stop_loss": "손절",
-                     "time_exit": "시간초과", "replaced_by_signal": "교체"}.get(reason, reason)
-        emoji = "💚" if trade.realized_pnl >= 0 else "🔴"
         asyncio.create_task(self.alert_sender._send_telegram_text(
-            f"{emoji} <b>POSITION CLOSED — {reason_kr.upper()}</b>\n\n"
-            f"Side: {side_kr}\n"
-            f"Entry: ${trade.avg_entry_price:,.2f}\n"
-            f"Exit: ${actual_close_price:,.2f}\n"
-            f"PnL: {'+'if trade.realized_pnl >= 0 else ''}${trade.realized_pnl:.2f} "
-            f"({trade.pnl_percent:+.2f}%)\n"
-            f"Duration: {trade.duration_seconds}s\n\n"
-            f"Balance: ${self.account.balance:,.2f}"
+            self._exit_text(trade, reason, self.account.balance)
         ))
 
         return trade
@@ -707,14 +693,10 @@ class LiveTradingEngine(PaperTradingEngine):
 
                             # 텔레그램 알림
                             side_kr = "롱" if pos.side == PositionSide.LONG else "숏"
-                            await self.alert_sender._send_telegram_text(
-                                f"📥 <b>추매 체결 ({filled_entries}/{len(pos.entry_tranches)})</b>\n\n"
-                                f"Side: {side_kr}\n"
-                                f"Price: ${tranche.filled_price:,.2f}\n"
-                                f"Qty: {tranche.quantity}\n"
-                                f"평단: ${pos.avg_entry_price:,.2f}\n"
-                                f"총수량: {pos.total_quantity}\n"
-                                f"새 SL: ${pos.stop_loss_price:,.2f}"
+                            logger.info(  # 추매 체결: 푸시 안 함 (로그만)
+                                f"[TG-off] 추매 체결 ({filled_entries}/{len(pos.entry_tranches)}) {side_kr} "
+                                f"@ {tranche.filled_price} qty={tranche.quantity} avg={pos.avg_entry_price} "
+                                f"total={pos.total_quantity} SL={pos.stop_loss_price}"
                             )
 
                         elif status in ("CANCELED", "REJECTED", "EXPIRED"):
@@ -767,24 +749,17 @@ class LiveTradingEngine(PaperTradingEngine):
 
                             # 텔레그램 알림
                             side_kr = "롱" if pos.side == PositionSide.LONG else "숏"
-                            asyncio.create_task(self.alert_sender._send_telegram_text(
-                                f"💰 <b>TP{filled_exits} HIT</b>\n\n"
-                                f"Side: {side_kr}\n"
-                                f"Price: ${tranche.filled_price:,.2f}\n"
-                                f"Qty: {tranche.quantity}\n"
-                                f"PnL: {'+'if pnl >= 0 else ''}${pnl:.2f}\n"
-                                f"New SL: ${pos.stop_loss_price:,.2f}"
-                            ))
+                            logger.info(  # TP 부분 체결 + SL 조정: 푸시 안 함 (로그만)
+                                f"[TG-off] TP{filled_exits} HIT {side_kr} @ {tranche.filled_price} "
+                                f"qty={tranche.quantity} pnl={pnl:.2f} new SL={pos.stop_loss_price}"
+                            )
 
                             # 모든 exit 체결 → 포지션 종료 (고아 방지: 전체 nuke)
                             if filled_exits == len(pos.exit_tranches):
                                 await self._nuke_all_binance_orders()
                                 trade = self._close_position(pos_id, tranche.filled_price, "take_profit")
                                 asyncio.create_task(self.alert_sender._send_telegram_text(
-                                    f"💚 <b>ALL TPs HIT</b>\n\n"
-                                    f"Side: {side_kr}\n"
-                                    f"PnL: +${trade.realized_pnl:.2f} ({trade.pnl_percent:+.2f}%)\n"
-                                    f"Balance: ${self.account.balance:,.2f}"
+                                    self._exit_text(trade, "take_profit", self.account.balance)
                                 ))
                                 break
 
@@ -837,15 +812,8 @@ class LiveTradingEngine(PaperTradingEngine):
                             self._resync_after_close(real_bal)
                             save_account(self.account)
 
-                            side_kr = "롱" if trade.side == PositionSide.LONG else "숏"
-                            reason_kr = "익절" if pnl >= 0 else "손절"
-                            emoji = "💚" if pnl >= 0 else "🔴"
                             await self.alert_sender._send_telegram_text(
-                                f"{emoji} <b>POSITION CLOSED (Binance) — {reason_kr.upper()}</b>\n\n"
-                                f"Side: {side_kr}\n"
-                                f"PnL: {'+'if pnl >= 0 else ''}${pnl:.2f}\n"
-                                f"Balance: ${real_bal:,.2f}\n\n"
-                                f"<i>Binance SL/TP 자동 체결</i>"
+                                self._exit_text(trade, reason, real_bal)
                             )
                             break
                 except Exception as e:
@@ -945,9 +913,10 @@ class LiveTradingEngine(PaperTradingEngine):
         logger.critical("[LIVE] Nuke failed to clear orders after 3 attempts → HALT")
         self.anomaly_detector.set_manual_halt("orphan orders persist after nuke")
         try:
-            await self.alert_sender._send_telegram_text(
-                "🆘 <b>CRITICAL: 고아 주문 제거 실패</b>\n\n"
-                "3회 시도 후에도 잔존 주문이 있습니다. 거래 HALT. 수동 확인 필요."
+            await self.alert_sender.push_alert(
+                "잔존 주문 제거 실패 — 매매 중단",
+                "3회 시도 후에도 바이낸스에 주문이 남아 있음",
+                "수동 확인 후 /resume",
             )
         except Exception:
             pass
@@ -1065,21 +1034,15 @@ class LiveTradingEngine(PaperTradingEngine):
             if protected:
                 # 기존 SL 이 포지션 보호 중 → 청산/HALT 안 함, 다음 사이클 재시도
                 logger.warning("[LIVE] SL re-place failed but existing closePosition SL alive → keep, retry next cycle")
-                try:
-                    await self.alert_sender._send_telegram_text(
-                        "⚠️ <b>SL 재배치 실패 — 기존 SL 보호 유지</b>\n\n"
-                        f"Side: {pos.side.value} | trigger=${pos.stop_loss_price}\n다음 사이클 재시도."
-                    )
-                except Exception:
-                    pass
+                # 기존 SL 살아있음 → 푸시 안 함 (로그만)
                 return
             # 무방비(0개) 또는 확인불가(None) → emergency_close + HALT (기존 동작)
             logger.critical("[LIVE] SL placement failed → no live SL confirmed → emergency close + HALT")
             self.anomaly_detector.set_manual_halt("SL place failed 3x")
-            await self.alert_sender._send_telegram_text(
-                "🆘 <b>CRITICAL: SL 배치 실패 (무방비/확인불가)</b>\n\n"
-                "포지션을 즉시 시장가 청산하고 거래를 HALT 합니다.\n"
-                f"Side: {pos.side.value} | trigger=${pos.stop_loss_price}"
+            await self.alert_sender.push_alert(
+                "손절 주문 없음 — 비상청산 + 매매 중단",
+                f"{SIDE_KR.get(pos.side.value, pos.side.value)} 손절 {pos.stop_loss_price} 배치/확인 실패",
+                "시장가 청산 진행 · 확인 후 /resume",
             )
             await self._emergency_close(pos, reason="sl_place_failed")
             return
@@ -1172,9 +1135,9 @@ class LiveTradingEngine(PaperTradingEngine):
             except Exception as e:
                 logger.error(f"[LIVE] Emergency local close failed: {e}")
         try:
-            await self.alert_sender._send_telegram_text(
-                f"🆘 <b>EMERGENCY CLOSE — {reason}</b>\n\n"
-                f"Side: {pos.side.value}\nClose: ~${close_price}"
+            await self.alert_sender.push_alert(
+                f"비상청산 완료 ({reason})",
+                f"{SIDE_KR.get(pos.side.value, pos.side.value)} 청산가 ~{close_price}",
             )
         except Exception:
             pass
@@ -1262,6 +1225,19 @@ class LiveTradingEngine(PaperTradingEngine):
         base = self.account.daily_start_balance
         if base and base > 0:
             self.account.daily_pnl = real_bal - base
+
+    @staticmethod
+    def _exit_text(trade, reason: str, balance) -> str:
+        """청산 푸시 문구: 순손익(수수료 포함)$, 잔고 대비 %, R."""
+        if trade is None:
+            return fmt_alert("청산 기록 없음", f"사유 {reason} · 바이낸스 확인 필요")
+        net = trade_net_pnl(trade)
+        bal = Decimal(str(balance or 0))
+        before = bal - net
+        pct = float(net / before * 100) if before > 0 else None
+        risk = Decimal(str((trade.signal_details or {}).get("tg_risk_usdt") or 0))
+        r = float(net / risk) if risk > 0 else None
+        return fmt_exit(trade.side, reason, net, pct, r, bal)
 
     def _check_daily_reset(self, now: int):
         """Live: daily_start_balance 는 실잔고만 (cross margin — margin_used 더하지 않음)."""

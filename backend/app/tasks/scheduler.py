@@ -257,6 +257,22 @@ async def anomaly_heartbeat():
         await trading_engine.alert_sender.send(alert)
 
 
+async def daily_summary_push():
+    """00:00 KST: 전일 결산 1줄 푸시 (spec §12-13). 같은 dict 를 추후 Notion 행으로 기록."""
+    import datetime as _dt
+    from app.trading.telegram_bot import today_summary
+    from app.trading.tg_format import KST, fmt_daily_line
+
+    try:
+        yday = (_dt.datetime.now(KST) - _dt.timedelta(days=1)).strftime("%Y-%m-%d")
+        summary = today_summary(trading_engine, yday)
+        logger.info(f"[DAILY] {summary}")
+        if hasattr(trading_engine, "alert_sender"):
+            await trading_engine.alert_sender.send_text(fmt_daily_line(summary))
+    except Exception as e:
+        logger.error(f"[DAILY] summary push failed: {e}")
+
+
 async def order_reconciliation():
     """Live 엔진: 바이낸스 주문 상태 동기화 (5초마다)."""
     if hasattr(trading_engine, "reconcile_orders"):
@@ -276,6 +292,11 @@ def start_scheduler(mgr: ConnectionManager):
         anomaly_heartbeat, "interval", seconds=30,
         id="anomaly_heartbeat",
         max_instances=1,
+    )
+
+    scheduler.add_job(
+        daily_summary_push, "cron", hour=0, minute=0, timezone="Asia/Seoul",
+        id="daily_summary_push", max_instances=1,
     )
 
     # Live 엔진이면 reconciliation 루프 추가

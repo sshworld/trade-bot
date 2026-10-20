@@ -20,6 +20,7 @@ from dataclasses import asdict
 import httpx
 
 from app.trading.anomaly_detector import AnomalyAlert, AnomalyAction
+from app.trading.tg_format import anomaly_push_text, fmt_alert, record_incident
 
 logger = logging.getLogger(__name__)
 
@@ -64,44 +65,15 @@ class AlertSender:
                 logger.error(f"Alert send failed (channel {i}): {result}")
 
     async def _send_telegram(self, alert: AnomalyAlert):
-        """텔레그램 메시지 전송."""
-        emoji = {
-            "WARNING": "\u26a0\ufe0f",
-            "CRITICAL": "\U0001f6a8",
-            "EMERGENCY": "\U0001f198",
-        }.get(alert.severity, "\u2753")
-
-        action_label = {
-            AnomalyAction.ALERT: "Alert only (trading continues)",
-            AnomalyAction.REDUCE: "Position size reduced to 50%",
-            AnomalyAction.HALT_SHORT: "Trading HALTED (auto-resume)",
-            AnomalyAction.HALT_LONG: "Trading HALTED (auto-resume, extended)",
-            AnomalyAction.HALT_MANUAL: "Trading HALTED (MANUAL resume required)",
-        }.get(alert.action_taken, str(alert.action_taken))
-
-        resume_info = ""
-        if alert.requires_manual_resume:
-            resume_info = (
-                "\n\n<b>To resume:</b> Set <code>anomaly_manual_resume=true</code> "
-                "in config after investigation."
+        """텔레그램 전송. 경미한 경고는 로그만 (tg_format.anomaly_push_text 정책)."""
+        text = anomaly_push_text(alert)
+        if text is None:
+            logger.info(
+                f"[TG] push suppressed (log only): [{alert.severity}] {alert.rule_name} — {alert.message} "
+                f"details={json.dumps(alert.details, default=str)}"
             )
-        elif alert.halt_until > 0:
-            remaining_sec = max(0, (alert.halt_until - alert.timestamp) // 1000)
-            minutes = remaining_sec // 60
-            resume_info = f"\n\n<b>Auto-resume in:</b> {minutes} minutes"
-
-        text = (
-            f"{emoji} <b>ANOMALY: {alert.rule_name.upper()}</b>\n"
-            f"<b>Severity:</b> {alert.severity}\n\n"
-            f"{alert.message}\n\n"
-            f"<b>Action:</b> {action_label}"
-            f"{resume_info}\n\n"
-            f"<code>{json.dumps(alert.details, indent=2, default=str)}</code>"
-        )
-
-        # Telegram 4096자 제한
-        if len(text) > 4000:
-            text = text[:3997] + "..."
+            return
+        record_incident(alert.timestamp or None)
 
         url = f"https://api.telegram.org/bot{self._telegram_token}/sendMessage"
         client = await self._get_client()
@@ -160,6 +132,12 @@ class AlertSender:
     # public alias — bot 명령 핸들러 / 신규 호출 지점에서 사용
     async def send_text(self, text: str):
         await self._send_telegram_text(text)
+
+    async def push_alert(self, title: str, detail: str = "", action: str = ""):
+        """장애/안전 이벤트 즉시 푸시 (🚨, 최대 3줄) + 일일 incidents 집계."""
+        record_incident()
+        logger.warning(f"[TG] safety alert: {title} | {detail} | {action}")
+        await self._send_telegram_text(fmt_alert(title, detail, action))
 
     async def send_photo(self, image_bytes: bytes, caption: str = ""):
         """PNG/JPG 이미지 전송. /chart 명령 등에서 사용."""
