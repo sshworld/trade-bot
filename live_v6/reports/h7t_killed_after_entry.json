@@ -1,23 +1,23 @@
 {
- "checked_at_utc": "2026-10-20T07:51:40Z",
+ "checked_at_utc": "2026-10-20T08:35:18Z",
  "host": "https://testnet.binancefuture.com",
  "positions": [
   {
    "symbol": "DOGEUSDT",
-   "positionAmt": "15466",
-   "entryPrice": "0.07922",
-   "markPrice": "0.07922553",
+   "positionAmt": "15234",
+   "entryPrice": "0.07909",
+   "markPrice": "0.07912473",
    "marginType": "isolated",
    "stops": [
     {
      "src": "algo",
      "side": "SELL",
      "trigger": "0.0777",
-     "qty": "15466.0",
+     "qty": "15234.0",
      "closePosition": false,
      "reduceOnly": true,
      "workingType": "MARK_PRICE",
-     "clientId": "v6tDOGE1792482696p"
+     "clientId": "v6tDOGE1792485315p"
     }
    ],
    "protected": true,

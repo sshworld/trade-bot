@@ -11,7 +11,7 @@ import pytest
 
 from live_v6 import strategy as S
 from live_v6.exchange import MAINNET_URL, TESTNET_URL, BinanceREST, MainnetForbidden, guard_url, mainnet_allowed
-from live_v6.rules import SymbolRules, choose_leverage, liquidation_ok, stop_price
+from live_v6.rules import D, SymbolRules, choose_leverage, liquidation_ok, stop_price
 from live_v6.sizing import SizingParams, size_entry
 
 from .conftest import TEST_SYMBOLS
@@ -170,3 +170,109 @@ def test_replay_matches_research_trades():
     from live_v6.replay.replay import compare, run
     r = compare(*run(str(DATA), order="research", stop_fill="research"))
     assert r["exact_match"], {k: r[k] for k in ("missing", "extra") if k in r}
+
+
+# ── §8e-2: S0, equity halt at halt_fraction (0.75) × S0, deposits / withdrawals excluded ──
+def _transfer(fx, amount):
+    fx.wallet += Decimal(amount)
+    fx.incomes.append({"type": "TRANSFER", "amount": Decimal(amount), "time": int(__import__("time").time() * 1000) + 1,
+                       "symbol": "", "tran_id": f"tr{len(fx.incomes)}"})
+
+
+def _eng(offline, **kw):
+    eng = offline.engine(income_interval_s=kw.pop("income_interval_s", 0), **kw)
+    eng.on_bar_close = lambda *a, **k: None
+    eng.startup()
+    return eng
+
+
+def test_s0_recorded_once_and_persisted(offline):
+    eng = _eng(offline)
+    assert eng.meta["start_wallet"] == "1000"
+    offline.inner.wallet = Decimal(1234)
+    eng2 = offline.engine()
+    eng2.startup()
+    assert eng2.meta["start_wallet"] == "1000"                       # not reset by a restart
+
+
+def test_withdrawal_is_not_a_loss(offline):
+    eng = _eng(offline)
+    _transfer(offline.inner, "-300")                                 # wallet 700 < 750, but it is a withdrawal
+    eng.reconcile()
+    assert D(eng.meta["net_transfers"]) == -300 and not eng.meta.get("halted")
+    hit, adj, thr = eng.drawdown_breached()
+    assert not hit and adj == 1000 and thr == 750
+
+
+def test_withdrawal_not_yet_synced_does_not_halt(offline):
+    eng = _eng(offline, income_interval_s=1e9)                      # income normally not re-read for a long time
+    eng._last_income = eng.clock()
+    _transfer(offline.inner, "-300")
+    eng.reconcile()                                                  # breach seen → forced transfer sync → no halt
+    assert not eng.meta.get("halted") and D(eng.meta["net_transfers"]) == -300
+
+
+def test_deposit_does_not_hide_a_loss(offline):
+    eng = _eng(offline)
+    opened = eng.enter("DOGEUSDT", offline.stop_dist(), int(__import__("time").time()) * 1000)
+    assert opened
+    _transfer(offline.inner, "500")
+    offline.inner.wallet -= Decimal(251)                             # realised loss: 1500 − 251 − 500 = 749 ≤ 750
+    eng.reconcile()
+    assert str(eng.meta.get("halted")).startswith("emergency") and offline.amt("DOGEUSDT") == 0
+
+
+@pytest.mark.parametrize("loss, halts", [("249.99", False), ("250", True)])
+def test_halt_threshold_exactly_075_s0(offline, loss, halts):
+    eng = _eng(offline)
+    offline.inner.wallet -= Decimal(loss)
+    eng.reconcile()
+    assert bool(eng.meta.get("halted")) is halts
+
+
+def test_unrealised_loss_counts_as_equity(offline):
+    eng = _eng(offline, sizing=SizingParams(risk_pct=0.5))
+    assert eng.enter("DOGEUSDT", offline.stop_dist(), int(__import__("time").time()) * 1000)
+    q = offline.amt("DOGEUSDT")
+    offline.inner.stops_fire = False
+    offline.inner.price["DOGEUSDT"] -= Decimal(260) / q             # −260 USDT unrealised (stop "missed")
+    eng.check_halts()
+    eng.reconcile()
+    assert str(eng.meta.get("halted")).startswith("emergency") and offline.amt("DOGEUSDT") == 0
+
+
+def test_capital_and_halt_fractions_are_config(offline):
+    eng = _eng(offline, capital_fraction=0.5, halt_fraction=0.8)
+    assert eng.meta["capital0"] == "500.0" and eng.capital0() == 500
+    assert eng.enter("DOGEUSDT", offline.stop_dist(), int(__import__("time").time()) * 1000)
+    j = eng.st["pos"]["DOGEUSDT"]
+    assert Decimal(j["risk_usdt"]) <= Decimal("2.5")                 # 0.5 % of C0 = 500, not of the 1000 wallet
+    eng.close("DOGEUSDT", "signal_exit")
+    offline.inner.wallet = Decimal(eng.meta["start_wallet"]) - Decimal(99)
+    eng.reconcile()
+    assert not eng.meta.get("halted")                                # 500 − 99 = 401 > 400
+    offline.inner.wallet -= Decimal(1)
+    eng.reconcile()
+    assert str(eng.meta.get("halted")).startswith("emergency")      # 400 ≤ 0.8 × 500
+
+
+def test_margin_guard_never_exceeds_strategy_equity(offline):
+    eng = _eng(offline, capital_fraction=0.02)                       # C0 = 20 USDT of a 1000 wallet
+    eng.cfg.sizing = SizingParams(risk_pct=5, max_risk_pct=10, portfolio_risk_cap=1.0)
+    assert not eng.enter("DOGEUSDT", Decimal("0.0003"), int(__import__("time").time()) * 1000)
+    assert eng.meta["skip_log"][-1][2] == "margin"                   # 500 notional / 10x = 50 > 20 strategy equity
+    assert offline.amt("DOGEUSDT") == 0
+
+
+def test_single_source_of_truth_for_halt_threshold():
+    src = "\n".join(p.read_text() for p in Path(__file__).resolve().parents[1].rglob("*.py") if "tests" not in p.parts)
+    assert "0.85" not in src and "dd_halt_pct" not in src
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not (DATA / "DOGEUSDT_1m.npz").exists(), reason="1m replay data not exported")
+def test_replay_h7t_matches_research_trades():
+    from live_v6.replay import replay_h7t as RH
+    eng, ex, _ = RH.run(str(DATA))
+    r = RH.compare(eng, ex)
+    assert r["exact_match"], {k: r[k] for k in ("missing", "extra")}

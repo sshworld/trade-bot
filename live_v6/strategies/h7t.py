@@ -150,9 +150,14 @@ class H7T(V6H7):
             for bar in bars:
                 if bar["open_time"] <= m.last_open:
                     continue
-                if m.pos and b.get("open") == bar["open_time"] and m.ei_open >= bar["open_time"]:
-                    bar = dict(bar, low=min(bar["low"], b["post_low"]) if b.get("post_low") is not None else m.entry_px)
+                entry_bar = m.pos and m.ei_open >= bar["open_time"]
+                if entry_bar:
+                    # entry bar: the bar low includes pre-entry prices; the stop after the entry was already checked
+                    # trade by trade (virtual stop in on_event) → no bar-level stop check here (ATR/M20 untouched)
+                    sl, m.sl = m.sl, -math.inf
                 S.step(m, bar, lambda t: (False, {"why": "touch_entry_only"}), self.p)
+                if entry_bar and m.pos:
+                    m.sl = sl
             new[sym] = m
         for sym, m in new.items():
             self.state["models"][sym] = m.to_dict()

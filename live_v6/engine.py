@@ -11,7 +11,7 @@ Invariants (ported from the verified live_v1 safety layer, spec v1 §8-10 / v2 �
   * Stop rejected / stop missing and not re-armable / stop breach → flatten ALL positions + halt + 🚨.
   * Any reconcile mismatch, API-error burst, unknown order, ledger gap or margin-mode failure blocks NEW entries;
     existing stops are never touched by a block.
-  * −15% of the live start wallet (transfers excluded) halts new entries. PF < 0.8 after 30 trades = review alert only.
+  * strategy equity ≤ halt_fraction (0.75) × start capital (transfers excluded) → flatten all + halt (§8e-2). PF < 0.8 after 30 trades = review alert only.
 """
 from __future__ import annotations
 
@@ -73,7 +73,8 @@ class Settings:
     api_recover_n: int = 3              # §8c L0: entries paused on any transient error until 3 calls succeed
     transient_alert_s: float = 60       # §8c L0: alert only when a transient fault lasts longer than this
     api_dead_s: float = 300             # §8c L3(c): API unresponsive this long + unprotected position → flatten all
-    dd_halt_pct: float = 15.0
+    capital_fraction: float = 1.0       # §8e-2: trading capital C0 = capital_fraction × S0 (S0 = wallet at live start)
+    halt_fraction: float = 0.75         # §8e-2 / §8c L3(a): flatten all + halt when strategy equity ≤ halt_fraction × C0
     pf_review: float = 0.8
     pf_review_after: int = 30
     ledger_tol_pct: float = 0.5
@@ -113,6 +114,8 @@ class V6Engine:
         self.marks: dict = {}
         self._stream_up: dict = {}
         self._breach_seen: dict = {}
+        self._last_ok_reconcile = -1e18
+        self.deadman = None                                 # runner attaches deadman.DeadMan (HEARTBEAT_URL)
         self._last_market_ev = self.clock()
         self._dirty = False
         self._last_reconcile = 0.0
@@ -231,7 +234,8 @@ class V6Engine:
                     self.ensure_isolated(s)
             if "start_wallet" not in self.meta:
                 a = self.x("account")
-                self.meta.update(start_wallet=str(a["wallet"]), start_ms=self.now_ms(), ledger_balance=str(a["wallet"]),
+                self.meta.update(start_wallet=str(a["wallet"]), capital0=str(D(a["wallet"]) * D(self.cfg.capital_fraction)),
+                                 start_ms=self.now_ms(), ledger_balance=str(a["wallet"]),
                                  income_cursor=self.now_ms(), income_seen=[], net_transfers="0")
             self.strategy.on_start(self)
             self.st["strategy"] = self.strategy.state
@@ -303,6 +307,9 @@ class V6Engine:
 
     def funding(self, sym, start_ms):
         key = ("fund", sym, start_ms)
+        c = self._cache.get(key)
+        if c and len(c) >= 2 and c[-1][0] + (c[-1][0] - c[-2][0]) <= self.now_ms():
+            del self._cache[key]                            # a newer settlement is due → refetch
         if key not in self._cache:
             self._cache = {k: v for k, v in self._cache.items() if not (k[0] == "fund" and k[1] == sym)}
             self._cache[key] = S.normalise_funding(self.x("funding", sym, start_ms))
@@ -454,7 +461,11 @@ class V6Engine:
             log.error("entry %s pre-check failed: %s", sym, e)
             return False
         book = self._open_book(pos)
-        sz = size_entry(self.rules[sym], self.brackets.get(sym, []), acct["wallet"], acct["available"], ref, stop_dist, 1,
+        # §8e-2 capital: sizing on C0 + realised PnL since start (= the full wallet when capital_fraction = 1, transfers
+        # excluded); margin guard: margin in use + new margin never exceeds strategy equity (incl. unrealised)
+        cap = self.strategy_equity(acct["wallet"])
+        room = self.strategy_equity(acct.get("equity", acct["wallet"])) - D(acct.get("margin_used", 0))
+        sz = size_entry(self.rules[sym], self.brackets.get(sym, []), cap, min(D(acct["available"]), room), ref, stop_dist, 1,
                         book, self.cfg.sizing)
         if sz.skip:
             self.skip(sym, sz.skip, sz.detail)
@@ -770,7 +781,7 @@ class V6Engine:
         self.record_close(sym, reason)
 
     def emergency_flatten_all(self, reason):
-        """§8c L3 only: −15% equity, a position that stays unprotected after L1, or API dead > 5 min with an
+        """§8c L3 only: equity ≤ halt_fraction × C0 (−25 %), a position that stays unprotected after L1, or API dead > 5 min with an
         unprotected position → close ALL positions (reduceOnly MARKET) + halt."""
         self.halt(f"emergency: {reason}")
         self.alert("비상청산 — 전 포지션 정리 + 매매 중단", reason)
@@ -829,6 +840,7 @@ class V6Engine:
         except ExchangeError:
             marks = {}
         self.meta["wallet"] = str(acct["wallet"])
+        self.meta["equity"] = str(acct.get("equity", acct["wallet"]))
         mismatch = []
         for sym in self.cfg.symbols:
             amt = pos[sym]["amt"]
@@ -952,13 +964,34 @@ class V6Engine:
                 self.unblock(LEDGER)
         self.save()
 
+    # ───────────────────────── capital (§8e-2) ─────────────────────────
+    def capital0(self) -> Decimal:
+        return D(self.meta.get("capital0") or D(self.meta["start_wallet"]) * D(self.cfg.capital_fraction))
+
+    def strategy_equity(self, value=None) -> Decimal:
+        """C0 + PnL since start (transfers excluded). `value` = exchange wallet (realised) or equity (incl. unrealised)."""
+        v = D(value if value is not None else (self.meta.get("equity") or self.meta.get("wallet") or self.meta["start_wallet"]))
+        return self.capital0() + (v - D(self.meta["start_wallet"]) - D(self.meta.get("net_transfers", "0")))
+
+    def drawdown_breached(self) -> tuple[bool, Decimal, Decimal]:
+        """S0 = wallet at live start (persisted). Breached when strategy equity (incl. unrealised, deposits/withdrawals
+        from income TRANSFER rows excluded) ≤ halt_fraction × C0. Single source of truth: Settings.halt_fraction."""
+        c0 = self.capital0()
+        eq = self.strategy_equity()
+        thr = c0 * D(self.cfg.halt_fraction)
+        return c0 > 0 and eq <= thr, eq, thr
+
     def check_halts(self):
         if "start_wallet" not in self.meta:
             return
-        sw, w = D(self.meta["start_wallet"]), D(self.meta.get("wallet", self.meta["start_wallet"]))
-        cum = (w - sw - D(self.meta.get("net_transfers", "0"))) / sw * 100 if sw > 0 else Decimal(0)
-        if cum <= -D(self.cfg.dd_halt_pct) and not self.meta.get("halted"):
-            self.emergency_flatten_all(f"누적 손익 {float(cum):.1f}% ≤ -{self.cfg.dd_halt_pct:.0f}%")   # §8c L3(a)
+        hit, adj, thr = self.drawdown_breached()
+        if hit and not self.meta.get("halted"):
+            self._last_income = -1e18                       # a fresh transfer sync first: a withdrawal not yet
+            self.check_ledger()                             # booked must not look like a loss
+            hit, adj, thr = self.drawdown_breached()
+        if hit and not self.meta.get("halted"):
+            self.emergency_flatten_all(f"자산 {adj:.2f} ≤ {thr:.2f} (시작 자본 {self.capital0():.2f} × "
+                                       f"{self.cfg.halt_fraction}, 입출금 제외)")   # §8c L3(a) / §8e-2
         nets = [D(t["net"]) for t in self.meta.get("trades", []) if int(t["closed_ms"]) >= int(self.meta.get("start_ms", 0))]
         if len(nets) >= self.cfg.pf_review_after and not self.meta.get("pf_review"):
             g, l_ = sum(x for x in nets if x > 0), -sum(x for x in nets if x < 0)
@@ -1030,10 +1063,19 @@ class V6Engine:
             self._last_reconcile = self.clock()
             try:
                 self.reconcile()
+                self._last_ok_reconcile = self.clock()
             except ExchangeError as e:
                 log.error("reconcile failed: %s", e)
                 self.check_api_dead()
         self.stream_health()
         self.check_transient()
         self.reports()
+        if self.deadman is not None:
+            self.deadman.maybe_ping(self.healthy())
+
+    def healthy(self) -> bool:
+        """Dead-man ping only while: started, not halted, last REST reconcile succeeded within 3× reconcile_s, no
+        position flagged unprotected."""
+        return (self.started and not self.meta.get("halted") and self.clock() - self._last_ok_reconcile <= 3 * self.cfg.reconcile_s
+                and not any(j.get("unprotected") for j in self.st["pos"].values()))
         self.on_bar_close()

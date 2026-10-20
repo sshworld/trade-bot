@@ -390,11 +390,12 @@ def test_breach_closes_only_that_position(backend):
 
 
 def test_drawdown_15pct_flattens_all_and_halts(backend):
-    """§8c L3(a): equity −15% from start → flatten ALL + halt."""
+    """§8c L3(a) / §8e-2: equity ≤ halt_fraction × S0 (−25 %) → flatten ALL + halt."""
     eng = ready(backend)
     opened(backend, eng, SOL)
     opened(backend, eng)
-    eng.meta["start_wallet"] = str(Decimal(eng.meta["wallet"]) / Decimal("0.84"))
+    s0 = Decimal(eng.meta["wallet"]) / Decimal("0.74")              # equity is now 74 % of S0 (< 75 %)
+    eng.meta.update(start_wallet=str(s0), capital0=str(s0))
     eng.reconcile()
     assert backend.amt(DOGE) == 0 and backend.amt(SOL) == 0
     assert str(eng.meta.get("halted")).startswith("emergency")
@@ -532,14 +533,17 @@ def test_partial_fills_and_failed_final_exit(backend):
 
 
 # ───────────── portfolio caps at the order-placement step ─────────────
-def _external_position_during_leverage(backend, sym_ext):
-    def hook(fn, s, lev):
-        fn(s, lev)
+def _external_position_before_placement(backend, sym_ext):
+    """An external position appears AFTER the sizing reads (hooked on the book fetch) and BEFORE the final
+    placement read (set_leverage is skipped when the leverage is already right)."""
+    def hook(fn, s):
+        out = fn(s)
         if s == DOGE and backend.amt(sym_ext) == 0:
             px = backend.inner.book(sym_ext)["ask"]
             q = floor_to(Decimal(12) / px, Decimal(FILT_STEP[sym_ext]))
             backend.inner.market(sym_ext, "BUY", q, f"v6text{int(time.time() * 1000)}", False)
-    backend.fx.inject("set_leverage", hook)
+        return out
+    backend.fx.inject("book", hook, times=99, match=lambda s: s == DOGE)
 
 
 FILT_STEP = {"DOGEUSDT": "1", "SOLUSDT": "0.01", "XRPUSDT": "0.1"}
@@ -550,7 +554,7 @@ def test_risk_cap_enforced_at_placement(backend):
     that appears between sizing and placement (unknown risk → counted as 1%) must block the entry."""
     eng = ready(backend, sizing=SizingParams(portfolio_risk_cap=0.012))
     opened(backend, eng, SOL)                                    # 0.5% open
-    _external_position_during_leverage(backend, XRP)
+    _external_position_before_placement(backend, XRP)
     assert not eng.enter(DOGE, backend.stop_dist(), unique_T())  # sizing saw 0.5%+0.5% ≤ 1.2%; placement sees 2%
     assert eng.meta["skip_log"][-1][2] == "risk_cap_portfolio"
     assert backend.amt(DOGE) == 0
@@ -559,7 +563,7 @@ def test_risk_cap_enforced_at_placement(backend):
 def test_max_positions_enforced_at_placement(backend):
     eng = ready(backend, max_positions=2)
     opened(backend, eng, SOL)
-    _external_position_during_leverage(backend, XRP)
+    _external_position_before_placement(backend, XRP)
     assert not eng.enter(DOGE, backend.stop_dist(), unique_T())
     assert eng.meta["skip_log"][-1][2] == "max_positions"
     assert backend.amt(DOGE) == 0

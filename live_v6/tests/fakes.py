@@ -59,7 +59,9 @@ class FakeExchange:
         return BRACKETS[s]
 
     def account(self):
-        return {"wallet": self.wallet, "available": self.wallet - sum(p["margin"] for p in self.pos.values())}
+        upnl = sum((self.price[s] - p["entry"]) * p["amt"] for s, p in self.pos.items())
+        return {"wallet": self.wallet, "available": self.wallet - sum(p["margin"] for p in self.pos.values()),
+                "equity": self.wallet + upnl, "margin_used": sum(p["margin"] for p in self.pos.values())}
 
     def positions(self, symbols):
         return {s: {"amt": self.pos[s]["amt"] if s in self.pos else Decimal(0),

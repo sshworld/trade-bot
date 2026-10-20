@@ -177,7 +177,9 @@ class BinanceREST:
         d = self._req("GET", "/fapi/v2/account")
         for a in d.get("assets", []):
             if a.get("asset") == "USDT":
-                return {"wallet": Decimal(a["walletBalance"]), "available": Decimal(a["availableBalance"])}
+                return {"wallet": Decimal(a["walletBalance"]), "available": Decimal(a["availableBalance"]),
+                        "equity": Decimal(a.get("marginBalance") or a["walletBalance"]),    # wallet + unrealized
+                        "margin_used": Decimal(a.get("initialMargin") or 0)}
         raise ExchangeError("no USDT asset in account")
 
     def positions(self, symbols) -> dict[str, dict]:

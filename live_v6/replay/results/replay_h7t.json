@@ -1,0 +1,16 @@
+{
+ "expected_trades": 355,
+ "engine_trades": 355,
+ "missing": [],
+ "extra": [],
+ "diffs": [],
+ "W_entry_max_rel_diff": 5.036216675233112e-16,
+ "engine_skips": {
+  "min_notional": 74
+ },
+ "final_wallet": 782.0010337633597,
+ "engine_halted": null,
+ "alerts": [],
+ "entry_time_direction_match": true,
+ "exact_match": true
+}

@@ -39,6 +39,8 @@ def build(network: str | None = None):
     strat = Strat(params=cfg.params, kline_fetch=cfg.kline_fetch, bootstrap_bars=cfg.bootstrap_bars,
                   daily_fetch=cfg.daily_fetch, funding_lookback_ms=cfg.funding_lookback_ms)
     eng = V6Engine(rest, cfg, store=JsonStore(state), notifier=Notifier(), strategy=strat)
+    from .deadman import DeadMan
+    eng.deadman = DeadMan()                              # env HEARTBEAT_URL; no-op when unset
     return rest, eng
 
 

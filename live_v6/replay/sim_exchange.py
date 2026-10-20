@@ -168,7 +168,8 @@ class SimExchange:
 
     def account(self):
         avail = self.W - sum(p["margin"] for p in self.pos.values())
-        return {"wallet": Decimal(str(round(self.W, 8))), "available": Decimal(str(round(avail, 8)))}
+        return {"wallet": Decimal(str(round(self.W, 8))), "available": Decimal(str(round(avail, 8))),
+                "margin_used": Decimal(str(round(sum(p["margin"] for p in self.pos.values()), 8)))}
 
     def positions(self, symbols):
         out = {}
