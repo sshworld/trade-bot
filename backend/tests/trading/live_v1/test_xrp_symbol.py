@@ -52,35 +52,40 @@ def test_rules_parsed_from_exchange_info_not_hardcoded():
     assert r.price(Decimal("0.51527"), "down") == Decimal("0.5152")
 
 
-async def test_xrp_long_sizing_rounding_and_stop():
+async def test_xrp_long_size_from_rounded_stop():
     fx = _xrp()
     eng, ex = await _eng(fx)
     assert eng.rules == XRP_RULES and eng.brackets[0]["mmr"] == 0.005
-    assert await eng._enter(1, Decimal("0.01537"), BAR)           # ~3.07% stop
-    # risk 0.5% × 1000 = 5 USDT → 5/0.01537 = 325.309… → floor to step 0.1
-    assert fx.amt == Decimal("325.3")
+    assert await eng._enter(1, Decimal("0.01537"), BAR)           # model stop 0.5001 − 0.01537 = 0.48473
     assert eng.pos["entry_px"] == "0.5001"
-    assert eng.pos["stop_px"] == "0.4848"                         # 0.48473 rounded UP to tick (toward entry)
-    assert fx.lev == 10 and eng.pos["mmr"] == 0.005               # tier for 325.3 × 0.5001 ≈ $162.7
+    assert eng.pos["stop_px"] == "0.4848"                         # ceil to tick (toward entry)
+    # rounded distance 0.0153 → 5 / 0.0153 = 326.79 → floor step 0.1 (was 325.3 from raw 0.01537)
+    assert fx.amt == Decimal("326.7")
+    risk = fx.amt * (Decimal("0.5001") - Decimal("0.4848"))
+    assert risk == Decimal("4.99851") and risk <= Decimal("1000") * Decimal("0.005")
     assert [s["stop_price"] for s in fx.stops.values()] == [Decimal("0.4848")]
-    assert Decimal(eng.pos["risk_usdt"]) == Decimal("4.98")       # 325.3 × 0.0153
+    assert fx.lev == 10 and eng.pos["mmr"] == 0.005
 
 
-async def test_xrp_short_stop_rounds_down_toward_entry():
+async def test_xrp_short_size_from_rounded_stop():
     fx = _xrp()
     eng, _ = await _eng(fx)
-    assert await eng._enter(-1, Decimal("0.01537"), BAR)
-    assert fx.amt == Decimal("-325.3") and eng.pos["entry_px"] == "0.4999"
-    assert eng.pos["stop_px"] == "0.5152"                         # 0.51527 rounded DOWN
+    assert await eng._enter(-1, Decimal("0.01537"), BAR)          # model stop 0.4999 + 0.01537 = 0.51527
+    assert eng.pos["entry_px"] == "0.4999"
+    assert eng.pos["stop_px"] == "0.5152"                         # floor to tick (toward entry)
+    assert fx.amt == Decimal("-326.7")                            # 5 / 0.0153 → 326.7
+    risk = abs(fx.amt) * (Decimal("0.5152") - Decimal("0.4999"))
+    assert risk == Decimal("4.99851") and risk <= Decimal("1000") * Decimal("0.005")
+    assert [s["stop_price"] for s in fx.stops.values()] == [Decimal("0.5152")]
 
 
 async def test_xrp_min_notional_5_boundary():
     eng, _ = await _eng(_xrp(wallet="30.5"))                      # qty 9.92 → 9.9 → $4.95 < $5
-    assert not await eng._enter(1, Decimal("0.01537"), BAR)
+    assert not await eng._enter(1, Decimal("0.01537"), BAR)      # 0.1525/0.0153 = 9.97 → 9.9 → $4.95 < $5
     assert list(eng.skip_counts(__import__("app.trading.tg_format", fromlist=["x"]).kst_date())) == ["min_notional"]
-    fx = _xrp(wallet="31")                                        # qty 10.08 → 10.0 → $5.001 ≥ $5
+    fx = _xrp(wallet="31")                                        # 0.155/0.0153 = 10.13 → 10.1 → $5.05 ≥ $5
     eng2, _ = await _eng(fx)
-    assert await eng2._enter(1, Decimal("0.01537"), BAR) and fx.amt == Decimal("10.0")
+    assert await eng2._enter(1, Decimal("0.01537"), BAR) and fx.amt == Decimal("10.1")
 
 
 async def test_xrp_heartbeat_and_breach_use_configured_symbol():
@@ -141,6 +146,8 @@ async def test_binance_order_params_xrp_precision():
     assert s["stop_price"] == Decimal("0.4848")
     await ex.stop("BUY", Decimal("0.5152"), "v1yS1")
     assert seen[-1].url.params["triggerPrice"] == "0.5152"
-    await ex.stop("SELL", Decimal("0.484739"), "v1zLs1")         # off-tick input is still snapped to tick
-    assert seen[-1].url.params["triggerPrice"] == "0.4847"
+    await ex.stop("SELL", Decimal("0.484739"), "v1zLs1")         # off-tick long stop → up (toward entry)
+    assert seen[-1].url.params["triggerPrice"] == "0.4848"
+    await ex.stop("BUY", Decimal("0.515271"), "v1zSs1")          # off-tick short stop → down (toward entry)
+    assert seen[-1].url.params["triggerPrice"] == "0.5152"
     assert sum(r.url.path == "/fapi/v1/exchangeInfo" for r in seen) == 1   # rules cached

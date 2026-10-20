@@ -253,8 +253,9 @@ class BinanceExchange(Exchange):
 
     async def stop(self, side, trigger, client_id) -> dict:
         # closePosition=true: reduce-only by definition, closes whatever remains, auto-cancels when flat.
+        # Off-tick triggers snap TOWARD entry (SELL = long stop → up, BUY = short stop → down): never widens risk.
         p = {"algoType": "CONDITIONAL", "symbol": self.symbol, "side": side, "type": "STOP_MARKET",
-             "triggerPrice": fmt_dec((await self._r()).price(trigger, "down" if side == "SELL" else "up")), "closePosition": "true",
+             "triggerPrice": fmt_dec((await self._r()).price(trigger, "up" if side == "SELL" else "down")), "closePosition": "true",
              "workingType": "MARK_PRICE", "clientAlgoId": client_id}
         return self._norm_algo(await self._req("POST", "/fapi/v1/algoOrder", p))
 

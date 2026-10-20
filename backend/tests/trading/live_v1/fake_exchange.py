@@ -161,7 +161,7 @@ class FakeExchange:
         return dict(o)
 
     async def stop(self, side, trigger, client_id):
-        trigger = self.rules.price(trigger, "down" if side == "SELL" else "up")
+        trigger = self.rules.price(trigger, "up" if side == "SELL" else "down")
         if self.amt == 0:
             raise OrderRejected(-4509, "closePosition can only be used with open positions")
         if (side == "SELL" and self.price <= trigger) or (side == "BUY" and self.price >= trigger):

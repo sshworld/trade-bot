@@ -435,7 +435,7 @@ async def test_binance_adapter_error_mapping():
     post = [c for c in calls if c.url.path == "/fapi/v1/order" and c.method == "POST"][0].url.params
     assert post["newClientOrderId"] == "v1abc" and post["quantity"] == "0.001" and "signature" in post
     algo = [c for c in calls if c.url.path == "/fapi/v1/algoOrder"][0].url.params
-    assert algo["closePosition"] == "true" and algo["triggerPrice"] == "59999.9" and algo["clientAlgoId"] == "v1abcs0"
+    assert algo["closePosition"] == "true" and algo["triggerPrice"] == "60000.0" and algo["clientAlgoId"] == "v1abcs0"   # long stop snaps UP to tick (toward entry)
     await ex.close()
 
 

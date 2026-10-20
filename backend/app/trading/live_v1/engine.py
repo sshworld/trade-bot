@@ -677,10 +677,19 @@ class LiveV1Engine(PaperTradingEngine):
             return False
         ref = book["ask"] if side > 0 else book["bid"]
         wallet = acct["wallet"]                                # qty is risk-sized only: never trimmed to margin
-        stop_frac = float(stop_dist / ref)                    # stop_pct = |entry_ref − stop| / entry_ref
+        # TA: stop rounded to tick TOWARD entry first (long ceil / short floor); size from the ROUNDED distance
+        est_stop = self._stop_price(ref, side, stop_dist)
+        risk_dist = abs(ref - est_stop)
+        if risk_dist <= 0:
+            self._skip("risk_cap", f"rounded stop {est_stop} not beyond entry {ref}")
+            return False
+        stop_frac = float(risk_dist / ref)                    # stop_pct = |entry_ref − rounded stop| / entry_ref
         risk_usdt = wallet * _d(self.v1.risk_pct) / 100
-        qty = rules.floor_qty(risk_usdt / stop_dist)           # round DOWN to LOT_SIZE.stepSize
+        qty = rules.floor_qty(risk_usdt / risk_dist)           # round DOWN to LOT_SIZE.stepSize
         notional = qty * ref
+        if qty * risk_dist > risk_usdt:                        # verify realized price risk ≤ risk_pct (0.5%)
+            self._skip("risk_cap", f"risk {qty * risk_dist:.4f} > {risk_usdt:.4f} USDT")
+            return False
         if qty < rules.min_qty or notional < rules.min_notional:
             self._skip("min_notional", f"qty {qty} {self.v1.symbol} (notional {notional:.2f}) "
                                        f"< minQty {rules.min_qty} / minNotional {rules.min_notional}")
@@ -696,8 +705,7 @@ class LiveV1Engine(PaperTradingEngine):
             self._skip("leverage", f"stop {stop_frac:.2%} not inside {self.v1.liq_buffer_ratio}× "
                                    f"liquidation distance at {lev}x (MMR {mmr})")
             return False
-        est_stop = self._stop_price(ref, side, stop_dist)
-        risk_after = qty * abs(ref - est_stop) + notional * 2 * TAKER_FEE
+        risk_after = qty * risk_dist + notional * 2 * TAKER_FEE   # incl. fees vs max_risk_pct (1%)
         if risk_after > wallet * _d(self.v1.max_risk_pct) / 100:
             self._skip("risk_cap", f"risk after rounding {risk_after:.2f} USDT "
                                    f"> max {self.v1.max_risk_pct}% of {wallet:.2f}")
