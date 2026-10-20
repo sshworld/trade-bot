@@ -246,7 +246,8 @@ async def test_skipped_signals_counted_in_daily_summary(backend):
     eng.gate.clear(S.HEARTBEAT)
     fx.wallet = Decimal("50")
     assert not await eng._enter(1, await backend.stop_dist(), BAR)          # min_notional
-    assert not await eng._enter(1, Decimal("59000"), BAR)                   # leverage (≈98% stop)
+    fx.wallet = Decimal("100000")
+    assert not await eng._enter(1, Decimal("43000"), BAR)                   # leverage (≈72% stop → L 0)
     s = today_summary(eng, kst_date())
     assert s["skipped_signals"] == {"safety_block": 1, "min_notional": 1, "leverage": 1}
     assert s["skipped_total"] == 3

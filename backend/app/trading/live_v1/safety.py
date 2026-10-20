@@ -113,13 +113,24 @@ def liquidation_distance(leverage: int, mmr: float = 0.004) -> float:
     return 1.0 / leverage - mmr
 
 
+def guard_cap(stop_pct: float, mmr: float = 0.004, ratio: float = 0.7, margin: float = 0.001) -> int:
+    """Closed-form leverage that keeps the stop inside ratio × liquidation distance:
+    floor(1 / (stop_pct/ratio + mmr + 0.001))."""
+    return math.floor(1.0 / (stop_pct / ratio + mmr + margin) + 1e-9)
+
+
 def choose_leverage(stop_pct: float, max_leverage: int = 10,
-                    bracket_max_leverage: int | None = None,
+                    bracket_max_leverage: int | None = None, mmr: float = 0.004, ratio: float = 0.7,
                     stop_mult: float = 1.5, buffer: float = 0.005) -> int | None:
-    """Trading Advisor rule: L = min(10, bracket max, floor(1 / (1.5 × stop_pct + 0.005))),
-    stop_pct = |entry_ref − stop| / entry_ref. None when L < 1 → skip (reason 'leverage')."""
-    raw = math.floor(1.0 / (stop_mult * stop_pct + buffer) + 1e-9)
-    lev = min(max_leverage, raw, bracket_max_leverage if bracket_max_leverage is not None else raw)
+    """Trading Advisor rule (rev. 2), one closed-form step, no retry loop:
+    L = min(10, bracket max, floor(1 / (1.5 × stop_pct + 0.005)), guard_cap),
+    stop_pct = |entry_ref − stop| / entry_ref; mmr / bracket max from the tier holding the order notional.
+    None when L < 1 → skip (reason 'leverage')."""
+    caps = [max_leverage, math.floor(1.0 / (stop_mult * stop_pct + buffer) + 1e-9),
+            guard_cap(stop_pct, mmr, ratio)]
+    if bracket_max_leverage is not None:
+        caps.append(bracket_max_leverage)
+    lev = min(caps)
     return lev if lev >= 1 else None
 
 
@@ -143,6 +154,7 @@ SKIP_REASONS = {
     "risk_cap": "리스크한도",
     "leverage": "레버리지",
     "safety_block": "안전차단",
+    "margin": "증거금",
 }
 
 BLOCK_LABELS = {

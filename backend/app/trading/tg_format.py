@@ -86,7 +86,7 @@ def fmt_alert(title: str, detail: str = "", action: str = "") -> str:
 
 
 _SKIP_KR = {"late": "늦음", "min_notional": "최소금액", "risk_cap": "리스크한도",
-            "leverage": "레버리지", "safety_block": "안전차단"}
+            "leverage": "레버리지", "safety_block": "안전차단", "margin": "증거금"}
 
 
 def skip_memo(skipped: dict | None) -> str:

@@ -657,16 +657,39 @@ class LiveV1Engine(PaperTradingEngine):
         ref = book["ask"] if side > 0 else book["bid"]
         wallet, avail = acct["wallet"], acct["available"]
         stop_frac = float(stop_dist / ref)                    # stop_pct = |entry_ref − stop| / entry_ref
-        risk_notional = wallet * _d(self.v1.risk_pct) / 100 / _d(stop_frac)   # notional before caps
-        br = S.bracket_for(self.brackets, risk_notional)
-        mmr = br["mmr"] if br else self.v1.maint_margin_rate
-        lev = S.choose_leverage(stop_frac, self.v1.max_leverage, br["max_lev"] if br else None)
-        if lev is None:
-            self._skip("leverage", f"stop {stop_frac:.2%}: floor(1/(1.5×stop+0.5%)) < 1")
+        risk_usdt = wallet * _d(self.v1.risk_pct) / 100
+        qty = rules.floor_qty(risk_usdt / stop_dist)           # round DOWN to LOT_SIZE.stepSize
+        notional = qty * ref
+        if qty < rules.min_qty or notional < rules.min_notional:
+            self._skip("min_notional", f"qty {qty} {self.v1.symbol} (notional {notional:.2f}) "
+                                       f"< minQty {rules.min_qty} / minNotional {rules.min_notional}")
             return False
-        if not S.liquidation_ok(stop_frac, lev, mmr, self.v1.liq_buffer_ratio):
+        br = S.bracket_for(self.brackets, notional)           # tier holding the ACTUAL order notional
+        mmr = br["mmr"] if br else self.v1.maint_margin_rate
+        lev = S.choose_leverage(stop_frac, self.v1.max_leverage, br["max_lev"] if br else None,
+                                mmr, self.v1.liq_buffer_ratio)
+        if lev is None:
+            self._skip("leverage", f"stop {stop_frac:.2%} (MMR {mmr}): leverage rule < 1")
+            return False
+        if not S.liquidation_ok(stop_frac, lev, mmr, self.v1.liq_buffer_ratio):   # final check
             self._skip("leverage", f"stop {stop_frac:.2%} not inside {self.v1.liq_buffer_ratio}× "
                                    f"liquidation distance at {lev}x (MMR {mmr})")
+            return False
+        est_stop = self._stop_price(ref, side, stop_dist)
+        risk_after = qty * abs(ref - est_stop) + notional * 2 * TAKER_FEE
+        if risk_after > wallet * _d(self.v1.max_risk_pct) / 100:
+            self._skip("risk_cap", f"risk after rounding {risk_after:.2f} USDT "
+                                   f"> max {self.v1.max_risk_pct}% of {wallet:.2f}")
+            return False
+        try:
+            avail = (await self._call(self.ex.account()))["available"]   # fresh, at this moment
+        except ExchangeError as e:
+            logger.error(f"[V1] entry skipped: balance re-check failed: {e}")
+            return False
+        need = notional / lev
+        if need > avail:
+            self._skip("margin", f"required margin {need:.2f} (= {notional:.2f}/{lev}x) "
+                                 f"> available {avail:.2f} USDT")
             return False
         try:
             await self._call(self.ex.set_leverage(lev))
@@ -677,20 +700,6 @@ class LiveV1Engine(PaperTradingEngine):
         if err:
             self._skip("leverage", f"set leverage {lev}x failed: {err}")
             await self._alert(f"레버리지 {lev}x 설정 실패 — 진입 건너뜀", f"{self.v1.symbol} {err}")
-            return False
-        risk_usdt = wallet * _d(self.v1.risk_pct) / 100
-        qty = risk_usdt / stop_dist
-        qty = min(qty, avail * lev / ref)                      # notional ≤ chosen leverage (≤10x) × fresh available
-        qty = rules.floor_qty(qty)                             # round DOWN to LOT_SIZE.stepSize
-        if qty < rules.min_qty or qty * ref < rules.min_notional:
-            self._skip("min_notional", f"qty {qty} {self.v1.symbol} (notional {qty * ref:.2f}) "
-                                       f"< minQty {rules.min_qty} / minNotional {rules.min_notional}")
-            return False
-        est_stop = self._stop_price(ref, side, stop_dist)
-        risk_after = qty * abs(ref - est_stop) + qty * ref * 2 * TAKER_FEE
-        if risk_after > wallet * _d(self.v1.max_risk_pct) / 100:
-            self._skip("risk_cap", f"risk after rounding {risk_after:.2f} USDT "
-                                   f"> max {self.v1.max_risk_pct}% of {wallet:.2f}")
             return False
         cid = f"v1{bar_close_ms}{'L' if side > 0 else 'S'}"
         try:

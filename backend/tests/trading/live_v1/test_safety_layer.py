@@ -70,20 +70,22 @@ def test_autohalt_rules():
 
 
 def test_choose_leverage_ta_rule():
-    # L = min(10, bracket max, floor(1 / (1.5 × stop_pct + 0.005)))
-    assert S.choose_leverage(0.03) == 10                 # floor(20.0) → cap 10
-    assert S.choose_leverage(0.06) == 10                 # floor(10.53)
-    assert S.choose_leverage(0.10) == 6                  # floor(6.45)
-    assert S.choose_leverage(0.20) == 3                  # floor(3.28)
-    assert S.choose_leverage(0.70) is None               # floor(0.95) = 0 → skip
+    # L = min(10, bracket max, floor(1/(1.5×stop+0.005)), floor(1/(stop/0.7 + mmr + 0.001)))
+    for stop, want in ((0.03, 10), (0.06, 10), (0.10, 6), (0.20, 3), (0.70, None)):   # MMR 0.4%
+        assert S.choose_leverage(stop, mmr=0.004) == want, stop
+    assert S.choose_leverage(0.03, mmr=0.02) == 10
+    assert S.choose_leverage(0.06, mmr=0.02) == 9        # guard_cap floor(9.37) lowers 10 → 9
+    assert S.guard_cap(0.06, 0.02) == 9 and S.guard_cap(0.70, 0.004) == 0
     assert S.choose_leverage(0.01, bracket_max_leverage=3) == 3
     assert S.choose_leverage(0.01, max_leverage=5) == 5
 
 
-def test_liquidation_guard_second_check():
-    for f in (0.03, 0.06, 0.10, 0.20):                   # TA rule always passes at tier-1 MMR
-        assert S.liquidation_ok(f, S.choose_leverage(f))
-    assert not S.liquidation_ok(0.06, 10, mmr=0.02)      # 0.7×(10% − 2%) = 5.6% < 6%
+def test_liquidation_guard_final_check_passes():
+    for mmr in (0.004, 0.02):
+        for f in (0.03, 0.06, 0.10, 0.20, 0.5):
+            lev = S.choose_leverage(f, mmr=mmr)
+            assert S.liquidation_ok(f, lev, mmr), (f, mmr, lev)
+    assert not S.liquidation_ok(0.06, 10, mmr=0.02)      # what rev.1 would have skipped
 
 
 def test_bracket_lookup():
@@ -100,16 +102,32 @@ async def test_mmr_from_leverage_bracket_and_fallback():
     fx.brackets = [{"floor": 0.0, "cap": 1e9, "mmr": 0.02, "max_lev": 50}]
     eng, _, _ = await _eng(fx)
     assert eng.brackets[0]["mmr"] == 0.02
-    assert not await eng._enter(1, Decimal("3600"), BAR)  # 6% → TA rule 10x, but 0.7×(10%−2%) < 6% → skip
-    assert fx.amt == 0 and eng.skip_counts(kst_date()) == {"leverage": 1}
+    assert await eng._enter(1, Decimal("3600"), BAR)     # 6% @ MMR 2% → guard_cap 9 → 9x (no skip)
+    assert eng.pos["leverage"] == 9 and eng.pos["mmr"] == 0.02 and fx.lev == 9
     fx2 = FakeExchange(wallet="100000", spread="0")
     ex2 = FaultyExchange(fx2)
     ex2.inject("leverage_brackets", "reject")
     eng2 = LiveV1Engine(ex2, LiveV1Settings(query_delay_s=0, income_interval_s=0))
     await eng2.initialize()
     assert eng2.brackets == []
-    assert await eng2._enter(1, Decimal("3600"), BAR)    # config fallback 0.4% → 10x ok (6% ≤ 6.72%)
+    assert await eng2._enter(1, Decimal("3600"), BAR)    # config fallback 0.4% → 10x
     assert eng2.pos["leverage"] == 10 and eng2.pos["mmr"] == 0.004
+
+
+async def test_tier_selected_by_actual_order_notional():
+    tiers = [{"floor": 0.0, "cap": 5000.0, "mmr": 0.004, "max_lev": 125},
+             {"floor": 5000.0, "cap": 1e9, "mmr": 0.02, "max_lev": 8}]
+    # risk qty 0.0835 BTC (5010 notional, tier 2) floors to 0.083 BTC = 4980 → tier 1
+    fx = FakeExchange(wallet="60120", spread="0")
+    fx.brackets = tiers
+    eng, _, _ = await _eng(fx)
+    assert await eng._enter(1, Decimal("3600"), BAR)
+    assert fx.amt == Decimal("0.083") and eng.pos["mmr"] == 0.004 and fx.lev == 10
+    fx2 = FakeExchange(wallet="100000", spread="0")      # 0.138 BTC = 8280 → tier 2: max 8x, MMR 2%
+    fx2.brackets = tiers
+    eng2, _, _ = await _eng(fx2)
+    assert await eng2._enter(1, Decimal("3600"), BAR)
+    assert eng2.pos["mmr"] == 0.02 and fx2.lev == 8
 
 
 async def test_bracket_max_leverage_caps():
@@ -211,10 +229,17 @@ async def test_sizing_uses_fresh_exchange_balance_and_risk():
     assert Decimal(eng.pos["risk_usdt"]) <= Decimal("10")
 
 
-async def test_leverage_cap_10x():
-    eng, _, fx = await _eng(FakeExchange(wallet="1000", spread="0"), max_risk_pct=2.0)
-    assert await eng._enter(1, Decimal("10"), BAR)       # tiny stop → risk sizing would be 0.5 BTC
-    assert fx.lev == 10 and fx.amt * fx.price <= Decimal("10000")
+async def test_margin_skip_when_available_balance_insufficient():
+    eng, ex, fx = await _eng(FakeExchange(wallet="1000", spread="0"), max_risk_pct=5.0)
+    n_acct = ex.calls["account"]
+    assert not await eng._enter(1, Decimal("10"), BAR)   # tiny stop → 0.5 BTC = 30000 notional, 10x → 3000 > 1000
+    assert fx.amt == 0 and ex.calls["set_leverage"] == 0
+    assert ex.calls["account"] - n_acct == 2             # pre-check + fresh re-read right before the margin check
+    assert eng.skip_counts(kst_date()) == {"margin": 1}
+    from app.trading.tg_format import skip_memo
+    assert skip_memo(eng.skip_counts(kst_date())) == "스킵 1 (증거금 1)"
+    assert await eng._enter(1, Decimal("1800"), BAR)     # 3% stop: 0.002 BTC = 120 notional → 12 margin ok
+    assert fx.lev == 10
 
 
 async def test_no_averaging_or_second_position():
