@@ -5,6 +5,8 @@ import time
 from decimal import Decimal
 
 import httpx
+
+from app.trading.tg_format import kst_date
 import pytest
 
 from app.trading.live_v1 import safety as S
@@ -67,21 +69,21 @@ def test_autohalt_rules():
     assert S.autohalt_reason(D(1000), D(1000), D(0), [D(-10)] * 15 + [D(13)] * 15) is None
 
 
-def test_choose_leverage_keeps_stop_inside_liquidation():
-    # L: 0.7×(1/L − 0.4%) → 10x 6.72%, 9x 7.50%, 5x 13.72%, 4x 17.22%, 3x 23.05%, 2x 34.72%, 1x 69.72%
-    assert S.choose_leverage(0.03) == 10                 # TA cap 10x
-    assert S.choose_leverage(0.07) == 9
-    assert S.choose_leverage(0.1372) == 5
-    assert S.choose_leverage(0.15) == 4
-    assert S.choose_leverage(0.20) == 3
-    assert S.choose_leverage(0.30) == 2
-    assert S.choose_leverage(0.60) == 1
-    assert S.choose_leverage(0.70) is None               # even 1x cannot → skip
+def test_choose_leverage_ta_rule():
+    # L = min(10, bracket max, floor(1 / (1.5 × stop_pct + 0.005)))
+    assert S.choose_leverage(0.03) == 10                 # floor(20.0) → cap 10
+    assert S.choose_leverage(0.06) == 10                 # floor(10.53)
+    assert S.choose_leverage(0.10) == 6                  # floor(6.45)
+    assert S.choose_leverage(0.20) == 3                  # floor(3.28)
+    assert S.choose_leverage(0.70) is None               # floor(0.95) = 0 → skip
     assert S.choose_leverage(0.01, bracket_max_leverage=3) == 3
-    assert S.choose_leverage(0.066, mmr=0.01) == 9       # higher MMR → lower leverage
-    for f in (0.01, 0.05, 0.12, 0.2, 0.4, 0.69):
-        lev = S.choose_leverage(f)
-        assert lev <= 10 and f <= 0.7 * S.liquidation_distance(lev)
+    assert S.choose_leverage(0.01, max_leverage=5) == 5
+
+
+def test_liquidation_guard_second_check():
+    for f in (0.03, 0.06, 0.10, 0.20):                   # TA rule always passes at tier-1 MMR
+        assert S.liquidation_ok(f, S.choose_leverage(f))
+    assert not S.liquidation_ok(0.06, 10, mmr=0.02)      # 0.7×(10% − 2%) = 5.6% < 6%
 
 
 def test_bracket_lookup():
@@ -98,8 +100,8 @@ async def test_mmr_from_leverage_bracket_and_fallback():
     fx.brackets = [{"floor": 0.0, "cap": 1e9, "mmr": 0.02, "max_lev": 50}]
     eng, _, _ = await _eng(fx)
     assert eng.brackets[0]["mmr"] == 0.02
-    assert await eng._enter(1, Decimal("3600"), BAR)     # 6% stop: 10x fails at MMR 2% (5.6%) → 9x (6.38%)
-    assert eng.pos["leverage"] == 9 and eng.pos["mmr"] == 0.02
+    assert not await eng._enter(1, Decimal("3600"), BAR)  # 6% → TA rule 10x, but 0.7×(10%−2%) < 6% → skip
+    assert fx.amt == 0 and eng.skip_counts(kst_date()) == {"leverage": 1}
     fx2 = FakeExchange(wallet="100000", spread="0")
     ex2 = FaultyExchange(fx2)
     ex2.inject("leverage_brackets", "reject")
@@ -110,10 +112,55 @@ async def test_mmr_from_leverage_bracket_and_fallback():
     assert eng2.pos["leverage"] == 10 and eng2.pos["mmr"] == 0.004
 
 
+async def test_bracket_max_leverage_caps():
+    fx = FakeExchange(wallet="100000", spread="0")
+    fx.brackets = [{"floor": 0.0, "cap": 1e9, "mmr": 0.004, "max_lev": 4}]
+    eng, _, _ = await _eng(fx)
+    assert await eng._enter(1, Decimal("1800"), BAR)     # 3% → 10 by rule, bracket max 4
+    assert fx.lev == 4 and eng.pos["leverage"] == 4
+
+
+async def test_leverage_set_and_verified_before_entry():
+    eng, ex, fx = await _eng(FakeExchange(wallet="100000", spread="0"))
+    fx.leverage_readback = 20                            # exchange didn't apply it
+    assert not await eng._enter(1, Decimal("6000"), BAR)
+    assert fx.amt == 0 and any("레버리지 6x 설정 실패" in a for a in eng.alerts)
+    fx.leverage_readback = None
+    ex.inject("set_leverage", "reject")
+    assert not await eng._enter(1, Decimal("6000"), BAR)
+    assert fx.amt == 0 and eng.skip_counts(kst_date()) == {"leverage": 2}
+    assert await eng._enter(1, Decimal("6000"), BAR)     # 10% → 6x, read back OK
+    assert fx.lev == 6 and ex.calls["leverage"] == 2      # read back on every successful set
+
+
+async def test_isolated_margin_set_and_verified_at_startup():
+    eng, ex, fx = await _eng(FakeExchange())
+    assert fx.margin == "ISOLATED" and S.MARGIN not in eng.gate.reasons
+    assert ex.calls["margin_type"] >= 1
+
+
+async def test_isolated_margin_blocked_by_open_position_then_retried():
+    fx = FakeExchange()
+    fx.amt, fx.entry = Decimal("0.01"), Decimal("60000")  # pre-existing cross position
+    ex = FaultyExchange(fx)
+    eng = LiveV1Engine(ex, LiveV1Settings(query_delay_s=0, income_interval_s=0, breach_grace_s=0))
+    await eng.initialize()
+    assert fx.margin == "CROSSED"
+    assert S.MARGIN in eng.gate.reasons and not eng.entries_allowed()
+    assert any("마진 모드 ISOLATED 설정 실패" in a for a in eng.alerts)
+    n = len(eng.alerts)
+    await eng.reconcile_orders()                          # still open → no repeat alert
+    assert len(eng.alerts) == n and S.MARGIN in eng.gate.reasons
+    fx.amt = Decimal("0")                                 # position gone (e.g. closed manually)
+    fx.stops.clear()
+    await eng.reconcile_orders()
+    assert fx.margin == "ISOLATED" and S.MARGIN not in eng.gate.reasons
+
+
 async def test_entry_lowers_leverage_or_skips():
     eng, _, fx = await _eng(FakeExchange(wallet="100000", spread="0"))
     assert await eng._enter(1, Decimal("9000"), BAR)     # 15% stop → 4x
-    assert fx.leverage == 4 and eng.pos["leverage"] == 4
+    assert fx.lev == 4 and eng.pos["leverage"] == 4
     assert fx.amt * fx.price <= Decimal("100000") * 4
     eng2, _, fx2 = await _eng(FakeExchange(wallet="100000"))
     assert not await eng2._enter(1, Decimal("43000"), BAR)   # ~72% stop → skip even at 1x
@@ -167,7 +214,7 @@ async def test_sizing_uses_fresh_exchange_balance_and_risk():
 async def test_leverage_cap_10x():
     eng, _, fx = await _eng(FakeExchange(wallet="1000", spread="0"), max_risk_pct=2.0)
     assert await eng._enter(1, Decimal("10"), BAR)       # tiny stop → risk sizing would be 0.5 BTC
-    assert fx.leverage == 10 and fx.amt * fx.price <= Decimal("10000")
+    assert fx.lev == 10 and fx.amt * fx.price <= Decimal("10000")
 
 
 async def test_no_averaging_or_second_position():
@@ -428,3 +475,23 @@ async def test_adapter_leverage_brackets_signed_and_mark_price():
     q = seen[0].url.params
     assert q["symbol"] == "ETHUSDT" and "signature" in q and seen[0].headers["X-MBX-APIKEY"] == "k"
     assert await ex.mark_price() == Decimal("2501.25")
+
+
+async def test_adapter_margin_type_and_leverage_readback():
+    seen = []
+
+    def handler(req: httpx.Request):
+        seen.append(req)
+        if req.url.path == "/fapi/v1/marginType":
+            return httpx.Response(400, json={"code": -4046, "msg": "No need to change margin type."})
+        if req.url.path == "/fapi/v2/positionRisk":
+            return httpx.Response(200, json=[{"symbol": "ETHUSDT", "positionAmt": "0", "entryPrice": "0",
+                                              "leverage": "6", "marginType": "isolated"}])
+        return httpx.Response(404, json={"code": -1, "msg": "?"})
+
+    ex = BinanceExchange("https://testnet.binancefuture.com", "k", "s", symbol="ETHUSDT",
+                         transport=httpx.MockTransport(handler))
+    await ex.set_margin_type("ISOLATED")                  # -4046 already isolated → no error
+    assert seen[0].method == "POST" and seen[0].url.params["marginType"] == "ISOLATED"
+    assert await ex.margin_type() == "ISOLATED"
+    assert await ex.leverage() == 6

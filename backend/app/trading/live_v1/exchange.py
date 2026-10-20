@@ -111,6 +111,9 @@ class Exchange:
     async def market(self, side: str, qty: Decimal, client_id: str, reduce_only: bool = False) -> dict: ...
     async def stop(self, side: str, trigger: Decimal, client_id: str) -> dict: ...
     async def set_leverage(self, leverage: int) -> None: ...
+    async def leverage(self) -> int: ...                       # read-back from positionRisk
+    async def set_margin_type(self, margin_type: str) -> None: ...   # "ISOLATED" | "CROSSED"
+    async def margin_type(self) -> str: ...                    # read-back: "ISOLATED" | "CROSSED"
     async def get_order(self, client_id: str) -> dict | None: ...
     async def get_stop(self, client_id: str) -> dict | None: ...
     async def cancel_stop(self, stop: dict) -> None: ...
@@ -252,6 +255,27 @@ class BinanceExchange(Exchange):
 
     async def set_leverage(self, leverage: int) -> None:
         await self._req("POST", "/fapi/v1/leverage", {"symbol": self.symbol, "leverage": int(leverage)})
+
+    async def _position_row(self) -> dict:
+        rows = await self._req("GET", "/fapi/v2/positionRisk", {"symbol": self.symbol})
+        for r in rows:
+            if r.get("symbol") == self.symbol:
+                return r
+        raise ExchangeError(f"positionRisk: no row for {self.symbol}")
+
+    async def leverage(self) -> int:
+        return int((await self._position_row())["leverage"])
+
+    async def set_margin_type(self, margin_type: str) -> None:
+        try:
+            await self._req("POST", "/fapi/v1/marginType", {"symbol": self.symbol, "marginType": margin_type})
+        except OrderRejected as e:
+            if e.code != -4046:                       # -4046 "No need to change margin type" = already set
+                raise
+
+    async def margin_type(self) -> str:
+        mt = str((await self._position_row()).get("marginType", "")).lower()
+        return "ISOLATED" if mt == "isolated" else "CROSSED" if mt in ("cross", "crossed") else mt.upper()
 
     async def get_order(self, client_id) -> dict | None:
         try:

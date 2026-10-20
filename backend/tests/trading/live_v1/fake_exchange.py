@@ -37,7 +37,9 @@ class FakeExchange:
         self.incomes: list[dict] = []
         self.accepted = Counter()            # client_id → accepted count
         self.bars: list[dict] = []
-        self.leverage = 20
+        self.lev = 20
+        self.margin = "CROSSED"              # Binance default
+        self.leverage_readback = None        # force a wrong read-back (simulates exchange not applying)
         self.brackets = [{"floor": 0.0, "cap": 50000.0, "mmr": 0.004, "max_lev": 125},
                          {"floor": 50000.0, "cap": 600000.0, "mmr": 0.005, "max_lev": 100},
                          {"floor": 600000.0, "cap": 3000000.0, "mmr": 0.0065, "max_lev": 75}]
@@ -128,7 +130,7 @@ class FakeExchange:
         return [dict(b) for b in self.brackets]
 
     async def account(self):
-        margin = abs(self.amt) * self.price / self.leverage
+        margin = abs(self.amt) * self.price / self.lev
         return {"wallet": self.wallet, "available": self.wallet - margin}
 
     async def position(self):
@@ -173,7 +175,20 @@ class FakeExchange:
         return dict(s)
 
     async def set_leverage(self, leverage):
-        self.leverage = int(leverage)
+        self.lev = int(leverage)
+
+    async def leverage(self):
+        return self.lev if self.leverage_readback is None else self.leverage_readback
+
+    async def set_margin_type(self, margin_type):
+        if margin_type == self.margin:
+            return                                            # real adapter swallows -4046
+        if self.amt != 0 or any(not s.get("close_position") for s in self.stray):
+            raise OrderRejected(-4048, "Margin type cannot be changed if there exists position.")
+        self.margin = margin_type
+
+    async def margin_type(self):
+        return self.margin
 
     async def get_order(self, client_id):
         o = self.orders.get(client_id)

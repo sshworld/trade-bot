@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -13,6 +14,7 @@ API_ERRORS = "api_errors"
 HEARTBEAT = "price_feed_stale"
 UNKNOWN_ORDER = "order_status_unknown"
 LEDGER = "ledger_vs_exchange"
+MARGIN = "margin_mode"
 
 
 @dataclass
@@ -111,15 +113,19 @@ def liquidation_distance(leverage: int, mmr: float = 0.004) -> float:
     return 1.0 / leverage - mmr
 
 
-def choose_leverage(stop_frac: float, max_leverage: int = 10, mmr: float = 0.004,
-                    ratio: float = 0.7, bracket_max_leverage: int | None = None) -> int | None:
-    """Highest leverage ≤ min(max_leverage, bracket max) whose liquidation distance keeps the stop
-    comfortably inside (stop_frac ≤ ratio × (1/L − MMR)). None if even 1x can't → skip the entry."""
-    cap = max_leverage if bracket_max_leverage is None else min(max_leverage, bracket_max_leverage)
-    for lev in range(max(1, cap), 0, -1):
-        if stop_frac <= ratio * liquidation_distance(lev, mmr):
-            return lev
-    return None
+def choose_leverage(stop_pct: float, max_leverage: int = 10,
+                    bracket_max_leverage: int | None = None,
+                    stop_mult: float = 1.5, buffer: float = 0.005) -> int | None:
+    """Trading Advisor rule: L = min(10, bracket max, floor(1 / (1.5 × stop_pct + 0.005))),
+    stop_pct = |entry_ref − stop| / entry_ref. None when L < 1 → skip (reason 'leverage')."""
+    raw = math.floor(1.0 / (stop_mult * stop_pct + buffer) + 1e-9)
+    lev = min(max_leverage, raw, bracket_max_leverage if bracket_max_leverage is not None else raw)
+    return lev if lev >= 1 else None
+
+
+def liquidation_ok(stop_pct: float, leverage: int, mmr: float = 0.004, ratio: float = 0.7) -> bool:
+    """Second check: stop must sit inside ratio × liquidation distance (1/L − MMR)."""
+    return stop_pct <= ratio * liquidation_distance(leverage, mmr)
 
 
 def bracket_for(brackets: list[dict], notional) -> dict | None:
@@ -141,5 +147,5 @@ SKIP_REASONS = {
 
 BLOCK_LABELS = {
     STARTUP: "시작 대조", MISMATCH: "대조 불일치", API_ERRORS: "API 오류", HEARTBEAT: "가격 피드",
-    UNKNOWN_ORDER: "주문 상태 불명", LEDGER: "장부 차이",
+    UNKNOWN_ORDER: "주문 상태 불명", LEDGER: "장부 차이", MARGIN: "마진 모드",
 }

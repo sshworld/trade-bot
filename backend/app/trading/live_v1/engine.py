@@ -250,6 +250,7 @@ class LiveV1Engine(PaperTradingEngine):
             async with self._lock:
                 await self._ensure_rules()
                 await self._reconcile()
+                await self._ensure_isolated()
                 if "live_start_wallet" not in self.meta:
                     acct = await self._call(self.ex.account())
                     self.meta.update(live_start_wallet=str(acct["wallet"]), live_start_ms=_now_ms(),
@@ -260,6 +261,29 @@ class LiveV1Engine(PaperTradingEngine):
         except ExchangeError as e:
             logger.error(f"[V1] startup reconcile failed, entries stay blocked: {e}")
         self._initialized = True
+
+    async def _ensure_isolated(self) -> bool:
+        """ISOLATED margin for the symbol, verified by read-back. Failure → entries blocked + 🚨
+        (retried by the 5s reconcile while flat)."""
+        err = ""
+        try:
+            try:
+                await self._call(self.ex.set_margin_type("ISOLATED"))
+            except OrderRejected as e:                # e.g. -4048 open position / open orders
+                err = str(e)
+            mt = await self._call(self.ex.margin_type())
+        except ExchangeError as e:
+            mt, err = "?", str(e)
+        if mt == "ISOLATED":
+            if S.MARGIN in self.gate.reasons:
+                await self._clear(S.MARGIN)
+            return True
+        if S.MARGIN not in self.gate.reasons:
+            self.gate.block(S.MARGIN, f"margin {mt}")
+            await self._alert("마진 모드 ISOLATED 설정 실패 — 신규 진입 중단",
+                              f"{self.v1.symbol} 현재 {mt} {err[:80]}".strip(),
+                              "포지션/주문 정리 후 자동 재시도")
+        return False
 
     # ── sizing / helpers ───────────────────────────────────
     async def _ensure_rules(self) -> SymbolRules:
@@ -431,6 +455,9 @@ class LiveV1Engine(PaperTradingEngine):
             if self._crossed(mark):
                 await self._breach_guard(mark, source="5s reconcile", locked=True)
                 return
+
+        if amt == 0 and S.MARGIN in self.gate.reasons:
+            await self._ensure_isolated()                       # retry once flat
 
         if amt == 0 and self.pos:
             # position gone on the exchange → stop (or manual) fill
@@ -629,20 +656,27 @@ class LiveV1Engine(PaperTradingEngine):
             return False
         ref = book["ask"] if side > 0 else book["bid"]
         wallet, avail = acct["wallet"], acct["available"]
-        stop_frac = float(stop_dist / ref)
+        stop_frac = float(stop_dist / ref)                    # stop_pct = |entry_ref − stop| / entry_ref
         risk_notional = wallet * _d(self.v1.risk_pct) / 100 / _d(stop_frac)   # notional before caps
         br = S.bracket_for(self.brackets, risk_notional)
         mmr = br["mmr"] if br else self.v1.maint_margin_rate
-        lev = S.choose_leverage(stop_frac, self.v1.max_leverage, mmr, self.v1.liq_buffer_ratio,
-                                br["max_lev"] if br else None)
+        lev = S.choose_leverage(stop_frac, self.v1.max_leverage, br["max_lev"] if br else None)
         if lev is None:
-            self._skip("leverage", f"stop {stop_frac:.2%} not inside {self.v1.liq_buffer_ratio}×"
-                                   f"liquidation distance even at 1x (MMR {mmr})")
+            self._skip("leverage", f"stop {stop_frac:.2%}: floor(1/(1.5×stop+0.5%)) < 1")
+            return False
+        if not S.liquidation_ok(stop_frac, lev, mmr, self.v1.liq_buffer_ratio):
+            self._skip("leverage", f"stop {stop_frac:.2%} not inside {self.v1.liq_buffer_ratio}× "
+                                   f"liquidation distance at {lev}x (MMR {mmr})")
             return False
         try:
             await self._call(self.ex.set_leverage(lev))
+            got = await self._call(self.ex.leverage())
+            err = "" if got == lev else f"read-back {got}x"
         except ExchangeError as e:
-            logger.error(f"[V1] entry skipped: set leverage {lev}x failed: {e}")
+            err = str(e)[:80]
+        if err:
+            self._skip("leverage", f"set leverage {lev}x failed: {err}")
+            await self._alert(f"레버리지 {lev}x 설정 실패 — 진입 건너뜀", f"{self.v1.symbol} {err}")
             return False
         risk_usdt = wallet * _d(self.v1.risk_pct) / 100
         qty = risk_usdt / stop_dist
