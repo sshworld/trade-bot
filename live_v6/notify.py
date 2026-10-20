@@ -22,8 +22,11 @@ class Notifier:
     def __init__(self, token: str | None = None, chat_id: str | None = None, timeout: float = 5.0, post=None,
                  prefix: str = ""):
         self.prefix = prefix                     # e.g. "🧪[TESTNET] " so testnet messages are never mistaken for live
-        self.token = token if token is not None else os.getenv(ENV_TOKEN, "")
-        self.chat_id = chat_id if chat_id is not None else os.getenv(ENV_CHAT, "")
+        # 성헌 2026-10-20: NO Telegram at all outside live mode. Env-configured notifiers are muted unless
+        # LIVE_V6_NETWORK=mainnet; messages (alerts, heartbeat, daily summary) still go to the log (journald).
+        env_ok = os.getenv("LIVE_V6_NETWORK", "testnet") == "mainnet"
+        self.token = token if token is not None else (os.getenv(ENV_TOKEN, "") if env_ok else "")
+        self.chat_id = chat_id if chat_id is not None else (os.getenv(ENV_CHAT, "") if env_ok else "")
         self.timeout = timeout
         self.post = post or _http_post
         self.sent: list[str] = []
