@@ -1,0 +1,22 @@
+{
+ "expected_trades": 266,
+ "engine_trades": 266,
+ "missing": [],
+ "extra": [],
+ "diffs": [],
+ "exit_px_max_abs_diff_ticks": 0.0,
+ "W_entry_max_rel_diff": 6.178453820340549e-16,
+ "research_skipped": 92,
+ "engine_skips": {
+  "min_notional": 92
+ },
+ "skip_set_equal": true,
+ "skip_only_research": [],
+ "skip_only_engine": [],
+ "final_wallet": 370.306575546531,
+ "engine_halted": null,
+ "blocks_at_end": {},
+ "alerts": [],
+ "n_alerts": 0,
+ "exact_match": true
+}

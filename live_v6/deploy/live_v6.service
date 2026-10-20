@@ -1,0 +1,23 @@
+# /etc/systemd/system/live_v6.service — NOT deployed. Install only after TA safety review + 성헌 final OK.
+[Unit]
+Description=live_v6 trade bot (v6 H7)
+After=network-online.target chrony.service
+Wants=network-online.target
+
+[Service]
+User=bot
+WorkingDirectory=/opt/trade-bot
+EnvironmentFile=/etc/live_v6.env
+ExecStart=/opt/trade-bot/.venv/bin/python -m live_v6 run
+Restart=always
+RestartSec=10
+# SIGTERM: stops the loop; exchange-side stops stay in place. SIGKILL is also safe (go-live gate test).
+KillSignal=SIGTERM
+TimeoutStopSec=30
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/live_v6
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

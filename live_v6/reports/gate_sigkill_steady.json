@@ -1,0 +1,71 @@
+{
+ "checked_at_utc": "2026-10-20T07:45:22Z",
+ "host": "https://testnet.binancefuture.com",
+ "positions": [
+  {
+   "symbol": "XRPUSDT",
+   "positionAmt": "628.2",
+   "entryPrice": "1.2964",
+   "markPrice": "1.29640481",
+   "marginType": "isolated",
+   "stops": [
+    {
+     "src": "algo",
+     "side": "SELL",
+     "trigger": "1.2621",
+     "qty": "0.0",
+     "closePosition": true,
+     "reduceOnly": true,
+     "workingType": "MARK_PRICE",
+     "clientId": "v6tXRP1792482303s0"
+    }
+   ],
+   "protected": true,
+   "stop_below_mark": true
+  },
+  {
+   "symbol": "SOLUSDT",
+   "positionAmt": "7.82",
+   "entryPrice": "104.38000000000001",
+   "markPrice": "104.39000000",
+   "marginType": "isolated",
+   "stops": [
+    {
+     "src": "algo",
+     "side": "SELL",
+     "trigger": "101.35",
+     "qty": "0.0",
+     "closePosition": true,
+     "reduceOnly": true,
+     "workingType": "MARK_PRICE",
+     "clientId": "v6tSOL1792482302s0"
+    }
+   ],
+   "protected": true,
+   "stop_below_mark": true
+  },
+  {
+   "symbol": "DOGEUSDT",
+   "positionAmt": "10295",
+   "entryPrice": "0.07919999999999999",
+   "markPrice": "0.07919000",
+   "marginType": "isolated",
+   "stops": [
+    {
+     "src": "algo",
+     "side": "SELL",
+     "trigger": "0.0769",
+     "qty": "0.0",
+     "closePosition": true,
+     "reduceOnly": true,
+     "workingType": "MARK_PRICE",
+     "clientId": "v6tDOGE1792482301s0"
+    }
+   ],
+   "protected": true,
+   "stop_below_mark": true
+  }
+ ],
+ "pass": true,
+ "n_positions": 3
+}
