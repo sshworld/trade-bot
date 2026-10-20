@@ -389,7 +389,7 @@ def test_breach_closes_only_that_position(backend):
     backend.assert_safe()
 
 
-def test_drawdown_15pct_flattens_all_and_halts(backend):
+def test_drawdown_25pct_flattens_all_and_halts(backend):
     """§8c L3(a) / §8e-2: equity ≤ halt_fraction × S0 (−25 %) → flatten ALL + halt."""
     eng = ready(backend)
     opened(backend, eng, SOL)
