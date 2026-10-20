@@ -1,5 +1,6 @@
-"""One end-to-end Telegram check of the real message formats (alert / entry / exit / daily settlement), produced by
-the engine on an in-memory exchange and clearly marked [TESTNET 테스트]. Needs TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID."""
+"""Dry check of the real message formats (alert / entry / exit / daily settlement), produced by the engine on an
+in-memory exchange. NEVER sends to Telegram (non-live mode, user rule): prints them and appends them to the alerts
+log (LIVE_V6_ALERT_LOG, default ./alerts_e2e.jsonl). The one real go-live send is `python -m live_v6 --telegram-check`."""
 import os
 import sys
 import time
@@ -23,7 +24,7 @@ class Capture(Notifier):
     def __init__(self):
         super().__init__("", "")
 
-    def send(self, text):
+    def send(self, text, kind=None, event_ms=None, decision_ms=None):
         self.sent.append(text)
         return True
 
@@ -40,8 +41,8 @@ eng.close("DOGEUSDT", "signal_exit")
 eng.alert("손절 등록 실패 — 이 포지션만 정리", "DOGEUSDT 1111 · 손절 0.14550 · rejected · 다른 포지션 유지")
 day = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
 msgs = [next(m for m in cap.sent if m.startswith(p)) for p in ("🚨", "🟢", "🔵")] + [eng.daily_summary(day)]
-tg = Notifier()
-if not tg.configured:
-    sys.exit("missing env: " + ", ".join(tg.missing_env()))
-ok = [tg.send(TAG + m) for m in msgs]
-print("sent", sum(ok), "of", len(ok))
+tg = Notifier(mode="testnet", log_path=os.getenv("LIVE_V6_ALERT_LOG", "alerts_e2e.jsonl"))   # never live → never sends
+for m in msgs:
+    tg.send(TAG + m)
+    print(TAG + m, end="\n\n")
+print("logged", len(msgs), "messages to", tg.log_path, "(not sent)")

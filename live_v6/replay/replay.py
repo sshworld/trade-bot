@@ -3,8 +3,10 @@ results/v6/trades_H7_100.csv (entries, exits, qty, leverage, wallet at entry) an
 
   python -m live_v6.replay.replay [--order research|default] [--data /workspace/v6replay_data]
 
---order research: simultaneous signals are processed in the backtest's row order (pandas sort tie order);
---order default : the engine's configured order (Settings.entry_order). Differences are reported, not hidden.
+--order research: VALIDATION ONLY — simultaneous signals in the backtest's own per-timestamp row order (an artefact of
+                  pandas' unstable quicksort; not a fixed coin order) → isolates the engine's decision + sizing path;
+--order default : the frozen live order (engine.ENTRY_ORDER, README). Differences are reported, not hidden;
+--order A,B,...  : an explicit fixed coin list (used to show that no fixed order reproduces research exactly).
 --stop-fill research: the mock fills a stop like the backtest (unrounded model stop entry−2·ATR on the 4h bar, time
                       refined to the 1h bar) → isolates the engine's decision + sizing path (target: exact match);
 --stop-fill trigger : the mock fills at the engine's real tick-rounded trigger on the 1h bars (exchange-realistic)."""
@@ -61,6 +63,8 @@ def run(data_dir, order="research", wallet=100.0, quiet=True, stop_fill="researc
             if order == "research":
                 first = tie.get(h, [])
                 eng.cfg.entry_order = tuple(first + [s for s in SIX if s not in first])
+            elif order not in ("default",):
+                eng.cfg.entry_order = tuple(order.split(","))       # explicit fixed coin list
             eng.on_bar_close()
             assert eng.meta["last_bar_close"] == h, f"bar {h} not processed"
         ex.process_hour(h, "post")
@@ -139,7 +143,7 @@ def compare(eng, ex, T_rows):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default="/workspace/v6replay_data")
-    ap.add_argument("--order", default="research", choices=["research", "default"])
+    ap.add_argument("--order", default="research", help="research | default | comma-separated coin list")
     ap.add_argument("--stop-fill", default="research", choices=["research", "trigger"])
     ap.add_argument("--out")
     a = ap.parse_args()

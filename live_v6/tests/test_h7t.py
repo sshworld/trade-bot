@@ -261,3 +261,62 @@ def test_h7t_stale_touch_is_not_entered(offline):
     trig, _ = seed(eng, strat)
     eng.on_event(Trade(DOGE, Decimal(repr(trig)), Decimal(1), now_ms() - 6000))
     assert not entry_calls(offline, DOGE) and eng.meta["skip_log"][-1][2] == "late"
+
+
+# ───────────── TA review item 11: stopped out while the bot was down → model closed as stop-out ─────────────
+def _stopped_while_down(b):
+    """Entry on a touch, process killed, the position is then closed on the exchange (≙ the exchange stop fired
+    while the bot was dead: a reduceOnly SELL of the whole qty), restart → reconcile."""
+    eng, strat = h7t_engine(b)
+    trig, _ = seed(eng, strat)
+    touch(eng, DOGE, trig)
+    ei = strat.state["models"][DOGE]["ei_open"]
+    assert b.amt(DOGE) > 0 and strat.state["models"][DOGE]["pos"] == 1
+    del eng                                                    # bot dead from here on
+    b.inner.market(DOGE, "SELL", b.amt(DOGE), f"v6tso{int(time.time() * 1000)}", True)
+    assert b.amt(DOGE) == 0
+    strat2 = H7T(params=S.Params(h7_min_obs=10 ** 9))
+    eng2 = b.engine(strategy=strat2)
+    eng2.on_bar_close = lambda *a, **k: None
+    eng2.startup()
+    return eng2, strat2, trig, ei
+
+
+def test_h7t_stopped_while_down_closes_model_as_stopout(backend):
+    eng, strat, trig, ei = _stopped_while_down(backend)
+    m = strat.state["models"][DOGE]
+    assert DOGE not in eng.st["pos"] and m["pos"] == 0 and not m["pend_exit"]          # no phantom hold
+    so = strat.state["model_stopouts"][-1]
+    assert so["sym"] == DOGE and so["entry_open"] == ei and so["reason"] == "stop_loss"
+    rec = eng.meta["trades"][-1]
+    assert rec["reason"] == "stop_loss" and rec["model_closed"] == "stop_out" and rec["model_entry_open"] == ei
+    assert not backend.stops(DOGE)                            # our stale stop was cancelled, account flat
+    strat._gap.discard(DOGE)
+    touch(eng, DOGE, trig * 1.001)                             # same 4h bar → no re-entry (research rule)
+    assert len(entry_calls(backend, DOGE)) == 1
+    # next 4h bar: the model is flat → a new touch enters (before the fix the phantom hold blocked it until M20)
+    b = strat.state["bar"][DOGE]
+    b.update(open=b["open"] - H4)                              # ≙ the stop-out bar is now the previous bar
+    strat._bar_ctx[(DOGE, now_ms() // H4 * H4)] = True
+    time.sleep(1.1)                                            # client ids are per second (a new bar ≥ 4h later live)
+    touch(eng, DOGE, trig * 1.001)
+    assert len(entry_calls(backend, DOGE)) == 2 and backend.amt(DOGE) > 0
+    backend.assert_safe()
+
+
+def test_v6h7_live_close_hook_leaves_virtual_hold_alone(offline):
+    """Only the SAME model trade as the closed live journal is closed; a sizing-skip virtual hold (no journal,
+    research semantics) and model exits (signal_exit / model_sync) never touch the model."""
+    from live_v6.strategies.v6_h7 import V6H7
+    st = V6H7()
+    st.state["models"][DOGE] = S.Model(DOGE, pos=1, ei_open=111, sl=1.0).to_dict()
+    eng = offline.engine(strategy=st)
+    assert not st.on_live_closed(DOGE, None, "stop_loss", 0, eng)       # adopted / unknown trade
+    assert not st.on_live_closed(DOGE, 222, "stop_loss", 0, eng)        # a different model trade
+    assert st.state["models"][DOGE]["pos"] == 1
+    eng.st["pos"][DOGE] = {"cid": "v6tX", "qty": "1", "entry_px": "1", "stop_px": "0.9", "model_entry_open": 111}
+    eng.record_close(DOGE, "signal_exit")
+    assert st.state["models"][DOGE]["pos"] == 1                          # model exit path: model owns its state
+    eng.st["pos"][DOGE] = {"cid": "v6tX", "qty": "1", "entry_px": "1", "stop_px": "0.9", "model_entry_open": 111}
+    eng.record_close(DOGE, "stop_breach")                                # L1 safety close → model follows
+    assert st.state["models"][DOGE]["pos"] == 0 and st.state["model_stopouts"][-1]["reason"] == "stop_breach"

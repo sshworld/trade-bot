@@ -133,6 +133,13 @@ class H7T(V6H7):
         return [dict(enter(sym, Decimal(repr(sd)), now), model_id=now, max_age_s=self.max_signal_age_s,
                      signal_px=Decimal(str(ev.price)))]
 
+    def on_live_closed(self, sym, model_entry_open, reason, t_ms, ctx) -> bool:
+        if not super().on_live_closed(sym, model_entry_open, reason, t_ms, ctx):
+            return False
+        b = self._bar(sym, int(t_ms) // H4 * H4)        # research: stopped in a bar → no re-entry in that bar
+        b["stopped"] = True
+        return True
+
     def on_bar_close(self, T, ctx, force=False):
         new = {}
         for sym in ctx.cfg.symbols:

@@ -58,6 +58,21 @@ class V6H7(Strategy):
                 if ctx.closed_bars(sym, "4h", 2):
                     self.state["models"][sym] = self._bootstrap(ctx, sym).to_dict()
 
+    def on_live_closed(self, sym, model_entry_open, reason, t_ms, ctx) -> bool:
+        """TA review item 11: the exchange has no position any more but the model still holds the SAME trade
+        (stopped out while the bot was down / between reconciles, or an L1 safety close) → close it in the model as
+        a stop-out and record it, so the phantom hold does not block new entries until M20. A model hold without a
+        live journal (sizing skip → virtual position, research semantics) is never touched here."""
+        d = self.state["models"].get(sym)
+        if not d or not d.get("pos") or model_entry_open is None or d.get("ei_open") != model_entry_open:
+            return False
+        d.update(pos=0, pend_exit=False)
+        log_ = self.state.setdefault("model_stopouts", [])
+        log_.append({"t": int(t_ms), "sym": sym, "entry_open": model_entry_open, "reason": reason})
+        del log_[:-500]
+        log.warning("%s live position gone (%s) → model trade %s closed as stop-out", sym, reason, model_entry_open)
+        return True
+
     def stop_hint(self, sym):
         m = self.state["models"].get(sym) or {}
         atr = m.get("atr")

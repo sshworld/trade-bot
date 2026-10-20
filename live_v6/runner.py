@@ -11,7 +11,7 @@ import queue
 import signal
 import time
 
-from .engine import Settings, V6Engine
+from .engine import ENTRY_ORDER, Settings, V6Engine
 from .exchange import MAINNET_URL, TESTNET_URL, BinanceREST, ws_base_for
 from .notify import Notifier
 from .store import JsonStore
@@ -25,6 +25,36 @@ def tg_prefix(network: str | None = None) -> str:
     return "" if network == "mainnet" else "🧪[TESTNET·모의] "
 
 
+def tg_mode(network: str | None = None) -> str:
+    """Telegram is hard-disabled unless this is the live (mainnet) bot."""
+    return "live" if (network or os.getenv("LIVE_V6_NETWORK", "testnet")) == "mainnet" else "testnet"
+
+
+def make_notifier(network: str | None = None) -> Notifier:
+    network = network or os.getenv("LIVE_V6_NETWORK", "testnet")
+    path = os.getenv("LIVE_V6_ALERT_LOG", f"/var/lib/live_v6/{network}_alerts.jsonl")
+    return Notifier(prefix=tg_prefix(network), mode=tg_mode(network), log_path=path)
+
+
+def telegram_check(n: Notifier) -> int:
+    """Go-live one-shot: exactly one confirmation message, and only in live mode. Returns the process exit code."""
+    if not n.live:
+        print("telegram-check refused: Telegram is disabled outside live mode (LIVE_V6_NETWORK=mainnet on the live host)")
+        return 2
+    if not n.configured:
+        print("telegram-check: missing env: " + ", ".join(n.missing_env()))
+        return 2
+    ok = n.send("✅ live_v6 텔레그램 연결 확인 (go-live 점검 1회 메시지)", kind="telegram_check")
+    print("sent" if ok else "send failed")
+    return 0 if ok else 1
+
+
+def check_frozen(cfg: Settings) -> None:
+    """Live refuses any simultaneous-signal tie order other than the frozen README list (TA review item 1)."""
+    if tuple(cfg.entry_order) != ENTRY_ORDER:
+        raise SystemExit(f"entry_order {cfg.entry_order} != frozen ENTRY_ORDER {ENTRY_ORDER}")
+
+
 def build(network: str | None = None):
     network = network or os.getenv("LIVE_V6_NETWORK", "testnet")
     if network == "mainnet":
@@ -33,6 +63,7 @@ def build(network: str | None = None):
         url, key, sec = TESTNET_URL, os.environ["BINANCE_TESTNET_API_KEY"], os.environ["BINANCE_TESTNET_API_SECRET"]
     rest = BinanceREST(url, key, sec)          # guard_url refuses mainnet unless explicitly acknowledged
     cfg = Settings(use_streams=True)
+    check_frozen(cfg)
     state = os.getenv("LIVE_V6_STATE", f"/var/lib/live_v6/{network}.json")
     name = os.getenv("LIVE_V6_STRATEGY", "h7t")          # §8d: live v1 = H7-T; "v6_h7" = bar-close entries
     if name == "h7t":
@@ -43,7 +74,7 @@ def build(network: str | None = None):
         raise SystemExit(f"unknown LIVE_V6_STRATEGY {name!r}")
     strat = Strat(params=cfg.params, kline_fetch=cfg.kline_fetch, bootstrap_bars=cfg.bootstrap_bars,
                   daily_fetch=cfg.daily_fetch, funding_lookback_ms=cfg.funding_lookback_ms)
-    eng = V6Engine(rest, cfg, store=JsonStore(state), notifier=Notifier(prefix=tg_prefix(network)), strategy=strat)
+    eng = V6Engine(rest, cfg, store=JsonStore(state), notifier=make_notifier(network), strategy=strat)
     from .deadman import DeadMan
     eng.deadman = DeadMan()                              # env HEARTBEAT_URL; no-op when unset
     return rest, eng

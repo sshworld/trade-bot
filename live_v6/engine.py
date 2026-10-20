@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from . import strategy as S
-from .events import MARKET_EVENTS, AccountUpdate, Mark, OrderUpdate, StreamStatus
+from .events import MARKET_EVENTS, AccountUpdate, Kline, Mark, OrderUpdate, StreamStatus, Trade
 from .strategies.base import DataNotReady
 from .exchange import ExchangeError, ExchangeUnavailable, OrderRejected, WouldTrigger, rules_from_info
 from .notify import Notifier
@@ -33,22 +33,27 @@ from .sizing import SizingParams, size_entry
 log = logging.getLogger("live_v6.engine")
 
 SIX = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT")
+# FROZEN (TA review 57b0888 item 1): processing order of simultaneous bar-close entry signals. It is the order the
+# research portfolio used at its first full 6-coin tie (2023-01-14 00:00 UTC); see README "Simultaneous-signal tie
+# order" for why research itself has no fixed order. The only live setting — never change without a TA review.
+ENTRY_ORDER = ("BTCUSDT", "ETHUSDT", "BNBUSDT", "DOGEUSDT", "XRPUSDT", "SOLUSDT")
 H4 = S.H4_MS
 KST = timezone(timedelta(hours=9))
 
+MODEL_EXITS = ("signal_exit", "model_sync")   # strategy-driven exits: the model is already flat
 REASON_KO = {"stop_loss": "손절", "signal_exit": "M20 채널 청산", "model_sync": "모델 동기화 청산", "stop_breach": "손절 미작동 정리",
              "sl_failed": "손절 등록 실패 정리", "emergency": "비상 전체 정리", "dust_entry": "소액 부분 체결 정리"}
 
 # entry-blocking reasons (transient; cleared automatically when the condition clears)
-STARTUP, MISMATCH, API_ERRORS, UNKNOWN_ORDER, LEDGER, MARGIN, WS_STALE = (
+STARTUP, MISMATCH, API_ERRORS, UNKNOWN_ORDER, LEDGER, MARGIN, WS_STALE, MARKET_STALE = (
     "startup", "reconcile_mismatch", "api_errors", "order_status_unknown", "ledger_vs_exchange", "margin_mode",
-    "stream_stale")
+    "stream_stale", "market_data_stale")
 
 
 @dataclass
 class Settings:
     symbols: tuple = SIX
-    entry_order: tuple = SIX            # processing order of simultaneous signals (open question for TA)
+    entry_order: tuple = ENTRY_ORDER    # FROZEN tie order of simultaneous signals (README); live refuses anything else
     regime_symbol: str = "BTCUSDT"
     min_notional_floor: dict = field(default_factory=lambda: {"BTCUSDT": "100"})   # v6: BTC min order 100 (PM/TA)
     sizing: SizingParams = field(default_factory=SizingParams)
@@ -81,6 +86,7 @@ class Settings:
     income_interval_s: float = 60
     fallback_stop_pct: float = 3.0      # adopting an unknown position when no ATR is available
     use_streams: bool = False           # runner sets True; then stale/down streams block entries
+    market_stale_s: float = 60.0        # TA: no mark / kline / aggTrade (per feed) for > 60 s → block entries + alert
     stream_stale_s: float = 15.0        # no market event for this long → entries blocked (markPrice@1s)
     reconcile_s: float = 5.0            # REST safety net cadence (always on)
     heartbeat_s: float = 4 * 3600       # 💓 Telegram heartbeat cadence
@@ -117,6 +123,7 @@ class V6Engine:
         self._last_ok_reconcile = -1e18
         self.deadman = None                                 # runner attaches deadman.DeadMan (HEARTBEAT_URL)
         self._last_market_ev = self.clock()
+        self._feed_last: dict = {}                          # feed ("mark" / "kline" / "trade") → last event (clock s)
         self._dirty = False
         self._last_reconcile = 0.0
         self.blocks: dict[str, str] = {STARTUP: "startup"}
@@ -144,9 +151,13 @@ class V6Engine:
     def save(self):
         self.store.save(self.st)
 
-    def alert(self, title, detail=""):
+    def alert(self, title, detail="", event_ms=None):
         log.critical("🚨 %s | %s", title, detail)
-        self.tg.alert(title, detail)
+        self.tg.alert(title, detail, event_ms=event_ms, decision_ms=self.now_ms())
+
+    def notify(self, text, kind=None, event_ms=None):
+        """Every Telegram message goes through here (event time vs decision time → alerts log, §TA timeliness)."""
+        self.tg.send(text, kind=kind, event_ms=event_ms, decision_ms=self.now_ms())
 
     def x(self, name, *a, **kw):
         """Exchange call with §8c L0 accounting: a transient error (timeout / 5xx / 429 / 418 / network) pauses NEW
@@ -183,7 +194,7 @@ class V6Engine:
         if self.blocks.pop(reason, None) is not None:
             self._block_since.pop(reason, None)
             if reason in self._block_alerted and self.entries_allowed():
-                self.tg.send(f"✅ 신규 진입 재개 — {reason} 해제")
+                self.notify(f"✅ 신규 진입 재개 — {reason} 해제")
             self._block_alerted.discard(reason)
 
     def check_transient(self):
@@ -192,7 +203,8 @@ class V6Engine:
             if r in self.blocks and r not in self._block_alerted and now - self._block_since.get(r, now) > self.cfg.transient_alert_s:
                 self._block_alerted.add(r)
                 self.alert(f"일시 장애 {self.cfg.transient_alert_s:.0f}초 넘게 지속 — 신규 진입 보류 (정리 안 함)",
-                           f"{r}: {self.blocks[r]} · 거래소 손절 유지")
+                           f"{r}: {self.blocks[r]} · 거래소 손절 유지",
+                           event_ms=int(self._block_since.get(r, now) * 1000))
 
     def entries_allowed(self) -> bool:
         return not self.blocks and not self.meta.get("halted")
@@ -242,7 +254,7 @@ class V6Engine:
             self.save()
             self.blocks.pop(STARTUP, None)
             self.started = True
-            self.tg.send(f"▶️ live_v6 시작 · {self.ex!r} · 포지션 {len(self.st['pos'])}개 · "
+            self.notify(f"▶️ live_v6 시작 · {self.ex!r} · 포지션 {len(self.st['pos'])}개 · "
                          f"{'중단 상태: ' + self.meta['halted'] if self.meta.get('halted') else '진입 가능' if self.entries_allowed() else '진입 차단: ' + ','.join(self.blocks)}")
         except ExchangeError as e:
             log.error("startup failed, entries stay blocked: %s", e)
@@ -387,6 +399,7 @@ class V6Engine:
             return
         if isinstance(ev, MARKET_EVENTS):
             self._last_market_ev = now
+            self._feed_last[self._feed_of(ev)] = now
             if isinstance(ev, Mark):
                 self.marks[ev.sym] = ev.price
                 j = self.st["pos"].get(ev.sym)
@@ -401,6 +414,41 @@ class V6Engine:
             if intents:
                 self.save()                                 # strategy flags (e.g. one entry per bar) before acting
                 self.execute(intents)
+
+    @staticmethod
+    def _feed_of(ev):
+        return "mark" if isinstance(ev, Mark) else "kline" if isinstance(ev, Kline) else "trade" if isinstance(ev, Trade) else "other"
+
+    def expected_feeds(self) -> tuple:
+        s = self.strategy
+        return ("mark",) + (("kline",) if getattr(s, "stream_intervals", ()) else ()) + (("trade",) if getattr(s, "wants_trades", False) else ())
+
+    def market_data_guard(self):
+        """TA staleness guard: any expected market feed silent > market_stale_s → block NEW entries + 🚨 (positions and
+        their exchange stops untouched, no closes — §8c L0); fresh data on every feed → unblock + recovery notice."""
+        if not self.cfg.use_streams:
+            return
+        now = self.clock()
+        for f in self.expected_feeds():
+            self._feed_last.setdefault(f, now)              # grace from start
+        stale = {f: now - t for f, t in self._feed_last.items() if f in self.expected_feeds() and now - t > self.cfg.market_stale_s}
+        if stale:
+            detail = ", ".join(f"{f} {age:.0f}s" for f, age in sorted(stale.items()))
+            if MARKET_STALE not in self.blocks:
+                self.block(MARKET_STALE, detail)
+                self._block_alerted.add(MARKET_STALE)
+                self._block_alerted.add(WS_STALE)           # one alert for the same outage
+                since = min(self._feed_last[f] for f in stale)
+                self.alert(f"시장 데이터 {self.cfg.market_stale_s:.0f}초 넘게 수신 없음 — 신규 진입 차단 (포지션·손절 유지, 정리 안 함)",
+                           detail, event_ms=int(since * 1000))
+            else:
+                self.blocks[MARKET_STALE] = detail
+        elif MARKET_STALE in self.blocks:
+            self.blocks.pop(MARKET_STALE, None)
+            self._block_since.pop(MARKET_STALE, None)
+            self._block_alerted.discard(MARKET_STALE)
+            self.notify(f"✅ 시장 데이터 수신 재개 — {'신규 진입 재개' if self.entries_allowed() else '다른 차단 사유 남음: ' + ','.join(self.blocks)}",
+                        kind="recovery")
 
     def stream_health(self):
         """Entries are blocked while any stream is down or the market stream is silent; REST reconcile carries on."""
@@ -536,12 +584,13 @@ class V6Engine:
             pass
         # partial fill: the unfilled rest is NOT chased; a filled part below min notional is closed at once (no dust)
         if D(j["qty"]) * D(j["entry_px"]) < self.rules[sym].min_notional:
-            self.tg.send(f"⚪ {sym} 부분 체결 {j['qty']} (최소 주문금액 미만) → 즉시 정리")
+            self.notify(f"⚪ {sym} 부분 체결 {j['qty']} (최소 주문금액 미만) → 즉시 정리")
             self.close(sym, "dust_entry")
             return False
         part = f" (부분 체결 {o['executed_qty']}/{sz.qty}, 나머지 취소·추격 안 함)" if o["executed_qty"] < sz.qty else ""
-        self.tg.send(f"🟢 진입 {sym} 롱 · 수량 {j['qty']} · 체결가 {j['entry_px']}{part}\n"
-                     f"손절 {j['stop_px']} · {sz.lev}x · 위험 {D(j['risk_usdt']):.4f} USDT ({sz.risk_pct_used}%)")
+        self.notify(f"🟢 진입 {sym} 롱 · 수량 {j['qty']} · 체결가 {j['entry_px']}{part}\n"
+                     f"손절 {j['stop_px']} · {sz.lev}x · 위험 {D(j['risk_usdt']):.4f} USDT ({sz.risk_pct_used}%)",
+                     kind="entry", event_ms=intent.get("model_id") or intent.get("T"))
         self._slippage_monitor(sym, j, intent)
         return True
 
@@ -561,7 +610,7 @@ class V6Engine:
                     self.alert("진입 슬리피지 가정보다 나쁨 (자동 정지 아님)",
                                f"첫 {len(sl)}건 평균 {mean:.1f}bp vs 가정 {self.cfg.slip_assumed_bp}bp (+{self.cfg.slip_alert_bp}bp 초과)")
                 else:
-                    self.tg.send(f"ℹ️ 첫 {len(sl)}건 진입 슬리피지 평균 {mean:.1f}bp (가정 {self.cfg.slip_assumed_bp}bp)")
+                    self.notify(f"ℹ️ 첫 {len(sl)}건 진입 슬리피지 평균 {mean:.1f}bp (가정 {self.cfg.slip_assumed_bp}bp)")
         self.save()
 
     def _journal_entry(self, sym, intent, o) -> dict:
@@ -820,13 +869,18 @@ class V6Engine:
                "funding": str(funding), "net": str(net), "planned_R": "-1",
                "R": str((net / risk).quantize(Decimal("0.001"))) if risk > 0 else None,
                "source": "exchange" if exit_fills else "estimate"}
+        t_x = max((f["time"] for f in exit_fills), default=self.now_ms())
+        if reason.split(" ")[0] not in MODEL_EXITS:              # exchange stop / safety close, not a model exit
+            if self.strategy.on_live_closed(sym, j.get("model_entry_open"), reason, t_x, self):
+                rec["model_closed"] = "stop_out"
+                self.st["strategy"] = self.strategy.state
         self.meta.setdefault("trades", []).append(rec)
         del self.meta["trades"][:-1000]
         self.save()
-        self.tg.send(f"{'🔴' if net < 0 else '🔵'} 청산 {sym} 롱 · {REASON_KO.get(reason.split(' ')[0], reason)}\n"
+        self.notify(f"{'🔴' if net < 0 else '🔵'} 청산 {sym} 롱 · {REASON_KO.get(reason.split(' ')[0], reason)}\n"
                      f"수량 {j['qty']} · {j['entry_px']} → {xpx:.8g} · 손절 {j['stop_px']}\n"
                      f"순손익 {net:+.4f} USDT" + (f" · {rec['R']}R" if rec["R"] else "")
-                     + f" (수수료 {fees:.4f} · 펀딩 {funding:+.4f})")
+                     + f" (수수료 {fees:.4f} · 펀딩 {funding:+.4f})", kind="exit", event_ms=t_x)
         self.check_halts()
 
     # ───────────────────────── reconcile (exchange → local) ─────────────────────────
@@ -999,7 +1053,7 @@ class V6Engine:
             if pf < self.cfg.pf_review:
                 self.meta["pf_review"] = f"{len(nets)}건 PF {pf:.2f}"
                 self.save()
-                self.tg.send(f"⚠️ 점검 필요: {len(nets)}건 PF {pf:.2f} < {self.cfg.pf_review} (자동 정지 아님)")
+                self.notify(f"⚠️ 점검 필요: {len(nets)}건 PF {pf:.2f} < {self.cfg.pf_review} (자동 정지 아님)")
 
     # ───────────────────────── Telegram reports ─────────────────────────
     def reports(self):
@@ -1010,12 +1064,12 @@ class V6Engine:
             self.meta["settled_day"] = day
             self.meta["day_start_wallet"] = self.meta.get("wallet")
         elif last != day:
-            self.tg.send(self.daily_summary(last))
+            self.notify(self.daily_summary(last))
             self.meta.update(settled_day=day, day_start_wallet=self.meta.get("wallet"))
             self.save()
         if self.clock() - self.meta.get("heartbeat_at", 0) >= self.cfg.heartbeat_s:
             self.meta["heartbeat_at"] = self.clock()
-            self.tg.send(f"💓 작동 중 · 잔고 {D(self.meta.get('wallet', '0')):.2f} USDT · 포지션 {len(self.st['pos'])}개"
+            self.notify(f"💓 작동 중 · 잔고 {D(self.meta.get('wallet', '0')):.2f} USDT · 포지션 {len(self.st['pos'])}개"
                          + (f" · 진입 보류: {','.join(self.blocks)}" if self.blocks else "")
                          + (f" · 중단: {self.meta['halted']}" if self.meta.get("halted") else ""))
             self.save()
@@ -1068,6 +1122,7 @@ class V6Engine:
                 log.error("reconcile failed: %s", e)
                 self.check_api_dead()
         self.stream_health()
+        self.market_data_guard()
         self.check_transient()
         self.reports()
         if self.deadman is not None:

@@ -21,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..engine import SIX, Settings, V6Engine
+from ..engine import ENTRY_ORDER, SIX, Settings, V6Engine
 from ..events import Trade
 from ..notify import NullNotifier
 from ..strategies.h7t import H7T
@@ -121,7 +121,7 @@ def _bar_events(T, eng, strat, ex, m1, tick, clock, seen):
         return (int(a["t"][m]), 2, max(lvl, float(a["o"][m])) + tick[s])
 
     nxt = {s: next_event(s, T) for s in SIX}
-    order = {s: i for i, s in enumerate(SIX)}
+    order = {s: i for i, s in enumerate(ENTRY_ORDER)}     # same-minute ties (none occur in the 355 trades)
     while True:
         cand = [(e[0], e[1], order[s], s, e[2]) for s, e in nxt.items() if e is not None]
         if not cand:

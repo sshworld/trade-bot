@@ -276,3 +276,20 @@ def test_replay_h7t_matches_research_trades():
     eng, ex, _ = RH.run(str(DATA))
     r = RH.compare(eng, ex)
     assert r["exact_match"], {k: r[k] for k in ("missing", "extra")}
+
+
+def test_tie_order_is_frozen_research_list():
+    """TA review item 1: the frozen README list is the default and the only order live accepts."""
+    import re
+    from pathlib import Path
+    import pytest as _pt
+    from live_v6.engine import ENTRY_ORDER, SIX, Settings
+    from live_v6.runner import check_frozen
+    assert ENTRY_ORDER == ("BTCUSDT", "ETHUSDT", "BNBUSDT", "DOGEUSDT", "XRPUSDT", "SOLUSDT")
+    assert Settings().entry_order == ENTRY_ORDER and set(ENTRY_ORDER) == set(SIX)
+    check_frozen(Settings())
+    with _pt.raises(SystemExit):
+        check_frozen(Settings(entry_order=SIX))
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    sec = readme.split("## Simultaneous-signal tie order (FROZEN")[1]
+    assert re.search(r"\n\s+" + re.escape(", ".join(ENTRY_ORDER)) + r"\n", sec)

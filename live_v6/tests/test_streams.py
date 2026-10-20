@@ -8,10 +8,10 @@ from decimal import Decimal
 import pytest
 
 from live_v6 import engine as E
-from live_v6.events import Mark, OrderUpdate, StreamStatus, parse_market, parse_user
+from live_v6.events import Kline, Mark, OrderUpdate, StreamStatus, Trade, parse_market, parse_user
 from live_v6.exchange import TESTNET_WS, ws_base_for, TESTNET_URL, MainnetForbidden
 from live_v6.strategies.base import Strategy, enter
-from live_v6.stream import MarketStream, UserStream
+from live_v6.stream import USER_EVENTS, MarketStream, UserStream, market_url, user_url
 
 from .conftest import unique_T
 
@@ -185,6 +185,100 @@ def test_event_parsers():
     assert isinstance(st, StreamStatus) and not st.up
 
 
+def _kline(sym, t_ms):
+    o = t_ms // 60000 * 60000
+    return Kline(sym, "1m", {"open_time": o, "open": 1, "high": 1, "low": 1, "close": 1, "close_time": o + 59999}, False, t_ms)
+
+
+def _close_orders(b):
+    return [c for c in b.fx.calls if c[0] == "market" and len(c[1]) > 4 and c[1][4]]
+
+
+def test_market_data_stale_60s_blocks_entries_alerts_no_close_and_recovers(offline):
+    """TA staleness guard: mark/kline silent > 60 s → NEW entries blocked + 🚨 (alerts log), positions and their
+    exchange stops untouched (zero closes), fresh data on every feed → unblocked + recovery notice."""
+    clk = Clock()
+    eng = stream_engine(offline, clock=clk)
+    assert eng.expected_feeds() == ("mark", "kline")
+    assert eng.enter(DOGE, offline.stop_dist(), unique_T())
+    stops0 = [o["id"] for o in offline.stops(DOGE)]
+    t_last = clk.t
+    eng.on_event(Mark(DOGE, Decimal("0.15"), int(t_last * 1000)))
+    eng.on_event(_kline(DOGE, int(t_last * 1000)))
+    for _ in range(12):                                     # 60 s of silence: still nothing (> 60 s required)
+        clk.t += 5
+        eng.on_event(StreamStatus("user", True))
+        eng.market_data_guard()
+    assert E.MARKET_STALE not in eng.blocks
+    clk.t += 1
+    eng.tick(force_reconcile=False)
+    assert E.MARKET_STALE in eng.blocks and not eng.entries_allowed()
+    al = [r for r in eng.tg.records if r["type"] == "alert" and "시장 데이터" in r["text"]]
+    assert len(al) == 1 and 60 < al[0]["delay_s"] <= 61.5 and "mark" in al[0]["text"] and "kline" in al[0]["text"]
+    assert not eng.enter("SOLUSDT", offline.stop_dist("SOLUSDT"), unique_T())
+    for _ in range(6):                                      # outage continues: no repeat alert, no close
+        clk.t += 5
+        eng.tick(force_reconcile=False)
+    assert len([r for r in eng.tg.records if "시장 데이터" in r["text"] and r["type"] == "alert"]) == 1
+    assert not _close_orders(offline) and [o["id"] for o in offline.stops(DOGE)] == stops0
+    eng.on_event(Mark(DOGE, Decimal("0.15"), int(clk.t * 1000)))          # mark only → kline still stale
+    eng.tick(force_reconcile=False)
+    assert E.MARKET_STALE in eng.blocks
+    eng.on_event(_kline(DOGE, int(clk.t * 1000)))
+    eng.tick(force_reconcile=False)
+    assert E.MARKET_STALE not in eng.blocks and eng.entries_allowed()
+    assert any(r["type"] == "recovery" and "시장 데이터 수신 재개" in r["text"] for r in eng.tg.records)
+    assert not _close_orders(offline) and not eng.meta.get("halted")
+    offline.assert_safe()
+
+
+def test_market_data_guard_per_feed_includes_aggtrade_for_h7t(offline):
+    from live_v6 import strategy as S
+    from live_v6.strategies.h7t import H7T
+    clk = Clock()
+    eng = offline.engine(use_streams=True, clock=clk, strategy=H7T(params=S.Params(h7_min_obs=10 ** 9)))
+    eng.on_bar_close = lambda *a, **k: None
+    eng.startup()
+    assert eng.expected_feeds() == ("mark", "kline", "trade")
+    eng.market_data_guard()
+    for _ in range(14):                                     # mark + kline flow, aggTrade silent 70 s
+        clk.t += 5
+        eng.on_event(Mark(DOGE, Decimal("0.15"), int(clk.t * 1000)))
+        eng.on_event(_kline(DOGE, int(clk.t * 1000)))
+        eng.market_data_guard()
+    assert E.MARKET_STALE in eng.blocks and "trade" in eng.blocks[E.MARKET_STALE]
+    eng.on_event(Trade(DOGE, Decimal("0.15"), Decimal(1), int(clk.t * 1000)))
+    eng.market_data_guard()
+    assert E.MARKET_STALE not in eng.blocks
+
+
+def test_ws_urls_are_network_specific():
+    """Mainnet: routed /market and /private endpoints (legacy /ws, /stream retired 2026-04-23); testnet: legacy paths."""
+    from live_v6.exchange import MAINNET_WS
+    st = ["dogeusdt@markPrice@1s", "dogeusdt@kline_1m", "dogeusdt@aggTrade"]
+    assert market_url(MAINNET_WS, st) == \
+        "wss://fstream.binance.com/market/stream?streams=dogeusdt@markPrice@1s/dogeusdt@kline_1m/dogeusdt@aggTrade"
+    assert market_url(TESTNET_WS, st) == \
+        "wss://fstream.binancefuture.com/stream?streams=dogeusdt@markPrice@1s/dogeusdt@kline_1m/dogeusdt@aggTrade"
+    assert user_url(MAINNET_WS, "KEY") == ("wss://fstream.binance.com/private/ws?listenKey=KEY&events="
+                                           "ORDER_TRADE_UPDATE/ACCOUNT_UPDATE/ALGO_UPDATE/STRATEGY_UPDATE/"
+                                           "CONDITIONAL_ORDER_TRIGGER_REJECT/listenKeyExpired")
+    assert {"ORDER_TRADE_UPDATE", "ACCOUNT_UPDATE", "listenKeyExpired"} <= set(USER_EVENTS)
+    assert user_url(TESTNET_WS, "KEY") == "wss://fstream.binancefuture.com/ws/KEY"
+    for bad in ("wss://fstream.binance.com/ws", "wss://example.com"):
+        with pytest.raises(ValueError):
+            market_url(bad, st)
+    ms = MarketStream(MAINNET_WS, ["DOGEUSDT"], ("1m",), trades=True)
+    assert ms.url().startswith("wss://fstream.binance.com/market/stream?streams=dogeusdt@markPrice@1s/")
+    assert "/ws/" not in ms.url() and "fstream.binance.com/stream" not in ms.url()
+
+    class R:
+        def listen_key(self):
+            return "LK"
+    assert UserStream(MAINNET_WS, R()).url().startswith("wss://fstream.binance.com/private/ws?listenKey=LK&events=")
+    assert UserStream(TESTNET_WS, R()).url() == "wss://fstream.binancefuture.com/ws/LK"
+
+
 def test_ws_url_guard():
     assert ws_base_for(TESTNET_URL) == TESTNET_WS
     with pytest.raises(MainnetForbidden):
@@ -299,4 +393,52 @@ def test_testnet_overreaction_ws_down_30s(backend):
         ms.stop()
     assert not [c for c in backend.fx.calls if c[0] == "market" and c[1][4]]
     assert not eng.meta.get("halted")
+    backend.assert_safe()
+
+
+@pytest.mark.testnet
+def test_testnet_market_stream_killed_stale_guard(backend):
+    """TA staleness guard on the real TESTNET market stream: stream killed while holding → entries blocked, 🚨 within
+    60–65 s of the last market data, ZERO close orders, exchange stop untouched, resume after recovery."""
+    if backend.kind != "testnet":
+        pytest.skip("testnet only")
+    eng = stream_engine(backend)
+    assert eng.enter(DOGE, backend.stop_dist(), unique_T())
+    stops0 = sorted(o["id"] for o in backend.stops(DOGE))
+    q = queue.Queue()
+
+    def feed_up(ms):
+        ms.start()
+        seen = set()
+        pump(q, eng, lambda e: (seen.add(type(e).__name__) or {"Mark", "Kline"} <= seen), 60)
+    ms = MarketStream(TESTNET_WS, [DOGE], ("1m",), q=q, backoff=(1,))
+    feed_up(ms)
+    eng.tick(force_reconcile=False)
+    assert E.MARKET_STALE not in eng.blocks
+    ms.stop()                                                   # market stream killed (no reconnect)
+    t_last = max(eng._feed_last["mark"], eng._feed_last["kline"])
+    t_block = None
+    while time.time() - t_last < 75:
+        while not q.empty():
+            eng.on_event(q.get())                               # drain the down status
+        eng.tick(force_reconcile=False)
+        if t_block is None and E.MARKET_STALE in eng.blocks:
+            t_block = time.time()
+        time.sleep(0.5)
+    assert t_block is not None and 60 <= t_block - t_last <= 65, (t_block, t_last)
+    al = [r for r in eng.tg.records if r["type"] == "alert" and "시장 데이터" in r["text"]]
+    assert len(al) == 1 and 60 <= al[0]["delay_s"] <= 65, al
+    assert not eng.entries_allowed() and not eng.enter("SOLUSDT", backend.stop_dist("SOLUSDT"), unique_T())
+    assert not _close_orders(backend) and backend.amt(DOGE) > 0
+    assert sorted(o["id"] for o in backend.stops(DOGE)) == stops0          # exchange stop untouched
+    ms2 = MarketStream(TESTNET_WS, [DOGE], ("1m",), q=q, backoff=(1,))
+    try:
+        feed_up(ms2)                                            # recovery: fresh mark + kline
+        eng.on_event(StreamStatus("user", True))
+        eng.tick(force_reconcile=False)
+        assert E.MARKET_STALE not in eng.blocks and eng.entries_allowed(), eng.blocks
+        assert any(r["type"] == "recovery" for r in eng.tg.records)
+    finally:
+        ms2.stop()
+    assert not _close_orders(backend)
     backend.assert_safe()

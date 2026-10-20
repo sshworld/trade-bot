@@ -1,12 +1,12 @@
 {
- "checked_at_utc": "2026-10-20T08:33:16Z",
+ "checked_at_utc": "2026-10-20T09:13:22Z",
  "host": "https://testnet.binancefuture.com",
  "positions": [
   {
    "symbol": "XRPUSDT",
-   "positionAmt": "618.0",
-   "entryPrice": "1.2954",
-   "markPrice": "1.29550000",
+   "positionAmt": "609.5",
+   "entryPrice": "1.2930000000000001",
+   "markPrice": "1.29280489",
    "marginType": "isolated",
    "stops": [
     {
@@ -17,7 +17,7 @@
      "closePosition": true,
      "reduceOnly": true,
      "workingType": "MARK_PRICE",
-     "clientId": "v6tXRP1792485177s0"
+     "clientId": "v6tXRP1792487583s0"
     }
    ],
    "protected": true,
@@ -25,9 +25,9 @@
   },
   {
    "symbol": "SOLUSDT",
-   "positionAmt": "7.70",
-   "entryPrice": "104.18",
-   "markPrice": "104.14000000",
+   "positionAmt": "7.59",
+   "entryPrice": "104.1705138339921",
+   "markPrice": "104.06066611",
    "marginType": "isolated",
    "stops": [
     {
@@ -38,7 +38,7 @@
      "closePosition": true,
      "reduceOnly": true,
      "workingType": "MARK_PRICE",
-     "clientId": "v6tSOL1792485176s0"
+     "clientId": "v6tSOL1792487582s0"
     }
    ],
    "protected": true,
@@ -46,9 +46,9 @@
   },
   {
    "symbol": "DOGEUSDT",
-   "positionAmt": "10129",
-   "entryPrice": "0.07901",
-   "markPrice": "0.07901000",
+   "positionAmt": "9990",
+   "entryPrice": "0.07887999999999999",
+   "markPrice": "0.07888000",
    "marginType": "isolated",
    "stops": [
     {
@@ -59,7 +59,7 @@
      "closePosition": true,
      "reduceOnly": true,
      "workingType": "MARK_PRICE",
-     "clientId": "v6tDOGE1792485175s0"
+     "clientId": "v6tDOGE1792487581s0"
     }
    ],
    "protected": true,

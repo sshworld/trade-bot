@@ -7,6 +7,9 @@ The engine calls (all on one thread, never concurrently):
   on_bar_close(T, ctx, force) scheduled decision at each `decision_interval_ms` boundary T (REST-confirmed bars)
                              → intents; raise DataNotReady to be called again on the next tick.
   stop_hint(sym)             stop distance to use if the engine must adopt an unknown position
+  on_live_closed(sym, model_entry_open, reason, t_ms, ctx)
+                             the LIVE position was closed by the exchange stop / a safety close (not by a strategy
+                             exit) — e.g. stopped out while the bot was down → close the model too (no phantom hold)
 State lives in `self.state` (JSON-serialisable); the engine persists it after each successful call.
 
 Intents (plain dicts) the engine executes today:
@@ -56,6 +59,9 @@ class Strategy:
 
     def on_bar_close(self, T, ctx, force=False) -> list[dict]:
         return []
+
+    def on_live_closed(self, sym, model_entry_open, reason, t_ms, ctx) -> bool:
+        return False
 
     def stop_hint(self, sym):
         return None

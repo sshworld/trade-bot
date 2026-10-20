@@ -16,6 +16,7 @@ import time
 from websockets.sync.client import connect
 
 from .events import StreamStatus, parse_market, parse_user
+from .exchange import MAINNET_WS, TESTNET_WS
 
 log = logging.getLogger("live_v6.stream")
 
@@ -91,13 +92,40 @@ class MarketStream(_WsThread):
             st += [f"{s}@kline_{iv}" for iv in intervals]
             if trades:
                 st.append(f"{s}@aggTrade")
-        self._url = f"{ws_base}/stream?streams={'/'.join(st)}"
+        self._url = market_url(ws_base, st)
 
     def url(self):
         return self._url
 
     def parse(self, msg):
         return parse_market(msg)
+
+
+# Mainnet (since 2026-04-23 the legacy fstream.binance.com/ws and /stream are retired): routed endpoints —
+#   market data  wss://fstream.binance.com/market/stream?streams=a/b/c   (markPrice, kline, aggTrade are "market")
+#   user data    wss://fstream.binance.com/private/ws?listenKey=K&events=E1/E2/...  (no payload without `events`)
+# Testnet (fstream.binancefuture.com) keeps the legacy paths, which still work there.
+USER_EVENTS = ("ORDER_TRADE_UPDATE", "ACCOUNT_UPDATE", "ALGO_UPDATE", "STRATEGY_UPDATE",
+               "CONDITIONAL_ORDER_TRIGGER_REJECT", "listenKeyExpired")
+
+
+def _routed(ws_base: str) -> bool:
+    if ws_base == MAINNET_WS:
+        return True
+    if ws_base == TESTNET_WS:
+        return False
+    raise ValueError(f"unknown websocket base {ws_base!r}")
+
+
+def market_url(ws_base: str, streams) -> str:
+    q = "/".join(streams)
+    return f"{ws_base}/market/stream?streams={q}" if _routed(ws_base) else f"{ws_base}/stream?streams={q}"
+
+
+def user_url(ws_base: str, listen_key: str, events=USER_EVENTS) -> str:
+    if _routed(ws_base):
+        return f"{ws_base}/private/ws?listenKey={listen_key}&events={'/'.join(events)}"
+    return f"{ws_base}/ws/{listen_key}"
 
 
 class UserStream(_WsThread):
@@ -113,7 +141,7 @@ class UserStream(_WsThread):
     def url(self):
         key = self.rest.listen_key()                       # new (or same, refreshed) key on every connect
         self._key_at = time.time()
-        return f"{self.ws_base}/ws/{key}"
+        return user_url(self.ws_base, key)
 
     def parse(self, msg):
         return parse_user(msg)

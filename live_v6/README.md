@@ -46,8 +46,8 @@ $VENV -m live_v6.replay.replay --order research --stop-fill research --out live_
 ```
 
 ## Open questions for TA
-1. Tie order of simultaneous entries: research = pandas sort artefact; replay matches only with it. SIX order gives
-   268 vs 266 trades (halving at ≥3 open cascades). Live default = research order? (currently `entry_order=SIX`).
+1. ~~Tie order~~ → resolved by TA review (57b0888), see "Simultaneous-signal tie order (FROZEN)" below. Note: the
+   research order is not a fixed coin order, so the frozen list reproduces research up to 2025-04-23 only.
 2. Exchange stop = rounded trigger on MARK_PRICE vs backtest raw stop on last-price lows (trigger-fill replay: same 266
    trades, 14 qty diffs, 1 exit-time diff, final wallet 370.52 vs 370.31).
 3. Skip label `liq_guard` (spec) vs `leverage` (old code); BTC min notional floor 100 (v6) vs exchange 50.
@@ -60,10 +60,30 @@ $VENV -m live_v6.replay.replay --order research --stop-fill research --out live_
    unrealised. Confirm sizing should not use unrealised equity.
 10. H7-T latency: touch → MARKET fill measured 2.6 s on testnet from this box (≈ 8 REST pre-checks incl. the fresh
     placement-gate read and the pre-armed stop); from a Tokyo VPS this should be ≪ 1 s. Slippage monitor alerts if worse.
-11. H7-T entry bar: if the bot misses the post-entry trades (down), the model skips the entry-bar stop check (the real
-    position is protected by its exchange stop; the model may then hold a virtual position until M20).
+11. ~~Phantom model hold~~ → fixed (TA review 57b0888): when reconcile finds the exchange flat but the journal + model
+    still hold the same trade (stopped out while the bot was down), the model trade is closed as a stop-out and
+    recorded (`strategy.state.model_stopouts`, trade record `model_closed: stop_out`); H7-T also marks that 4h bar
+    `stopped` (no re-entry in it). Sizing-skip virtual holds (no live journal) stay untouched (research semantics).
 12. H7-T backtest MDD (MTM) 27.7 % > the 25 % halt: a live halt is possible inside the backtest history (the realised-only
     replay did not trigger it).
+
+## Simultaneous-signal tie order (FROZEN — TA review 57b0888, do not change without TA review)
+When several symbols signal at the same 4h close (v6 H7 bar-close entries), they are sized and placed in this order:
+
+    BTCUSDT, ETHUSDT, BNBUSDT, DOGEUSDT, XRPUSDT, SOLUSDT
+
+`engine.ENTRY_ORDER`; it is the `Settings.entry_order` default and `runner.check_frozen` refuses to start live with
+anything else. Why this list: the research portfolio (`research/v6.py::portfolio`) sorts the concatenated trades with
+pandas' default (unstable) quicksort, so its tie order is a per-timestamp artefact, not a fixed coin order — e.g. the
+two full 6-coin ties are BTC,ETH,BNB,DOGE,XRP,SOL (2023-01-14 00:00 UTC) and SOL,BNB,XRP,DOGE,ETH,BTC
+(2025-04-23 00:00 UTC); with same-side halving at ≥3 open positions they need opposite coins halved, so no fixed list
+can reproduce both. The frozen list is the research order of the first 6-coin tie: the replay with it matches the
+research trades exactly up to 2025-04-23 and ends at 268 vs 266 trades (2 extra: ETH 2025-04-23 00:00 UTC, BTC
+2025-06-29 12:00 UTC, which research skipped for min-notional after halving), final wallet 369.81 vs 370.31 USDT.
+Every other tested fixed list (SIX and the 4 lists closest to research) diverges from 2023-01-14 already (216 qty
+diffs). `replay --order research` (per-timestamp research order) stays as a validation-only harness: 266/266 exact.
+H7-T (the live strategy) enters on websocket touches one event at a time → ties are resolved by arrival; the 355
+research H7-T trades contain no simultaneous entries, so this order does not affect H7-T.
 
 ## H7-T live (§8d) — `LIVE_V6_STRATEGY=h7t` (default)
 - `strategies/h7t.py`: entry on the first websocket aggTrade ≥ prior-55-bar high + 1 tick inside the running 4h bar,
@@ -79,6 +99,22 @@ since start (transfers excluded); margin guard: margin in use + new margin ≤ s
 strategy equity (incl. unrealised, income TRANSFER rows excluded; a breach forces a fresh transfer sync first) ≤
 `halt_fraction` (0.75) × C0. `halt_fraction` is the single source of truth (also §8c L3(a)).
 
+## Websocket endpoints (network-specific, `stream.market_url` / `stream.user_url`)
+- Mainnet: legacy `fstream.binance.com/ws` and `/stream` were retired on 2026-04-23 → market data
+  `wss://fstream.binance.com/market/stream?streams=…` (markPrice@1s, kline, aggTrade), user data
+  `wss://fstream.binance.com/private/ws?listenKey=K&events=ORDER_TRADE_UPDATE/ACCOUNT_UPDATE/ALGO_UPDATE/STRATEGY_UPDATE/CONDITIONAL_ORDER_TRIGGER_REJECT/listenKeyExpired`
+  (no payload without `events`).
+- Testnet (`fstream.binancefuture.com`): legacy `/stream?streams=…` and `/ws/<listenKey>` (still work there).
+- `tools/ws_check_mainnet.py --minutes N`: READ-ONLY mainnet check of those URLs (6 coins markPrice@1s + kline_1m and
+  the user stream; only listenKey create/keepalive, never deleted, no orders) → message counts / max gaps. Run on the
+  VPS (the box is geo-blocked).
+
+## Market-data staleness guard (TA)
+Per feed the strategy subscribes (mark, kline; + aggTrade for H7-T): silent > `market_stale_s` (60 s) → block NEW
+entries (`market_data_stale`) + one 🚨 (alerts log; Telegram only in live mode). Positions and their exchange stops are
+untouched, nothing is closed (§8c L0). Fresh data on every feed → unblocked + ✅ recovery notice. (The 15 s
+`stream_stale` pause stays as the fast L0 entry pause.)
+
 ## Dead-man heartbeat
 `HEARTBEAT_URL` (e.g. healthchecks.io): GET every 60 s while healthy (started, not halted, REST reconcile OK in the
 last 15 s, no unprotected position). Unset → no-op.
@@ -87,4 +123,12 @@ last 15 s, no unprotected position). Unset → no-op.
 Env `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (both required; without them messages are only logged).
 Messages (Korean): 🚨 incidents · 🟢 entry (symbol, side, qty, fill, stop, leverage, risk) · 🔵/🔴 exit (reason, qty,
 entry → exit, stop, net PnL, R, fees, funding) · 📊 daily settlement at 00:00 KST · 💓 heartbeat every 4 h.
-`python -m live_v6 tgtest` sends one real test message.
+**Only the live (mainnet) bot ever sends to Telegram** (`Notifier.mode == "live"`, set by `runner.tg_mode` only for
+`LIVE_V6_NETWORK=mainnet`; the default mode is not live). Testnet, tests, replay and tools never call the Telegram API,
+even with the env vars set. Every message that would be sent is appended to the alerts log
+(`LIVE_V6_ALERT_LOG`, default `/var/lib/live_v6/<network>_alerts.jsonl`; also written in live mode) — one JSON line:
+`event_ts` (what triggered it: touch/signal for entries, exit fill for exits, fault start for transient alerts,
+else = decision), `decision_ts` (engine clock when it decided to send), `delay_s`, `type` (alert/entry/exit/daily/
+heartbeat/start/resume/…), `mode`, `sent`, full `text`.
+Go-live: `LIVE_V6_NETWORK=mainnet python -m live_v6 --telegram-check` sends ONE confirmation message (refuses in
+any other mode). `tools/tg_e2e.py` only prints/logs the message set (never sends).

@@ -14,11 +14,15 @@ sudo install -m 600 -o bot /dev/null /etc/live_v6.env   # then edit (never commi
 #   LIVE_V6_NETWORK=testnet                        # mainnet only with LIVE_V6_MAINNET_ACK=real-money
 #   BINANCE_TESTNET_API_KEY=…  BINANCE_TESTNET_API_SECRET=…     (mainnet: BINANCE_API_KEY / BINANCE_API_SECRET)
 #   TELEGRAM_BOT_TOKEN=…  TELEGRAM_CHAT_ID=…   HEARTBEAT_URL=https://hc-ping.com/<uuid>   (optional)
+#     (Telegram is only ever used when LIVE_V6_NETWORK=mainnet; testnet writes the would-be messages to
+#      LIVE_V6_ALERT_LOG, default /var/lib/live_v6/<network>_alerts.jsonl)
 #   LIVE_V6_STRATEGY=h7t
 #   LIVE_V6_STATE=/var/lib/live_v6/state.json
 sudo -u bot env $(sudo cat /etc/live_v6.env | xargs) .venv/bin/python -m live_v6 check   # read-only: wallet + positions
 sudo cp live_v6/deploy/live_v6.service /etc/systemd/system/ && sudo systemctl daemon-reload
 sudo systemctl enable --now live_v6 && journalctl -u live_v6 -f
 ```
+Go-live checks (mainnet host): `.venv/bin/python live_v6/tools/ws_check_mainnet.py --minutes 10` (read-only, new
+routed ws URLs) and `LIVE_V6_NETWORK=mainnet .venv/bin/python -m live_v6 --telegram-check` (ONE confirmation message).
 Operations: `python -m live_v6 status` (halt reason, positions, skips) · `python -m live_v6 resume` clears a halt
 after review · testnet first for ≥ 1 full 4h cycle on the VPS · back up `/var/lib/live_v6/state.json`.
