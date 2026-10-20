@@ -111,11 +111,35 @@ def liquidation_distance(leverage: int, mmr: float = 0.004) -> float:
     return 1.0 / leverage - mmr
 
 
-def choose_leverage(stop_frac: float, max_leverage: int = 5, mmr: float = 0.004,
-                    ratio: float = 0.7) -> int | None:
-    """Highest leverage ≤ max_leverage whose liquidation distance keeps the stop comfortably inside
-    (stop_frac ≤ ratio × liq_dist). None if even 1x cannot satisfy it → skip the entry."""
-    for lev in range(max(1, min(max_leverage, 5)), 0, -1):
+def choose_leverage(stop_frac: float, max_leverage: int = 10, mmr: float = 0.004,
+                    ratio: float = 0.7, bracket_max_leverage: int | None = None) -> int | None:
+    """Highest leverage ≤ min(max_leverage, bracket max) whose liquidation distance keeps the stop
+    comfortably inside (stop_frac ≤ ratio × (1/L − MMR)). None if even 1x can't → skip the entry."""
+    cap = max_leverage if bracket_max_leverage is None else min(max_leverage, bracket_max_leverage)
+    for lev in range(max(1, cap), 0, -1):
         if stop_frac <= ratio * liquidation_distance(lev, mmr):
             return lev
     return None
+
+
+def bracket_for(brackets: list[dict], notional) -> dict | None:
+    """Leverage bracket (from /fapi/v1/leverageBracket) covering `notional`."""
+    n = float(notional)
+    for b in sorted(brackets, key=lambda b: b["floor"]):
+        if b["floor"] <= n < b["cap"]:
+            return b
+    return max(brackets, key=lambda b: b["floor"]) if brackets else None
+
+
+SKIP_REASONS = {
+    "late": "늦음",
+    "min_notional": "최소금액",
+    "risk_cap": "리스크한도",
+    "leverage": "레버리지",
+    "safety_block": "안전차단",
+}
+
+BLOCK_LABELS = {
+    STARTUP: "시작 대조", MISMATCH: "대조 불일치", API_ERRORS: "API 오류", HEARTBEAT: "가격 피드",
+    UNKNOWN_ORDER: "주문 상태 불명", LEDGER: "장부 차이",
+}

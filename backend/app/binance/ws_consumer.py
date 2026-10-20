@@ -57,6 +57,10 @@ class BinanceWSConsumer:
             f"{self.symbol}@kline_{iv}" for iv in self.KLINE_INTERVALS
         )
         streams = f"{self.symbol}@aggTrade/{kline_streams}"
+        # live v1: mark price of the CONFIGURED symbol drives the heartbeat + stop-breach guard
+        live_sym = getattr(getattr(trading_engine, "v1", None), "symbol", None)
+        if live_sym:
+            streams += f"/{live_sym.lower()}@markPrice@1s"
         url = f"{WS_BASE_URL}/stream?streams={streams}"
 
         tick_worker = asyncio.create_task(self._process_ticks())
@@ -93,6 +97,14 @@ class BinanceWSConsumer:
         msg = json.loads(raw_msg)
         data = msg.get("data", {})
         event_type = data.get("e")
+
+        if event_type == "markPriceUpdate":
+            if hasattr(trading_engine, "on_mark_price"):
+                try:
+                    await trading_engine.on_mark_price(data["s"], Decimal(data["p"]))
+                except Exception as e:
+                    logger.error(f"mark price handling error: {e}")
+            return
 
         if event_type == "aggTrade":
             self._tick_count += 1

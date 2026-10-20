@@ -42,7 +42,7 @@ class LiveV1Settings(BaseModel):
     risk_pct: float = 0.5                # % of fresh exchange wallet per trade
     max_risk_pct: float = 1.0            # skip if risk after rounding (+ round-trip taker fees) exceeds this
     rules_refresh_s: float = 86400.0     # exchangeInfo filters cache (refresh daily)
-    max_leverage: int = 5
+    max_leverage: int = 10               # TA review: cap 10x (liquidation guard below still applies)
     interval: str = "4h"
     kline_limit: int = 1000              # ATR warm-up ≫ 14 bars → converged to research values
     act_window_s: int = 900              # entries only within 15 min after bar close
@@ -60,7 +60,8 @@ class LiveV1Settings(BaseModel):
     autohalt_dd_pct: float = 15.0
     autohalt_pf: float = 0.8
     autohalt_pf_after: int = 30
-    maint_margin_rate: float = 0.004     # BTCUSDT tier-1 MMR
+    maint_margin_rate: float = 0.004     # fallback only; per-symbol MMR comes from /fapi/v1/leverageBracket
+    breach_grace_s: float = 1.0          # after mark crosses the stop, give the exchange stop this long to fire
     liq_buffer_ratio: float = 0.7        # stop distance ≤ 0.7 × liquidation distance
     fallback_stop_pct: float = 3.0       # only if ATR is unavailable when adopting an unknown position
 
@@ -96,6 +97,9 @@ class LiveV1Engine(PaperTradingEngine):
         self._initialized = False
         self._autohalted = False
         self.rules: SymbolRules | None = None
+        self.brackets: list[dict] = []
+        self.last_mark: Decimal | None = None
+        self._breach_task: asyncio.Task | None = None
         self._rules_at = 0.0
         self.settings.max_leverage = self.v1.max_leverage
 
@@ -121,8 +125,7 @@ class LiveV1Engine(PaperTradingEngine):
                                   f"{self.breaker.n}회 연속 실패", "기존 손절 유지 · 복구 시 자동 재개")
             raise
         if self.breaker.success():
-            self.gate.clear(S.API_ERRORS)
-            logger.warning("[V1] API errors recovered → entries re-enabled (if no other block)")
+            await self._clear(S.API_ERRORS)
         return r
 
     def _save_meta(self):
@@ -134,23 +137,110 @@ class LiveV1Engine(PaperTradingEngine):
     def entries_allowed(self) -> bool:
         return self.gate.allowed() and not self.anomaly_detector.is_halted()
 
+    async def _clear(self, reason: str, notify: bool = True) -> bool:
+        """Clear a safety block; if entries are now allowed, push one line saying which block cleared."""
+        if not self.gate.clear(reason):
+            return False
+        logger.warning(f"[V1] block cleared: {reason}")
+        if notify and self.entries_allowed():
+            try:
+                await self.alert_sender.send_text(f"✅ 신규 진입 재개 — {S.BLOCK_LABELS.get(reason, reason)} 해제")
+            except Exception as e:
+                logger.error(f"[V1] resume notice failed: {e}")
+        return True
+
+    def _skip(self, reason: str, detail: str = ""):
+        """Count a skipped entry signal per KST day and reason (→ daily summary / Notion)."""
+        from app.trading.tg_format import kst_date
+        day = kst_date()
+        skips = self.meta.setdefault("skips", {})
+        for d in sorted(d for d in skips if d < day)[:-7]:    # keep ~a week
+            skips.pop(d, None)
+        skips.setdefault(day, {})
+        skips[day][reason] = skips[day].get(reason, 0) + 1
+        self._save_meta()
+        logger.warning(f"[V1] entry skipped ({reason}): {detail}")
+
+    def skip_counts(self, date: str) -> dict:
+        return dict((self.meta.get("skips") or {}).get(date, {}))
+
     # ── PaperTradingEngine hooks (legacy strategy C disabled) ──
     async def on_signal(self, signal: dict, current_price: Decimal):
         return None
 
     async def on_price_update(self, price: Decimal) -> list[dict]:
-        self._last_price = price
+        """BTCUSDT aggTrade feed (chart/analysis). Not the v1 heartbeat — see on_mark_price."""
+        return []
+
+    async def on_mark_price(self, symbol: str, mark: Decimal):
+        """Mark-price stream of the CONFIGURED symbol: heartbeat + immediate stop-breach guard."""
+        if symbol.upper() != self.v1.symbol.upper():
+            return
+        self.last_mark = mark
+        self._last_price = mark
         self.hb.price_tick()
         self.anomaly_detector.record_price_update(_now_ms())
-        return []
+        if self._crossed(mark) and (self._breach_task is None or self._breach_task.done()):
+            self._breach_task = asyncio.create_task(self._breach_guard(mark, source="mark stream"))
+
+    def _crossed(self, mark: Decimal | None) -> bool:
+        if not self.pos or mark is None or not self.pos.get("stop_px"):
+            return False
+        stop = _d(self.pos["stop_px"])
+        return mark <= stop if self.pos["side"] > 0 else mark >= stop
+
+    async def _breach_guard(self, mark: Decimal, source: str, locked: bool = False):
+        """Mark crossed the model stop. If the exchange STILL shows the position after a short grace
+        (exchange stop missing / not fired), close it now with a reduce-only market order, halt, 🚨."""
+        if self.v1.breach_grace_s > 0:
+            await asyncio.sleep(self.v1.breach_grace_s)
+        if locked:
+            await self._breach_close(mark, source)
+        else:
+            async with self._lock:
+                await self._breach_close(mark, source)
+
+    async def _breach_close(self, mark: Decimal, source: str):
+        if not self.pos:
+            return
+        try:
+            p = await self._call(self.ex.position())
+        except ExchangeError as e:
+            logger.error(f"[V1] breach check: position read failed: {e}")
+            return
+        if p["amt"] == 0:
+            await self._record_close("stop_loss")              # exchange stop fired normally
+            return
+        stop = self.pos["stop_px"]
+        cid = f"{self.pos['cid']}b"                            # one breach close per position
+        self.anomaly_detector.set_manual_halt("v1 stop breached, exchange stop did not fire")
+        try:
+            book = await self._call(self.ex.book())
+            self.pos["exit_ref"] = str(book["bid"] if p["amt"] > 0 else book["ask"])
+            o = await self._submit_market(close_side(p["amt"]), abs(p["amt"]), cid, reduce_only=True)
+            self.pos["exit_order_id"] = (o or {}).get("id")
+        except ExchangeError as e:
+            logger.error(f"[V1] breach close order error: {e}")
+        await self._alert("손절가 돌파 — 즉시 시장가 청산 + 매매 중단",
+                          f"mark {mark} vs 손절 {stop} ({source}) · 거래소 손절 미작동",
+                          "확인 후 /resume")
+        try:
+            p2 = await self._call(self.ex.position())
+            if p2["amt"] == 0:
+                for so in await self._call(self.ex.open_orders()):
+                    if so["close_position"] or so["reduce_only"]:
+                        await self._call(self.ex.cancel_stop(so))
+                await self._record_close("stop_breach")
+        except ExchangeError as e:
+            logger.error(f"[V1] breach close verify failed (next reconcile retries): {e}")
 
     async def check_heartbeat(self):
         if not self.hb.price_ok():
             if self.gate.block(S.HEARTBEAT):
                 await self._alert("하트비트 끊김 (가격 피드)", f"{self.hb.price_stale_s:.0f}초 이상 가격 없음",
                                   "신규 진입 중단 · 거래소 손절 유지")
-        elif self.gate.clear(S.HEARTBEAT):
-            logger.warning("[V1] price feed recovered")
+        else:
+            await self._clear(S.HEARTBEAT)
 
     # ── startup ────────────────────────────────────────────
     async def initialize(self):
@@ -166,7 +256,7 @@ class LiveV1Engine(PaperTradingEngine):
                                      ledger_balance=str(acct["wallet"]), income_cursor=_now_ms(),
                                      net_transfers="0")
                     self._save_meta()
-                self.gate.clear(S.STARTUP)
+                await self._clear(S.STARTUP, notify=False)
         except ExchangeError as e:
             logger.error(f"[V1] startup reconcile failed, entries stay blocked: {e}")
         self._initialized = True
@@ -179,6 +269,11 @@ class LiveV1Engine(PaperTradingEngine):
                 self.rules = await self._call(self.ex.symbol_rules())
                 self._rules_at = time.time()
                 logger.info(f"[V1] symbol rules {self.rules}")
+                try:
+                    self.brackets = await self._call(self.ex.leverage_brackets()) or self.brackets
+                except ExchangeError as e:
+                    logger.warning(f"[V1] leverageBracket unavailable → MMR fallback "
+                                   f"{self.v1.maint_margin_rate}: {e}")
             except ExchangeError:
                 if self.rules is None:
                     raise
@@ -312,7 +407,7 @@ class LiveV1Engine(PaperTradingEngine):
                 await self._ensure_rules()
                 await self._reconcile()
                 if S.STARTUP in self.gate.reasons:
-                    self.gate.clear(S.STARTUP)
+                    await self._clear(S.STARTUP)
                 await self._check_ledger()
             except ExchangeError as e:
                 logger.error(f"[V1] reconcile failed: {e}")
@@ -326,6 +421,16 @@ class LiveV1Engine(PaperTradingEngine):
         self.account.equity = acct["wallet"]
         amt = p["amt"]
         mismatch: list[str] = []
+
+        if amt != 0 and self.pos:
+            try:
+                mark = await self._call(self.ex.mark_price())
+                self.last_mark = mark
+            except ExchangeError:
+                mark = None
+            if self._crossed(mark):
+                await self._breach_guard(mark, source="5s reconcile", locked=True)
+                return
 
         if amt == 0 and self.pos:
             # position gone on the exchange → stop (or manual) fill
@@ -370,9 +475,8 @@ class LiveV1Engine(PaperTradingEngine):
         else:
             self._consistent_streak += 1
             if self._consistent_streak >= 2:
-                if self.gate.clear(S.MISMATCH):
-                    logger.warning("[V1] reconcile consistent ×2 → mismatch block cleared")
-                self.gate.clear(S.UNKNOWN_ORDER)
+                await self._clear(S.MISMATCH)
+                await self._clear(S.UNKNOWN_ORDER)
         save_account(self.account)
 
     async def _adopt(self, p: dict, keep_stop: bool = False):
@@ -453,7 +557,7 @@ class LiveV1Engine(PaperTradingEngine):
                                   "확인 후 /resume")
         else:
             self._ledger_strikes = 0
-            self.gate.clear(S.LEDGER)
+            await self._clear(S.LEDGER)
         await self._check_autohalt()
 
     async def _check_autohalt(self):
@@ -500,13 +604,13 @@ class LiveV1Engine(PaperTradingEngine):
             await self._exit("signal_exit" if st.pend_exit else "model_sync")
         if st.pend_entry and allowed_side(st.pend_entry, self.v1.direction):
             if late:
-                logger.warning(f"[V1] entry signal skipped: bar closed {(now - last['close_time']) / 1000:.0f}s ago")
+                self._skip("late", f"bar closed {(now - last['close_time']) / 1000:.0f}s ago")
             else:
                 await self._enter(st.pend_entry, _d(st.pend_stop_dist), last["close_time"])
 
     async def _enter(self, side: int, stop_dist: Decimal, bar_close_ms: int) -> bool:
         if not self.entries_allowed():
-            logger.warning(f"[V1] entry blocked: {self.gate.reasons or 'halted'}")
+            self._skip("safety_block", str(self.gate.reasons or "halted"))
             return False
         try:
             p = await self._call(self.ex.position())
@@ -526,11 +630,14 @@ class LiveV1Engine(PaperTradingEngine):
         ref = book["ask"] if side > 0 else book["bid"]
         wallet, avail = acct["wallet"], acct["available"]
         stop_frac = float(stop_dist / ref)
-        lev = S.choose_leverage(stop_frac, self.v1.max_leverage, self.v1.maint_margin_rate,
-                                self.v1.liq_buffer_ratio)
+        risk_notional = wallet * _d(self.v1.risk_pct) / 100 / _d(stop_frac)   # notional before caps
+        br = S.bracket_for(self.brackets, risk_notional)
+        mmr = br["mmr"] if br else self.v1.maint_margin_rate
+        lev = S.choose_leverage(stop_frac, self.v1.max_leverage, mmr, self.v1.liq_buffer_ratio,
+                                br["max_lev"] if br else None)
         if lev is None:
-            logger.warning(f"[V1] entry skipped: stop {stop_frac:.2%} not inside "
-                           f"{self.v1.liq_buffer_ratio}×liquidation distance even at 1x")
+            self._skip("leverage", f"stop {stop_frac:.2%} not inside {self.v1.liq_buffer_ratio}×"
+                                   f"liquidation distance even at 1x (MMR {mmr})")
             return False
         try:
             await self._call(self.ex.set_leverage(lev))
@@ -539,17 +646,17 @@ class LiveV1Engine(PaperTradingEngine):
             return False
         risk_usdt = wallet * _d(self.v1.risk_pct) / 100
         qty = risk_usdt / stop_dist
-        qty = min(qty, avail * lev / ref)                      # notional ≤ chosen leverage (≤5x) × fresh available
+        qty = min(qty, avail * lev / ref)                      # notional ≤ chosen leverage (≤10x) × fresh available
         qty = rules.floor_qty(qty)                             # round DOWN to LOT_SIZE.stepSize
         if qty < rules.min_qty or qty * ref < rules.min_notional:
-            logger.warning(f"[V1] entry skipped: qty {qty} {self.v1.symbol} (notional {qty * ref:.2f}) "
-                           f"< minQty {rules.min_qty} / minNotional {rules.min_notional}")
+            self._skip("min_notional", f"qty {qty} {self.v1.symbol} (notional {qty * ref:.2f}) "
+                                       f"< minQty {rules.min_qty} / minNotional {rules.min_notional}")
             return False
         est_stop = self._stop_price(ref, side, stop_dist)
         risk_after = qty * abs(ref - est_stop) + qty * ref * 2 * TAKER_FEE
         if risk_after > wallet * _d(self.v1.max_risk_pct) / 100:
-            logger.warning(f"[V1] entry skipped: risk after rounding {risk_after:.2f} USDT "
-                           f"> max {self.v1.max_risk_pct}% of {wallet:.2f}")
+            self._skip("risk_cap", f"risk after rounding {risk_after:.2f} USDT "
+                                   f"> max {self.v1.max_risk_pct}% of {wallet:.2f}")
             return False
         cid = f"v1{bar_close_ms}{'L' if side > 0 else 'S'}"
         try:
@@ -568,7 +675,7 @@ class LiveV1Engine(PaperTradingEngine):
             "stop_dist": str(stop_dist), "risk_usdt": str((abs(fill - stop_px) * filled).quantize(Decimal("0.01"))),
             "entry_ref": str(ref), "entry_slip_usdt": str(slip_px * filled),
             "entry_slip_pct": float(slip_px / ref * 100), "entry_order_id": o["id"], "opened_at": _now_ms(),
-            "leverage": lev,
+            "leverage": lev, "mmr": mmr,
         }
         self._save_pos()                                       # journal BEFORE the stop step
         if not await self._ensure_stop(filled * side, stop_px, cid):
@@ -651,7 +758,7 @@ class LiveV1Engine(PaperTradingEngine):
         bal_before = self.account.balance
         trade = TradeRecord(
             id=pos["cid"], symbol=self.v1.symbol, side=PositionSide.LONG if side > 0 else PositionSide.SHORT,
-            leverage=self.v1.max_leverage, avg_entry_price=entry, avg_exit_price=exit_px.quantize(Decimal("0.01")),
+            leverage=int(pos.get("leverage") or self.v1.max_leverage), avg_entry_price=entry, avg_exit_price=exit_px.quantize(Decimal("0.01")),
             quantity=qty, realized_pnl=gross, pnl_percent=0.0, signal_type="turtle_v1",
             signal_details=details, close_reason=reason, total_fees=fees, opened_at=opened, closed_at=now,
             duration_seconds=int((now - opened) / 1000),

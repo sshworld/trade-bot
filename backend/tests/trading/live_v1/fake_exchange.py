@@ -38,6 +38,9 @@ class FakeExchange:
         self.accepted = Counter()            # client_id → accepted count
         self.bars: list[dict] = []
         self.leverage = 20
+        self.brackets = [{"floor": 0.0, "cap": 50000.0, "mmr": 0.004, "max_lev": 125},
+                         {"floor": 50000.0, "cap": 600000.0, "mmr": 0.005, "max_lev": 100},
+                         {"floor": 600000.0, "cap": 3000000.0, "mmr": 0.0065, "max_lev": 75}]
         self._oid = 1000
         self._t = int(time.time() * 1000)
 
@@ -117,6 +120,12 @@ class FakeExchange:
     # ── Exchange interface ──
     async def symbol_rules(self):
         return self.rules
+
+    async def mark_price(self):
+        return self.price
+
+    async def leverage_brackets(self):
+        return [dict(b) for b in self.brackets]
 
     async def account(self):
         margin = abs(self.amt) * self.price / self.leverage

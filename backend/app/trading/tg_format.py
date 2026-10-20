@@ -85,6 +85,18 @@ def fmt_alert(title: str, detail: str = "", action: str = "") -> str:
     return "\n".join(lines[:3])
 
 
+_SKIP_KR = {"late": "늦음", "min_notional": "최소금액", "risk_cap": "리스크한도",
+            "leverage": "레버리지", "safety_block": "안전차단"}
+
+
+def skip_memo(skipped: dict | None) -> str:
+    """Notion memo prefill: '스킵 3 (늦음 1, 최소금액 2)'. Empty when nothing was skipped."""
+    if not skipped or not sum(skipped.values()):
+        return ""
+    parts = ", ".join(f"{_SKIP_KR.get(k, k)} {v}" for k, v in skipped.items() if v)
+    return f"스킵 {sum(skipped.values())} ({parts})"
+
+
 def fmt_daily_line(s: dict) -> str:
     """일일 결산 1줄."""
     return (
@@ -93,6 +105,7 @@ def fmt_daily_line(s: dict) -> str:
         f" · 비용 {_usd(_d(s['fees']) + _d(s['slippage']) + _d(s['funding']))}"
         f" · MDD {s['max_drawdown_pct']:.2f}% · 잔고 {_usd(s['end_balance'])}"
         + (f" · 🚨{s['incidents']}" if s.get("incidents") else "")
+        + (f" · 스킵 {s['skipped_total']}" if s.get("skipped_total") else "")
     )
 
 
@@ -103,6 +116,7 @@ def fmt_daily_block(s: dict) -> str:
         f"📊 <b>{s['date']}</b> {_usd(s['net_pnl_usdt'], signed=True)} ({s['net_pnl_pct']:+.2f}%) · 잔고 {_usd(s['end_balance'])}\n"
         f"{s['trades']}건 · {s['wins']}승 · 승률 {s['win_rate']:.0f}%\n"
         f"비용 {_usd(costs)} · MDD {s['max_drawdown_pct']:.2f}% · 장애 {s.get('incidents', 0)}건"
+        + (f" · {s['memo']}" if s.get("memo") else "")
     )
 
 
@@ -200,6 +214,7 @@ def build_daily_summary(
     incidents: int = 0,
     expected_vs_backtest_deviation: float | None = None,
     ledger_vs_exchange_balance_diff: float | None = None,
+    skipped: dict | None = None,
 ) -> dict:
     """date(KST, YYYY-MM-DD) 에 청산된 거래로 일일 결산 dict 생성.
 
@@ -252,5 +267,7 @@ def build_daily_summary(
         "expected_vs_backtest_deviation": expected_vs_backtest_deviation,
         "ledger_vs_exchange_balance_diff": ledger_vs_exchange_balance_diff,
         "ledger_vs_exchange_fee_diff": round(float(fee_diff), 4),
-        "memo": "",
+        "skipped_signals": dict(skipped or {}),
+        "skipped_total": sum((skipped or {}).values()),
+        "memo": skip_memo(skipped),
     }

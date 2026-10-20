@@ -166,3 +166,89 @@ async def test_exchange_stop_fill_journaled_with_costs(backend):
     assert abs(float(d["fee_diff_usdt"])) < 0.01
     assert eng.ledger_vs_exchange_balance_diff == 0.0
     await backend.assert_safe()
+
+
+# ── stop breach: mark crosses the model stop while the exchange still holds the position ──
+def _offline(backend):
+    if backend.kind != "offline":
+        pytest.skip("needs price control")
+    return backend.inner
+
+
+async def test_stop_missing_and_mark_crosses_closes_immediately(backend):
+    fx = _offline(backend)
+    eng = await _ready(backend)
+    assert await eng._enter(1, await backend.stop_dist(), BAR)
+    cid, stop = eng.pos["cid"], Decimal(eng.pos["stop_px"])
+    fx.stops.clear()                                     # exchange stop vanished
+    fx.set_price(stop - 50)                              # nothing on the exchange fires
+    assert fx.amt > 0
+    await eng.on_mark_price(fx.symbol, fx.price)         # mark stream tick → guard (no bar wait)
+    await eng._breach_task
+    assert fx.amt == 0
+    assert eng.anomaly_detector.is_halted() and not eng.entries_allowed()
+    assert any("손절가 돌파" in a for a in eng.alerts)
+    assert eng.trade_history[-1].close_reason == "stop_breach"
+    assert fx.accepted[f"{cid}b"] == 1
+    await eng.on_mark_price(fx.symbol, fx.price - 10)   # more ticks → no second order
+    assert eng._breach_task is None or eng._breach_task.done()
+    assert fx.accepted[f"{cid}b"] == 1
+    await backend.assert_safe()
+
+
+async def test_stop_rejected_and_mark_crosses_closes_on_reconcile(backend):
+    fx = _offline(backend)
+    eng = await _ready(backend)
+    assert await eng._enter(1, await backend.stop_dist(), BAR)
+    stop = Decimal(eng.pos["stop_px"])
+    fx.stops.clear()
+    backend.fx.inject("stop", "reject", times=5)        # any re-arm would be rejected
+    fx.price = stop - 30                                 # mark crossed; stream silent → 5s reconcile path
+    await eng.reconcile_orders()
+    assert fx.amt == 0 and eng.anomaly_detector.is_halted()
+    assert backend.fx.calls["stop"] == 1                 # only the entry stop: no futile re-arm first
+    assert any("손절가 돌파" in a for a in eng.alerts)
+    await backend.assert_safe()
+
+
+async def test_stop_present_but_not_fired_mark_crosses(backend):
+    fx = _offline(backend)
+    eng = await _ready(backend)
+    assert await eng._enter(-1, await backend.stop_dist(), BAR)
+    stop = Decimal(eng.pos["stop_px"])
+    fx.price = stop + 40                                 # exchange stop exists but did not trigger
+    await eng.reconcile_orders()
+    assert fx.amt == 0 and not fx.stops                  # closed reduce-only; stop auto-cancelled
+    assert eng.trade_history[-1].close_reason == "stop_breach"
+    await backend.assert_safe()
+
+
+async def test_normal_exchange_stop_fill_does_not_halt(backend):
+    fx = _offline(backend)
+    eng = await _ready(backend)
+    assert await eng._enter(1, await backend.stop_dist(), BAR)
+    stop = Decimal(eng.pos["stop_px"])
+    fx.set_price(stop - 5)                               # exchange stop fires as designed
+    await eng.on_mark_price(fx.symbol, fx.price)
+    await eng._breach_task
+    assert fx.amt == 0 and not eng.anomaly_detector.is_halted()
+    assert eng.trade_history[-1].close_reason == "stop_loss"
+    assert not any("손절가 돌파" in a for a in eng.alerts)
+
+
+async def test_skipped_signals_counted_in_daily_summary(backend):
+    fx = _offline(backend)
+    from app.trading.telegram_bot import today_summary
+    from app.trading.tg_format import fmt_daily_line, kst_date
+    eng = await _ready(backend)
+    eng.gate.block(S.HEARTBEAT)
+    assert not await eng._enter(1, await backend.stop_dist(), BAR)          # safety_block
+    eng.gate.clear(S.HEARTBEAT)
+    fx.wallet = Decimal("50")
+    assert not await eng._enter(1, await backend.stop_dist(), BAR)          # min_notional
+    assert not await eng._enter(1, Decimal("59000"), BAR)                   # leverage (≈98% stop)
+    s = today_summary(eng, kst_date())
+    assert s["skipped_signals"] == {"safety_block": 1, "min_notional": 1, "leverage": 1}
+    assert s["skipped_total"] == 3
+    assert s["memo"] == "스킵 3 (안전차단 1, 최소금액 1, 레버리지 1)"
+    assert "스킵 3" in fmt_daily_line(s)

@@ -29,6 +29,7 @@ class Backend:
     def engine(self, **kw) -> LiveV1Engine:
         kw.setdefault("query_delay_s", 0.0 if self.kind == "offline" else 1.0)
         kw.setdefault("income_interval_s", 0.0)
+        kw.setdefault("breach_grace_s", 0.0)
         return LiveV1Engine(self.fx, LiveV1Settings(**kw))
 
     async def stop_dist(self) -> Decimal:

@@ -105,6 +105,8 @@ class Exchange:
     async def position(self) -> dict: ...                     # {"amt": D signed, "entry": D}
     async def open_orders(self) -> list[dict]: ...            # normalized, std + algo
     async def book(self) -> dict: ...                         # {"bid": D, "ask": D}
+    async def mark_price(self) -> Decimal: ...
+    async def leverage_brackets(self) -> list[dict]: ...      # [{floor, cap, mmr, max_lev}]
     async def klines(self, interval: str, limit: int) -> list[dict]: ...
     async def market(self, side: str, qty: Decimal, client_id: str, reduce_only: bool = False) -> dict: ...
     async def stop(self, side: str, trigger: Decimal, client_id: str) -> dict: ...
@@ -205,6 +207,20 @@ class BinanceExchange(Exchange):
     async def book(self) -> dict:
         d = await self._req("GET", "/fapi/v1/ticker/bookTicker", {"symbol": self.symbol}, signed=False)
         return {"bid": Decimal(d["bidPrice"]), "ask": Decimal(d["askPrice"])}
+
+    async def mark_price(self) -> Decimal:
+        d = await self._req("GET", "/fapi/v1/premiumIndex", {"symbol": self.symbol}, signed=False)
+        return Decimal(d["markPrice"])
+
+    async def leverage_brackets(self) -> list[dict]:
+        rows = await self._req("GET", "/fapi/v1/leverageBracket", {"symbol": self.symbol})
+        rows = rows if isinstance(rows, list) else [rows]
+        for r in rows:
+            if r.get("symbol") == self.symbol:
+                return [{"floor": float(b["notionalFloor"]), "cap": float(b["notionalCap"]),
+                         "mmr": float(b["maintMarginRatio"]), "max_lev": int(b["initialLeverage"])}
+                        for b in r.get("brackets", [])]
+        return []
 
     async def klines(self, interval: str, limit: int) -> list[dict]:
         rows = await self._req("GET", "/fapi/v1/klines",

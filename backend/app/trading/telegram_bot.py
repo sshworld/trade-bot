@@ -195,6 +195,7 @@ def today_summary(engine, date: str | None = None) -> dict:
     return build_daily_summary(
         trades, date, end_balance=end_bal, incidents=incidents_on(date),
         ledger_vs_exchange_balance_diff=getattr(engine, "ledger_vs_exchange_balance_diff", None),
+        skipped=engine.skip_counts(date) if hasattr(engine, "skip_counts") else None,
     )
 
 

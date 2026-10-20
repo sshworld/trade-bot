@@ -36,6 +36,7 @@ async def _eng(fx=None, **kw):
     fx = fx or FakeExchange()
     ex = FaultyExchange(fx)
     kw.setdefault("income_interval_s", 0.0)
+    kw.setdefault("breach_grace_s", 0.0)
     eng = LiveV1Engine(ex, LiveV1Settings(query_delay_s=0, **kw))
     await eng.initialize()
     return eng, ex, fx
@@ -67,18 +68,46 @@ def test_autohalt_rules():
 
 
 def test_choose_leverage_keeps_stop_inside_liquidation():
-    # 5x: liq ≈ 1/5 − 0.4% = 19.6% → 0.7× = 13.72%
-    assert S.choose_leverage(0.03) == 5
+    # L: 0.7×(1/L − 0.4%) → 10x 6.72%, 9x 7.50%, 5x 13.72%, 4x 17.22%, 3x 23.05%, 2x 34.72%, 1x 69.72%
+    assert S.choose_leverage(0.03) == 10                 # TA cap 10x
+    assert S.choose_leverage(0.07) == 9
     assert S.choose_leverage(0.1372) == 5
-    assert S.choose_leverage(0.15) == 4          # 4x: 0.7×(25%−0.4%) = 17.22%
-    assert S.choose_leverage(0.20) == 3          # 3x: 0.7×32.93% = 23.05%
-    assert S.choose_leverage(0.30) == 2          # 2x: 0.7×49.6% = 34.72%
-    assert S.choose_leverage(0.60) == 1          # 1x: 0.7×99.6% = 69.72%
-    assert S.choose_leverage(0.70) is None       # even 1x cannot → skip
-    assert S.choose_leverage(0.01, max_leverage=10) == 5   # never above the 5x cap
+    assert S.choose_leverage(0.15) == 4
+    assert S.choose_leverage(0.20) == 3
+    assert S.choose_leverage(0.30) == 2
+    assert S.choose_leverage(0.60) == 1
+    assert S.choose_leverage(0.70) is None               # even 1x cannot → skip
+    assert S.choose_leverage(0.01, bracket_max_leverage=3) == 3
+    assert S.choose_leverage(0.066, mmr=0.01) == 9       # higher MMR → lower leverage
     for f in (0.01, 0.05, 0.12, 0.2, 0.4, 0.69):
         lev = S.choose_leverage(f)
-        assert f <= 0.7 * S.liquidation_distance(lev)
+        assert lev <= 10 and f <= 0.7 * S.liquidation_distance(lev)
+
+
+def test_bracket_lookup():
+    br = [{"floor": 0, "cap": 50000, "mmr": 0.004, "max_lev": 125},
+          {"floor": 50000, "cap": 600000, "mmr": 0.005, "max_lev": 100}]
+    assert S.bracket_for(br, 1000)["mmr"] == 0.004
+    assert S.bracket_for(br, 60000)["mmr"] == 0.005
+    assert S.bracket_for(br, 9e9)["mmr"] == 0.005
+    assert S.bracket_for([], 1) is None
+
+
+async def test_mmr_from_leverage_bracket_and_fallback():
+    fx = FakeExchange(wallet="100000", spread="0")
+    fx.brackets = [{"floor": 0.0, "cap": 1e9, "mmr": 0.02, "max_lev": 50}]
+    eng, _, _ = await _eng(fx)
+    assert eng.brackets[0]["mmr"] == 0.02
+    assert await eng._enter(1, Decimal("3600"), BAR)     # 6% stop: 10x fails at MMR 2% (5.6%) → 9x (6.38%)
+    assert eng.pos["leverage"] == 9 and eng.pos["mmr"] == 0.02
+    fx2 = FakeExchange(wallet="100000", spread="0")
+    ex2 = FaultyExchange(fx2)
+    ex2.inject("leverage_brackets", "reject")
+    eng2 = LiveV1Engine(ex2, LiveV1Settings(query_delay_s=0, income_interval_s=0))
+    await eng2.initialize()
+    assert eng2.brackets == []
+    assert await eng2._enter(1, Decimal("3600"), BAR)    # config fallback 0.4% → 10x ok (6% ≤ 6.72%)
+    assert eng2.pos["leverage"] == 10 and eng2.pos["mmr"] == 0.004
 
 
 async def test_entry_lowers_leverage_or_skips():
@@ -105,14 +134,24 @@ async def test_api_error_streak_blocks_entries_and_recovers():
     assert S.API_ERRORS not in eng.gate.reasons and eng.entries_allowed()
 
 
-async def test_heartbeat_blocks_and_clears():
-    eng, _, _ = await _eng()
+async def test_heartbeat_watches_configured_symbol_and_notifies_resume(monkeypatch):
+    sent = []
+    eng, _, _ = await _eng(FakeExchange(rules=ETH_RULES, price="2500"), symbol="ETHUSDT")
+
+    async def _send(text):
+        sent.append(text)
+    monkeypatch.setattr(eng.alert_sender, "send_text", _send)
     eng.hb.last_price = time.time() - 600
     await eng.check_heartbeat()
     assert S.HEARTBEAT in eng.gate.reasons and any("하트비트" in a for a in eng.alerts)
-    await eng.on_price_update(Decimal("60000"))
+    await eng.on_price_update(Decimal("60000"))                 # BTC aggTrade feed: not our heartbeat
+    await eng.on_mark_price("BTCUSDT", Decimal("60000"))       # other symbol's mark: ignored
+    await eng.check_heartbeat()
+    assert not eng.entries_allowed()
+    await eng.on_mark_price("ETHUSDT", Decimal("2500"))
     await eng.check_heartbeat()
     assert eng.entries_allowed()
+    assert sent == ["✅ 신규 진입 재개 — 가격 피드 해제"]       # one line, names the cleared block
 
 
 async def test_sizing_uses_fresh_exchange_balance_and_risk():
@@ -125,10 +164,10 @@ async def test_sizing_uses_fresh_exchange_balance_and_risk():
     assert Decimal(eng.pos["risk_usdt"]) <= Decimal("10")
 
 
-async def test_leverage_cap_5x():
-    eng, _, fx = await _eng(FakeExchange(wallet="1000", spread="0"))
+async def test_leverage_cap_10x():
+    eng, _, fx = await _eng(FakeExchange(wallet="1000", spread="0"), max_risk_pct=2.0)
     assert await eng._enter(1, Decimal("10"), BAR)       # tiny stop → risk sizing would be 0.5 BTC
-    assert fx.amt * fx.price <= Decimal("5000")
+    assert fx.leverage == 10 and fx.amt * fx.price <= Decimal("10000")
 
 
 async def test_no_averaging_or_second_position():
@@ -339,8 +378,9 @@ async def test_entry_skipped_when_risk_after_rounding_exceeds_max():
     # tiny stop → leverage-capped notional ≈ $5000 → round-trip fees alone ≈ 0.5% of wallet
     assert not await eng._enter(1, Decimal("5"), BAR)
     assert fx.amt == 0
-    eng2, _, fx2 = await _eng(FakeExchange(wallet="1000", spread="0"))  # default max 1.0% → allowed
-    assert await eng2._enter(1, Decimal("5"), BAR)
+    assert eng.skip_counts(__import__("app.trading.tg_format", fromlist=["x"]).kst_date()) == {"risk_cap": 1}
+    eng2, _, fx2 = await _eng(FakeExchange(wallet="1000", spread="0"))  # default max 1.0%
+    assert await eng2._enter(1, Decimal("1800"), BAR)                   # normal stop → allowed
 
 
 async def test_eth_symbol_configurable():
@@ -363,3 +403,28 @@ async def test_rules_cached_and_refreshed_daily():
     eng._rules_at -= 86401
     await eng.reconcile_orders()
     assert ex.calls["symbol_rules"] == n + 1                            # refreshed after a day
+
+
+async def test_adapter_leverage_brackets_signed_and_mark_price():
+    seen = []
+
+    def handler(req: httpx.Request):
+        seen.append(req)
+        if req.url.path == "/fapi/v1/leverageBracket":
+            return httpx.Response(200, json=[{"symbol": "ETHUSDT", "brackets": [
+                {"bracket": 1, "initialLeverage": 125, "notionalCap": 10000, "notionalFloor": 0,
+                 "maintMarginRatio": 0.005, "cum": 0},
+                {"bracket": 2, "initialLeverage": 100, "notionalCap": 100000, "notionalFloor": 10000,
+                 "maintMarginRatio": 0.0065, "cum": 15}]}])
+        if req.url.path == "/fapi/v1/premiumIndex":
+            return httpx.Response(200, json={"symbol": "ETHUSDT", "markPrice": "2501.25"})
+        return httpx.Response(404, json={"code": -1, "msg": "?"})
+
+    ex = BinanceExchange("https://testnet.binancefuture.com", "k", "s", symbol="ETHUSDT",
+                         transport=httpx.MockTransport(handler))
+    br = await ex.leverage_brackets()
+    assert br == [{"floor": 0.0, "cap": 10000.0, "mmr": 0.005, "max_lev": 125},
+                  {"floor": 10000.0, "cap": 100000.0, "mmr": 0.0065, "max_lev": 100}]
+    q = seen[0].url.params
+    assert q["symbol"] == "ETHUSDT" and "signature" in q and seen[0].headers["X-MBX-APIKEY"] == "k"
+    assert await ex.mark_price() == Decimal("2501.25")
