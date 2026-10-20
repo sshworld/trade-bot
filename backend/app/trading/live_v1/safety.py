@@ -93,17 +93,21 @@ def profit_factor(nets: list[Decimal]) -> float:
 
 
 def autohalt_reason(start_wallet: Decimal, wallet: Decimal, net_transfers: Decimal,
-                    trade_nets: list[Decimal], dd_limit_pct: float = 15.0,
-                    pf_min: float = 0.8, pf_after: int = 30) -> str | None:
-    """spec v2 §8: cumulative live PnL ≤ −15% (transfers excluded) or PF < 0.8 after 30 trades."""
+                    dd_limit_pct: float = 15.0) -> str | None:
+    """The ONLY real auto-halt: cumulative live PnL ≤ −15% vs live start (transfers excluded)."""
     if start_wallet > 0:
         cum = (wallet - start_wallet - net_transfers) / start_wallet * 100
         if cum <= -Decimal(str(dd_limit_pct)):
             return f"누적 손익 {float(cum):.1f}% ≤ -{dd_limit_pct:.0f}%"
+    return None
+
+
+def pf_review_text(trade_nets: list[Decimal], pf_min: float = 0.8, pf_after: int = 30) -> str | None:
+    """TA: PF < 0.8 at ≥30 trades is a REVIEW alert only (no halt, no entry block)."""
     if len(trade_nets) >= pf_after:
         pf = profit_factor(trade_nets)
         if pf < pf_min:
-            return f"{len(trade_nets)}건 PF {pf:.2f} < {pf_min}"
+            return f"⚠️ 점검 필요: {len(trade_nets)}건 PF {pf:.2f} < {pf_min} (자동 정지 아님)"
     return None
 
 

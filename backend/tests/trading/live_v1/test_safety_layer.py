@@ -60,13 +60,13 @@ def test_breaker_window_forgets_old_errors():
 
 def test_autohalt_rules():
     D = Decimal
-    assert S.autohalt_reason(D(1000), D(850), D(0), []) is not None            # −15%
-    assert S.autohalt_reason(D(1000), D(1350), D(500), []) is not None         # deposit is not profit
-    assert S.autohalt_reason(D(1000), D(900), D(0), []) is None
+    assert S.autohalt_reason(D(1000), D(850), D(0)) is not None                # −15%
+    assert S.autohalt_reason(D(1000), D(1350), D(500)) is not None             # deposit is not profit
+    assert S.autohalt_reason(D(1000), D(900), D(0)) is None
     losing = [D(-10)] * 20 + [D(10)] * 10                                      # PF 0.5 at 30
-    assert "PF" in S.autohalt_reason(D(1000), D(1000), D(0), losing)
-    assert S.autohalt_reason(D(1000), D(1000), D(0), losing[:29]) is None
-    assert S.autohalt_reason(D(1000), D(1000), D(0), [D(-10)] * 15 + [D(13)] * 15) is None
+    assert S.pf_review_text(losing) == "⚠️ 점검 필요: 30건 PF 0.50 < 0.8 (자동 정지 아님)"
+    assert S.pf_review_text(losing[:29]) is None
+    assert S.pf_review_text([D(-10)] * 15 + [D(13)] * 15) is None
 
 
 def test_choose_leverage_ta_rule():
@@ -272,17 +272,53 @@ async def test_autohalt_on_drawdown():
     assert eng.anomaly_detector.is_halted() and any("자동 중단" in a for a in eng.alerts)
 
 
-async def test_autohalt_on_pf_after_30_trades():
-    eng, _, _ = await _eng()
+def _losing_trades(n, now, start=0):
+    return [TradeRecord(
+        id=f"t{start + i}", symbol="BTCUSDT", side=PositionSide.LONG, leverage=5,
+        avg_entry_price=Decimal(1), avg_exit_price=Decimal(1), quantity=Decimal(1),
+        realized_pnl=Decimal(-10 if i % 3 else 10), pnl_percent=0, signal_type="turtle_v1",
+        opened_at=now, closed_at=now + 1, duration_seconds=0) for i in range(n)]
+
+
+async def test_pf_below_08_at_30_trades_is_review_alert_only(monkeypatch):
+    from app.trading.telegram_bot import today_summary
+    sent = []
+    eng, _, fx = await _eng()
+
+    async def _send(text):
+        sent.append(text)
+    monkeypatch.setattr(eng.alert_sender, "send_text", _send)
     now = int(time.time() * 1000)
-    for i in range(30):
-        eng.trade_history.append(TradeRecord(
-            id=f"t{i}", symbol="BTCUSDT", side=PositionSide.LONG, leverage=5,
-            avg_entry_price=Decimal(1), avg_exit_price=Decimal(1), quantity=Decimal(1),
-            realized_pnl=Decimal(-10 if i < 20 else 10), pnl_percent=0, signal_type="turtle_v1",
-            opened_at=now, closed_at=now + 1, duration_seconds=0))
+    eng.trade_history.extend(_losing_trades(29, now))
     await eng._check_autohalt()
-    assert eng.anomaly_detector.is_halted()
+    assert sent == []                                    # 29 trades: nothing yet
+    eng.trade_history.extend(_losing_trades(1, now, start=29))
+    await eng._check_autohalt()
+    assert sent == ["⚠️ 점검 필요: 30건 PF 0.58 < 0.8 (자동 정지 아님)"]
+    assert not eng.anomaly_detector.is_halted() and eng.entries_allowed()   # no halt, no block
+    assert not any("자동 중단" in a for a in eng.alerts)
+    eng.trade_history.extend(_losing_trades(3, now, start=30))
+    await eng._check_autohalt(); await eng.reconcile_orders()
+    assert len(sent) == 1                                 # once, on first trigger only
+    s = today_summary(eng, kst_date())
+    assert "점검 필요: 30건 PF 0.58 < 0.8 (자동 정지 아님)" in s["memo"]
+    assert await eng._enter(1, Decimal("1800"), BAR)     # entries still work
+    eng2 = LiveV1Engine(eng.ex, LiveV1Settings(query_delay_s=0, income_interval_s=0, breach_grace_s=0))
+    await eng2.initialize()                               # restart: flag persisted → not re-sent
+    eng2.trade_history = list(eng.trade_history)
+    monkeypatch.setattr(eng2.alert_sender, "send_text", _send)
+    await eng2._check_autohalt()
+    assert sum(t.startswith("⚠️") for t in sent) == 1
+
+
+async def test_drawdown_halt_still_applies_alongside_pf_review():
+    eng, _, fx = await _eng()
+    eng.trade_history.extend(_losing_trades(30, int(time.time() * 1000)))
+    fx.wallet -= Decimal("200")
+    fx.incomes.append({"type": "REALIZED_PNL", "amount": Decimal("-200"), "time": fx._now(),
+                       "symbol": "BTCUSDT", "tran_id": "y", "trade_id": "y"})
+    await eng.reconcile_orders()
+    assert eng.anomaly_detector.is_halted() and any("자동 중단" in a for a in eng.alerts)
 
 
 def _bars(closes, start=0, wicks=None):

@@ -215,6 +215,7 @@ def build_daily_summary(
     expected_vs_backtest_deviation: float | None = None,
     ledger_vs_exchange_balance_diff: float | None = None,
     skipped: dict | None = None,
+    notes: list[str] | None = None,
 ) -> dict:
     """date(KST, YYYY-MM-DD) 에 청산된 거래로 일일 결산 dict 생성.
 
@@ -269,5 +270,5 @@ def build_daily_summary(
         "ledger_vs_exchange_fee_diff": round(float(fee_diff), 4),
         "skipped_signals": dict(skipped or {}),
         "skipped_total": sum((skipped or {}).values()),
-        "memo": skip_memo(skipped),
+        "memo": " · ".join([*(notes or []), *([skip_memo(skipped)] if skip_memo(skipped) else [])]),
     }

@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from app.trading.engine import PaperTradingEngine
 from app.trading.persistence import delete_position, load_kv, save_account, save_kv, save_position, save_trade
 from app.trading.schemas import OrderStatus, Position, PositionSide, TradeRecord, TrancheOrder
-from app.trading.tg_format import fmt_entry, fmt_exit, trade_net_pnl
+from app.trading.tg_format import fmt_entry, fmt_exit, kst_date, trade_net_pnl
 from app.trading.live_v1 import safety as S
 from app.trading.live_v1.exchange import (
     ExchangeError, ExchangeUnavailable, OrderRejected, SymbolRules, WouldTrigger, close_side,
@@ -58,7 +58,7 @@ class LiveV1Settings(BaseModel):
     ledger_tol_pct: float = 0.5
     income_interval_s: float = 60.0      # ledger/income reconciliation cadence (spec v2 §9: 1 min)
     autohalt_dd_pct: float = 15.0
-    autohalt_pf: float = 0.8
+    autohalt_pf: float = 0.8             # review alert only (TA): never halts / blocks
     autohalt_pf_after: int = 30
     maint_margin_rate: float = 0.004     # fallback only; per-symbol MMR comes from /fapi/v1/leverageBracket
     breach_grace_s: float = 1.0          # after mark crosses the stop, give the exchange stop this long to fire
@@ -588,18 +588,39 @@ class LiveV1Engine(PaperTradingEngine):
         await self._check_autohalt()
 
     async def _check_autohalt(self):
-        if self._autohalted or "live_start_wallet" not in self.meta:
+        if "live_start_wallet" not in self.meta:
             return
-        start_ms = int(self.meta.get("live_start_ms", 0))
-        nets = [trade_net_pnl(t) for t in self.trade_history
-                if t.signal_type == "turtle_v1" and t.closed_at >= start_ms]
+        await self._check_pf_review()
+        if self._autohalted:
+            return
         reason = S.autohalt_reason(_d(self.meta["live_start_wallet"]), self.account.balance,
-                                   _d(self.meta.get("net_transfers", "0")), nets,
-                                   self.v1.autohalt_dd_pct, self.v1.autohalt_pf, self.v1.autohalt_pf_after)
+                                   _d(self.meta.get("net_transfers", "0")), self.v1.autohalt_dd_pct)
         if reason:
             self._autohalted = True
             self.anomaly_detector.set_manual_halt(f"v1 autohalt: {reason}")
             await self._alert("자동 중단 — 실거래 한도 도달", reason, "신규 진입 중단 · 보고 후 /resume")
+
+    async def _check_pf_review(self):
+        """PF < 0.8 after 30 trades → one ⚠️ review message (first trigger only) + daily memo note."""
+        if self.meta.get("pf_review"):
+            return
+        start_ms = int(self.meta.get("live_start_ms", 0))
+        nets = [trade_net_pnl(t) for t in self.trade_history
+                if t.signal_type == "turtle_v1" and t.closed_at >= start_ms]
+        text = S.pf_review_text(nets, self.v1.autohalt_pf, self.v1.autohalt_pf_after)
+        if not text:
+            return
+        self.meta["pf_review"] = {"date": kst_date(), "text": text}
+        self._save_meta()                                   # persisted → never re-sent after restart
+        logger.warning(f"[V1] {text}")
+        try:
+            await self.alert_sender.send_text(text)
+        except Exception as e:
+            logger.error(f"[V1] review alert send failed: {e}")
+
+    def review_notes(self, date: str) -> list[str]:
+        r = self.meta.get("pf_review") or {}
+        return [r["text"].removeprefix("⚠️ ")] if r.get("date") == date else []
 
     # ── strategy loop ──────────────────────────────────────
     async def on_bar_tick(self):
