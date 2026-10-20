@@ -655,7 +655,7 @@ class LiveV1Engine(PaperTradingEngine):
             logger.error(f"[V1] entry pre-check failed: {e}")
             return False
         ref = book["ask"] if side > 0 else book["bid"]
-        wallet, avail = acct["wallet"], acct["available"]
+        wallet = acct["wallet"]                                # qty is risk-sized only: never trimmed to margin
         stop_frac = float(stop_dist / ref)                    # stop_pct = |entry_ref − stop| / entry_ref
         risk_usdt = wallet * _d(self.v1.risk_pct) / 100
         qty = rules.floor_qty(risk_usdt / stop_dist)           # round DOWN to LOT_SIZE.stepSize
@@ -687,9 +687,11 @@ class LiveV1Engine(PaperTradingEngine):
             logger.error(f"[V1] entry skipped: balance re-check failed: {e}")
             return False
         need = notional / lev
-        if need > avail:
+        if need > avail:                                       # skip-only (TA): no quantity-trim path
             self._skip("margin", f"required margin {need:.2f} (= {notional:.2f}/{lev}x) "
                                  f"> available {avail:.2f} USDT")
+            await self._alert(f"증거금 부족으로 진입 건너뜀 — 잔고/계산 점검 필요 "
+                              f"(필요 {need:.2f}, 가용 {avail:.2f})")
             return False
         try:
             await self._call(self.ex.set_leverage(lev))

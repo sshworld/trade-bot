@@ -520,3 +520,21 @@ async def test_adapter_margin_type_and_leverage_readback():
     assert seen[0].method == "POST" and seen[0].url.params["marginType"] == "ISOLATED"
     assert await ex.margin_type() == "ISOLATED"
     assert await ex.leverage() == 6
+
+
+async def test_margin_skip_alerts_once_per_skip_and_never_trims(monkeypatch):
+    from app.trading.tg_format import fmt_alert
+    sent = []
+
+    async def _push(title, detail="", action=""):
+        sent.append(fmt_alert(title, detail, action))
+    eng, ex, fx = await _eng(FakeExchange(wallet="1000", spread="0"), max_risk_pct=5.0)
+    monkeypatch.setattr(eng.alert_sender, "push_alert", _push)
+    for _ in range(2):
+        assert not await eng._enter(1, Decimal("10"), BAR)          # 30000/10x = 3000 > 1000
+    assert fx.amt == 0 and not fx.orders                             # skipped, no smaller order placed
+    assert sent == ["🚨 <b>증거금 부족으로 진입 건너뜀 — 잔고/계산 점검 필요 (필요 3000.00, 가용 1000.00)</b>"] * 2
+    assert eng.skip_counts(kst_date()) == {"margin": 2}
+    eng.gate.block(S.HEARTBEAT)
+    assert not await eng._enter(1, Decimal("10"), BAR)              # other skip reasons: no margin alert
+    assert len(sent) == 2
