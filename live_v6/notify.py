@@ -19,7 +19,9 @@ def _http_post(url, data, timeout):
 
 
 class Notifier:
-    def __init__(self, token: str | None = None, chat_id: str | None = None, timeout: float = 5.0, post=None):
+    def __init__(self, token: str | None = None, chat_id: str | None = None, timeout: float = 5.0, post=None,
+                 prefix: str = ""):
+        self.prefix = prefix                     # e.g. "🧪[TESTNET] " so testnet messages are never mistaken for live
         self.token = token if token is not None else os.getenv(ENV_TOKEN, "")
         self.chat_id = chat_id if chat_id is not None else os.getenv(ENV_CHAT, "")
         self.timeout = timeout
@@ -35,6 +37,7 @@ class Notifier:
         return [n for n, v in ((ENV_TOKEN, self.token), (ENV_CHAT, self.chat_id)) if not v]
 
     def send(self, text: str) -> bool:
+        text = self.prefix + text
         self.sent.append(text)
         log.warning("[tg] %s", text)
         if not self.configured:
@@ -57,5 +60,6 @@ class NullNotifier(Notifier):
         super().__init__("", "")
 
     def send(self, text: str) -> bool:
+        text = self.prefix + text
         self.sent.append(text)
         return False

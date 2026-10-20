@@ -20,6 +20,11 @@ from .stream import MarketStream, UserStream
 log = logging.getLogger("live_v6.runner")
 
 
+def tg_prefix(network: str | None = None) -> str:
+    network = network or os.getenv("LIVE_V6_NETWORK", "testnet")
+    return "" if network == "mainnet" else "🧪[TESTNET·모의] "
+
+
 def build(network: str | None = None):
     network = network or os.getenv("LIVE_V6_NETWORK", "testnet")
     if network == "mainnet":
@@ -38,7 +43,7 @@ def build(network: str | None = None):
         raise SystemExit(f"unknown LIVE_V6_STRATEGY {name!r}")
     strat = Strat(params=cfg.params, kline_fetch=cfg.kline_fetch, bootstrap_bars=cfg.bootstrap_bars,
                   daily_fetch=cfg.daily_fetch, funding_lookback_ms=cfg.funding_lookback_ms)
-    eng = V6Engine(rest, cfg, store=JsonStore(state), notifier=Notifier(), strategy=strat)
+    eng = V6Engine(rest, cfg, store=JsonStore(state), notifier=Notifier(prefix=tg_prefix(network)), strategy=strat)
     from .deadman import DeadMan
     eng.deadman = DeadMan()                              # env HEARTBEAT_URL; no-op when unset
     return rest, eng

@@ -10,7 +10,8 @@ def main(argv):
     cmd = argv[1] if len(argv) > 1 else "run"
     if cmd == "tgtest":                          # one real Telegram message (needs both env vars)
         from .notify import Notifier
-        n = Notifier()
+        from .runner import tg_prefix
+        n = Notifier(prefix=tg_prefix())
         if not n.configured:
             sys.exit("missing env: " + ", ".join(n.missing_env()))
         print("sent" if n.send("✅ live_v6 텔레그램 연결 테스트") else "send failed")
