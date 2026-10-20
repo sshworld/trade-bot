@@ -113,7 +113,7 @@ def pf_review_text(trade_nets: list[Decimal], pf_min: float = 0.8, pf_after: int
 
 def liquidation_distance(leverage: int, mmr: float = 0.004) -> float:
     """Approx. adverse move (fraction of entry) to liquidation for an isolated position:
-    1/L − maintenance-margin rate (BTCUSDT tier-1 MMR 0.4%). Conservative vs cross margin."""
+    1/L − maintenance-margin rate (fallback MMR 0.4%; real per-symbol tier from leverageBracket). Conservative vs cross margin."""
     return 1.0 / leverage - mmr
 
 

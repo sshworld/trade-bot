@@ -109,6 +109,15 @@ make backend    # 백엔드 단독 (모니터링은 Telegram bot)
 
 ---
 
+## ⚙️ Live v1 (현행 실거래 전략)
+
+- `STRATEGY=live_v1` — 4h Turtle (Donchian 55/20, 2×ATR14 손절), 레거시 전략 C 비활성
+- `LIVE_V1_SYMBOL` 기본값 **XRPUSDT** (`.env` 에서 변경). 심볼별 값은 코드에 하드코딩하지 않음:
+  - tickSize / stepSize / minQty / MIN_NOTIONAL ← `/fapi/v1/exchangeInfo` (일 1회 갱신)
+  - 유지증거금률·최대 레버리지 ← `/fapi/v1/leverageBracket` (주문 notional 이 속한 구간)
+  - 하트비트·손절 돌파 감시 ← `<symbol>@markPrice@1s` 스트림
+- 마진 모드 ISOLATED, 레버리지 ≤ 10x (TA 공식), 리스크 0.5%/건
+
 ## 📈 매매 전략
 
 ### TP/SL — 마진 % 기반 (단타 최적화)

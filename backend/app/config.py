@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     # Strategy: "live_v1" = A-fixed 4h Turtle + safety layer (spec v2 §8). Legacy strategy C is
     # disabled for live trading; "legacy_c" only re-enables its paper simulation signals.
     strategy: str = "live_v1"
-    live_v1_symbol: str = "BTCUSDT"          # e.g. ETHUSDT; filters come from exchangeInfo
+    live_v1_symbol: str = "XRPUSDT"          # tick/step/minNotional + leverage brackets come from Binance per symbol
     live_v1_direction: str = "both"          # both | long_only (Trading Advisor decides after v2)
     healthcheck_ping_url: str = ""           # optional external heartbeat (healthchecks.io etc.)
 

@@ -24,7 +24,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SYMBOL = "BTCUSDT"
+DEFAULT_SYMBOL = "XRPUSDT"
 
 MAINNET_URL = "https://fapi.binance.com"
 TESTNET_URL = "https://testnet.binancefuture.com"
@@ -52,6 +52,11 @@ class ExchangeUnavailable(ExchangeError):
 def _floor_to(x, step: Decimal) -> Decimal:
     x = Decimal(str(x))
     return ((x / step).to_integral_value(rounding=ROUND_DOWN) * step).quantize(step)
+
+
+def fmt_dec(d: Decimal) -> str:
+    """Plain decimal string for order params (never scientific notation, e.g. '0.4848', '120')."""
+    return format(Decimal(d), "f")
 
 
 def _ceil_to(x, step: Decimal) -> Decimal:
@@ -240,7 +245,7 @@ class BinanceExchange(Exchange):
                 "update_time": int(o.get("updateTime") or 0)}
 
     async def market(self, side, qty, client_id, reduce_only=False) -> dict:
-        p = {"symbol": self.symbol, "side": side, "type": "MARKET", "quantity": str((await self._r()).floor_qty(qty)),
+        p = {"symbol": self.symbol, "side": side, "type": "MARKET", "quantity": fmt_dec((await self._r()).floor_qty(qty)),
              "newClientOrderId": client_id, "newOrderRespType": "RESULT"}
         if reduce_only:
             p["reduceOnly"] = "true"
@@ -249,7 +254,7 @@ class BinanceExchange(Exchange):
     async def stop(self, side, trigger, client_id) -> dict:
         # closePosition=true: reduce-only by definition, closes whatever remains, auto-cancels when flat.
         p = {"algoType": "CONDITIONAL", "symbol": self.symbol, "side": side, "type": "STOP_MARKET",
-             "triggerPrice": str((await self._r()).price(trigger, "down" if side == "SELL" else "up")), "closePosition": "true",
+             "triggerPrice": fmt_dec((await self._r()).price(trigger, "down" if side == "SELL" else "up")), "closePosition": "true",
              "workingType": "MARK_PRICE", "clientAlgoId": client_id}
         return self._norm_algo(await self._req("POST", "/fapi/v1/algoOrder", p))
 

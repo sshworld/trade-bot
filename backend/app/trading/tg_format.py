@@ -48,7 +48,13 @@ def _usd(x: Any, signed: bool = False) -> str:
 
 
 def _px(x: Any) -> str:
-    return f"{float(_d(x)):,.1f}"
+    """Price at its own precision (tick-rounded values pass through): 60,000.5 / 2,500.25 / 0.5123.
+    At least 1 decimal, at most 8; no symbol-specific rounding."""
+    d = _d(x)
+    exp = d.normalize().as_tuple().exponent
+    places = min(8, max(1, -exp if isinstance(exp, int) else 1))
+    out = f"{d:,.{places}f}"
+    return out.rstrip("0") + ("0" if out.rstrip("0").endswith(".") else "") if "." in out else out
 
 
 # ── 푸시 4종 ────────────────────────────────────────────────

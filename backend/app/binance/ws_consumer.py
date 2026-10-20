@@ -51,16 +51,18 @@ class BinanceWSConsumer:
             except asyncio.QueueFull:
                 pass
 
+    def build_streams(self, live_symbol: str | None) -> str:
+        """Dashboard aggTrade/klines + (live v1) markPrice@1s of the CONFIGURED symbol, which drives
+        the heartbeat and the stop-breach guard."""
+        kline_streams = "/".join(f"{self.symbol}@kline_{iv}" for iv in self.KLINE_INTERVALS)
+        streams = f"{self.symbol}@aggTrade/{kline_streams}"
+        if live_symbol:
+            streams += f"/{live_symbol.lower()}@markPrice@1s"
+        return streams
+
     async def start(self):
         self._running = True
-        kline_streams = "/".join(
-            f"{self.symbol}@kline_{iv}" for iv in self.KLINE_INTERVALS
-        )
-        streams = f"{self.symbol}@aggTrade/{kline_streams}"
-        # live v1: mark price of the CONFIGURED symbol drives the heartbeat + stop-breach guard
-        live_sym = getattr(getattr(trading_engine, "v1", None), "symbol", None)
-        if live_sym:
-            streams += f"/{live_sym.lower()}@markPrice@1s"
+        streams = self.build_streams(getattr(getattr(trading_engine, "v1", None), "symbol", None))
         url = f"{WS_BASE_URL}/stream?streams={streams}"
 
         tick_worker = asyncio.create_task(self._process_ticks())

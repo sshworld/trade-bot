@@ -37,7 +37,7 @@ TAKER_FEE = Decimal("0.0005")
 
 
 class LiveV1Settings(BaseModel):
-    symbol: str = "BTCUSDT"              # configurable (team may switch to ETHUSDT)
+    symbol: str = "XRPUSDT"              # configurable via LIVE_V1_SYMBOL; no per-symbol constants in code
     direction: str = "both"              # both | long_only  (spec v2 §8: both until v2 decides)
     risk_pct: float = 0.5                # % of fresh exchange wallet per trade
     max_risk_pct: float = 1.0            # skip if risk after rounding (+ round-trip taker fees) exceeds this
@@ -169,7 +169,7 @@ class LiveV1Engine(PaperTradingEngine):
         return None
 
     async def on_price_update(self, price: Decimal) -> list[dict]:
-        """BTCUSDT aggTrade feed (chart/analysis). Not the v1 heartbeat — see on_mark_price."""
+        """Dashboard aggTrade feed (chart/analysis symbol). Not the v1 heartbeat — see on_mark_price."""
         return []
 
     async def on_mark_price(self, symbol: str, mark: Decimal):
@@ -824,7 +824,7 @@ class LiveV1Engine(PaperTradingEngine):
         bal_before = self.account.balance
         trade = TradeRecord(
             id=pos["cid"], symbol=self.v1.symbol, side=PositionSide.LONG if side > 0 else PositionSide.SHORT,
-            leverage=int(pos.get("leverage") or self.v1.max_leverage), avg_entry_price=entry, avg_exit_price=exit_px.quantize(Decimal("0.01")),
+            leverage=int(pos.get("leverage") or self.v1.max_leverage), avg_entry_price=entry, avg_exit_price=exit_px.quantize(Decimal("1e-8")).normalize(),
             quantity=qty, realized_pnl=gross, pnl_percent=0.0, signal_type="turtle_v1",
             signal_details=details, close_reason=reason, total_fees=fees, opened_at=opened, closed_at=now,
             duration_seconds=int((now - opened) / 1000),

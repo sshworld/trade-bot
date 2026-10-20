@@ -39,6 +39,7 @@ async def _eng(fx=None, **kw):
     ex = FaultyExchange(fx)
     kw.setdefault("income_interval_s", 0.0)
     kw.setdefault("breach_grace_s", 0.0)
+    kw.setdefault("symbol", fx.symbol)
     eng = LiveV1Engine(ex, LiveV1Settings(query_delay_s=0, **kw))
     await eng.initialize()
     return eng, ex, fx
@@ -107,7 +108,7 @@ async def test_mmr_from_leverage_bracket_and_fallback():
     fx2 = FakeExchange(wallet="100000", spread="0")
     ex2 = FaultyExchange(fx2)
     ex2.inject("leverage_brackets", "reject")
-    eng2 = LiveV1Engine(ex2, LiveV1Settings(query_delay_s=0, income_interval_s=0))
+    eng2 = LiveV1Engine(ex2, LiveV1Settings(query_delay_s=0, income_interval_s=0, symbol="BTCUSDT"))
     await eng2.initialize()
     assert eng2.brackets == []
     assert await eng2._enter(1, Decimal("3600"), BAR)    # config fallback 0.4% → 10x
@@ -161,7 +162,7 @@ async def test_isolated_margin_blocked_by_open_position_then_retried():
     fx = FakeExchange()
     fx.amt, fx.entry = Decimal("0.01"), Decimal("60000")  # pre-existing cross position
     ex = FaultyExchange(fx)
-    eng = LiveV1Engine(ex, LiveV1Settings(query_delay_s=0, income_interval_s=0, breach_grace_s=0))
+    eng = LiveV1Engine(ex, LiveV1Settings(query_delay_s=0, income_interval_s=0, breach_grace_s=0, symbol="BTCUSDT"))
     await eng.initialize()
     assert fx.margin == "CROSSED"
     assert S.MARGIN in eng.gate.reasons and not eng.entries_allowed()
@@ -303,7 +304,7 @@ async def test_pf_below_08_at_30_trades_is_review_alert_only(monkeypatch):
     s = today_summary(eng, kst_date())
     assert "점검 필요: 30건 PF 0.58 < 0.8 (자동 정지 아님)" in s["memo"]
     assert await eng._enter(1, Decimal("1800"), BAR)     # entries still work
-    eng2 = LiveV1Engine(eng.ex, LiveV1Settings(query_delay_s=0, income_interval_s=0, breach_grace_s=0))
+    eng2 = LiveV1Engine(eng.ex, LiveV1Settings(query_delay_s=0, income_interval_s=0, breach_grace_s=0, symbol="BTCUSDT"))
     await eng2.initialize()                               # restart: flag persisted → not re-sent
     eng2.trade_history = list(eng.trade_history)
     monkeypatch.setattr(eng2.alert_sender, "send_text", _send)
@@ -420,7 +421,8 @@ async def test_binance_adapter_error_mapping():
             return httpx.Response(400, json={"code": -1007, "msg": "Timeout waiting for response"})
         return httpx.Response(400, json={"code": -1102, "msg": "bad"})
 
-    ex = BinanceExchange("https://testnet.binancefuture.com", "k", "s", transport=httpx.MockTransport(handler))
+    ex = BinanceExchange("https://testnet.binancefuture.com", "k", "s", symbol="BTCUSDT",
+                         transport=httpx.MockTransport(handler))
     with pytest.raises(ExchangeUnavailable):
         await ex.market("BUY", Decimal("0.0019"), "v1abc")
     assert await ex.get_order("v1abc") is None

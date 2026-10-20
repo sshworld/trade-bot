@@ -12,6 +12,7 @@ from app.trading.live_v1.exchange import (
 
 BTC_RULES = SymbolRules("BTCUSDT", Decimal("0.1"), Decimal("0.001"), Decimal("0.001"), Decimal("50"))
 ETH_RULES = SymbolRules("ETHUSDT", Decimal("0.01"), Decimal("0.001"), Decimal("0.001"), Decimal("20"))
+XRP_RULES = SymbolRules("XRPUSDT", Decimal("0.0001"), Decimal("0.1"), Decimal("0.1"), Decimal("5"))
 
 FEE = Decimal("0.0005")
 
