@@ -192,7 +192,10 @@ def today_summary(engine, date: str | None = None) -> dict:
         trades = load_trades()
     acct = getattr(engine, "account", None)
     end_bal = getattr(acct, "balance", None) if acct is not None else None
-    return build_daily_summary(trades, date, end_balance=end_bal, incidents=incidents_on(date))
+    return build_daily_summary(
+        trades, date, end_balance=end_bal, incidents=incidents_on(date),
+        ledger_vs_exchange_balance_diff=getattr(engine, "ledger_vs_exchange_balance_diff", None),
+    )
 
 
 def _parse_int(s: str, default: int, lo: int, hi: int) -> int:

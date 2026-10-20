@@ -1113,12 +1113,30 @@ class PaperTradingEngine:
 
 
 def _create_engine() -> PaperTradingEngine:
-    if not settings.binance_testnet and settings.binance_api_key:
-        from app.trading.live_engine import LiveTradingEngine
-        logger.info("Creating LiveTradingEngine (mainnet)")
-        return LiveTradingEngine()
-    logger.info("Creating PaperTradingEngine (testnet/no key)")
+    """live v1 (A-fixed Turtle + safety layer) whenever API keys are configured.
+
+    Legacy strategy C (LiveTradingEngine, averaging-down tranches) is never constructed for
+    live trading anymore (spec v2 §1). Without keys → PaperTradingEngine; its C signal path
+    only runs when STRATEGY=legacy_c (simulation only).
+    """
+    if settings.binance_api_key and settings.strategy == "live_v1":
+        from app.trading.live_v1.engine import LiveV1Engine, LiveV1Settings
+        from app.trading.live_v1.exchange import MAINNET_URL, TESTNET_URL, BinanceExchange
+        url = TESTNET_URL if settings.binance_testnet else MAINNET_URL
+        logger.info(f"Creating LiveV1Engine ({'TESTNET' if settings.binance_testnet else 'MAINNET'}, "
+                    f"direction={settings.live_v1_direction})")
+        ex = BinanceExchange(url, settings.binance_api_key, settings.binance_api_secret,
+                             symbol=settings.live_v1_symbol)
+        return LiveV1Engine(ex, LiveV1Settings(symbol=settings.live_v1_symbol,
+                                               direction=settings.live_v1_direction))
+    if settings.binance_api_key:
+        logger.error(f"STRATEGY={settings.strategy!r}: live trading only supports live_v1 → paper engine")
+    logger.info("Creating PaperTradingEngine (no live trading)")
     return PaperTradingEngine()
+
+
+def legacy_c_signals_enabled() -> bool:
+    return settings.strategy == "legacy_c" and type(trading_engine) is PaperTradingEngine
 
 
 trading_engine = _create_engine()

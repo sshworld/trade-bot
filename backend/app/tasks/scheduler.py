@@ -9,7 +9,7 @@ from app.analysis.engine import compute_basic_indicators
 from app.analysis.signals import generate_signals
 from app.analysis.trend_filter import build_trend_context
 from app.binance.kline_store import kline_store
-from app.trading.engine import trading_engine
+from app.trading.engine import legacy_c_signals_enabled, trading_engine
 from app.ws.manager import ConnectionManager
 
 logger = logging.getLogger(__name__)
@@ -157,6 +157,8 @@ async def signal_scan(mgr: ConnectionManager):
         for tf, signal, price in all_confluence:
             logger.info(f"[SCAN] Confluence → engine: {tf} {signal['direction']} strength={signal.get('strength',0):.2f} @ {price}")
             tagged = {**signal, "message": f"[{tf}] {signal['message']}", "timeframe": tf}
+            if not legacy_c_signals_enabled():
+                continue                      # strategy C disabled (spec v2 §1)
             try:
                 position = await trading_engine.on_signal(tagged, price)
             except Exception as e:
@@ -224,7 +226,7 @@ async def run_analysis_for_timeframe(mgr: ConnectionManager, tf: str):
             logger.info(f"[CONFIRMED] {tf} → {len(signals)} signals (filter-only, no entry)")
             return
 
-        for sig in confluence_in_tf:
+        for sig in confluence_in_tf if legacy_c_signals_enabled() else []:
             confirmed = {**sig, "strength": min(sig["strength"] + 0.1, 1.0)}
             confirmed["message"] = f"[확정 {tf}] {sig['message']}"
             confirmed["timeframe"] = tf
@@ -252,9 +254,33 @@ async def run_analysis_for_timeframe(mgr: ConnectionManager, tf: str):
 
 async def anomaly_heartbeat():
     """주기적 이상 감지 (stale price 등)."""
+    if hasattr(trading_engine, "check_heartbeat"):       # live v1: gate + 🚨 handled by the engine
+        await trading_engine.check_heartbeat()
+        return
     alert = trading_engine.anomaly_detector.check_heartbeat()
     if alert:
         await trading_engine.alert_sender.send(alert)
+
+
+async def v1_bar_tick():
+    try:
+        await trading_engine.on_bar_tick()
+    except Exception as e:
+        logger.error(f"[V1] bar tick failed: {e}")
+
+
+async def external_heartbeat_ping():
+    """spec §8.4: 1-minute ping to an external monitor (alerts if pings stop for 3 min)."""
+    from app.config import settings as _s
+    hb = getattr(trading_engine, "hb", None)
+    if not _s.healthcheck_ping_url or (hb is not None and not hb.loop_ok()):
+        return                                            # stale loop → stop pinging → monitor alerts
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10) as c:
+            await c.get(_s.healthcheck_ping_url)
+    except Exception as e:
+        logger.warning(f"[HB] external ping failed: {e}")
 
 
 async def daily_summary_push():
@@ -298,6 +324,11 @@ def start_scheduler(mgr: ConnectionManager):
         daily_summary_push, "cron", hour=0, minute=0, timezone="Asia/Seoul",
         id="daily_summary_push", max_instances=1,
     )
+
+    scheduler.add_job(external_heartbeat_ping, "interval", seconds=60, id="external_heartbeat_ping",
+                      max_instances=1)
+    if hasattr(trading_engine, "on_bar_tick"):
+        scheduler.add_job(v1_bar_tick, "interval", seconds=20, id="v1_bar_tick", max_instances=1)
 
     # Live 엔진이면 reconciliation 루프 추가
     if hasattr(trading_engine, "reconcile_orders"):

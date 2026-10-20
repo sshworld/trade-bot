@@ -24,7 +24,7 @@ def _trade(i, pnl, fee="0.5", minute=0, **det):
 def test_daily_summary_fields_and_math():
     trades = [
         _trade(1, "10.5", minute=10),            # net +10
-        _trade(2, "-19.5", minute=20, slippage_usdt="0.3", funding_usdt="0.2"),  # net -20.5
+        _trade(2, "-19.5", minute=20, slippage_usdt="0.3", funding_usdt="0.2", fee_diff_usdt="0.05"),  # net -20.2 (slippage already in fills)
         _trade(3, "6.5", minute=30),             # net +6
         _trade(4, "100", minute=-5),             # 전날 → 제외
     ]
@@ -36,12 +36,13 @@ def test_daily_summary_fields_and_math():
         "ledger_vs_exchange_balance_diff", "memo",
     }
     assert s["trades"] == 3 and s["wins"] == 2
-    assert s["net_pnl_usdt"] == -4.5
-    assert s["net_pnl_pct"] == -0.45
+    assert s["net_pnl_usdt"] == -4.2
+    assert s["net_pnl_pct"] == -0.42
     assert s["fees"] == 1.5 and s["slippage"] == 0.3 and s["funding"] == 0.2
-    assert s["end_balance"] == 995.5
-    # 1000 → 1010 (peak) → 989.5 : (20.5/1010)*100
-    assert s["max_drawdown_pct"] == round(20.5 / 1010 * 100, 2)
+    assert s["end_balance"] == 995.8
+    # 1000 → 1010 (peak) → 989.8 : (20.2/1010)*100
+    assert s["max_drawdown_pct"] == round(20.2 / 1010 * 100, 2)
+    assert s["ledger_vs_exchange_fee_diff"] == 0.05
     assert s["incidents"] == 2 and s["memo"] == ""
     assert s["expected_vs_backtest_deviation"] is None
     assert s["ledger_vs_exchange_balance_diff"] is None

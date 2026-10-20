@@ -26,6 +26,7 @@ select = ["E", "F", "I", "N", "W"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = ["testnet: needs BINANCE_TESTNET_API_KEY/SECRET (Binance Futures testnet, real testnet orders)"]
 
 [dependency-groups]
 dev = [

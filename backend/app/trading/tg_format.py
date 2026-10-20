@@ -183,10 +183,13 @@ def kst_day_bounds(date: str) -> tuple[int, int]:
 
 
 def trade_net_pnl(t: Any) -> Decimal:
-    """거래 순손익 = realized_pnl(gross) - total_fees - slippage - funding."""
+    """거래 순손익 = realized_pnl(gross, 실제 체결가 기준) - total_fees - funding.
+
+    슬리피지는 이미 실제 체결가(avgPrice)에 반영돼 있으므로 다시 빼지 않는다 (별도 표시만).
+    funding_usdt 는 비용 부호(+ = 지불).
+    """
     det = _get(t, "signal_details") or {}
-    return (_d(_get(t, "realized_pnl")) - _d(_get(t, "total_fees"))
-            - _d(det.get("slippage_usdt")) - _d(det.get("funding_usdt")))
+    return _d(_get(t, "realized_pnl")) - _d(_get(t, "total_fees")) - _d(det.get("funding_usdt"))
 
 
 def build_daily_summary(
@@ -201,8 +204,9 @@ def build_daily_summary(
     """date(KST, YYYY-MM-DD) 에 청산된 거래로 일일 결산 dict 생성.
 
     trades: TradeRecord 또는 dict (persistence.load_trades() 결과 그대로).
-    net PnL 은 수수료·슬리피지·펀딩 차감 후. 슬리피지/펀딩은 trade.signal_details 의
-    slippage_usdt / funding_usdt 가 있으면 사용 (현재 엔진은 미기록 → 0).
+    net PnL = 실현손익(체결가 기준, 슬리피지 포함) - 수수료 - 펀딩. 슬리피지는 정보용으로 별도 합산.
+    live v1 은 수수료/펀딩을 거래소 income/userTrades 에서, 슬리피지를 기준가 대비 체결가로 기록.
+    ledger_vs_exchange_fee_diff = Σ(거래소 수수료 − 장부 추정 수수료).
     start_balance 미지정 시 end_balance - net 으로 역산. MDD 는 당일 청산 순서 기준
     실현 잔고 곡선의 최대 낙폭(%).
     """
@@ -213,6 +217,7 @@ def build_daily_summary(
     fees = sum((_d(_get(t, "total_fees")) for t in day), Decimal("0"))
     slip = sum((_d((_get(t, "signal_details") or {}).get("slippage_usdt")) for t in day), Decimal("0"))
     fund = sum((_d((_get(t, "signal_details") or {}).get("funding_usdt")) for t in day), Decimal("0"))
+    fee_diff = sum((_d((_get(t, "signal_details") or {}).get("fee_diff_usdt")) for t in day), Decimal("0"))
     nets = [trade_net_pnl(t) for t in day]
     net = sum(nets, Decimal("0"))
     wins = sum(1 for n in nets if n > 0)
@@ -246,5 +251,6 @@ def build_daily_summary(
         "incidents": int(incidents),
         "expected_vs_backtest_deviation": expected_vs_backtest_deviation,
         "ledger_vs_exchange_balance_diff": ledger_vs_exchange_balance_diff,
+        "ledger_vs_exchange_fee_diff": round(float(fee_diff), 4),
         "memo": "",
     }

@@ -125,6 +125,35 @@ def load_account() -> AccountState | None:
         return None
 
 
+# ── Generic KV (live v1 meta: live start, cursors, current position intent) ──
+
+def save_kv(key: str, value: dict | None):
+    try:
+        conn = _ensure_db()
+        if value is None:
+            conn.execute("DELETE FROM account_state WHERE key = ?", (f"kv:{key}",))
+        else:
+            conn.execute(
+                "INSERT OR REPLACE INTO account_state (key, value) VALUES (?, ?)",
+                (f"kv:{key}", json.dumps(value, default=str)),
+            )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Failed to save kv {key}: {e}")
+
+
+def load_kv(key: str) -> dict | None:
+    try:
+        conn = _ensure_db()
+        row = conn.execute("SELECT value FROM account_state WHERE key = ?", (f"kv:{key}",)).fetchone()
+        conn.close()
+        return json.loads(row[0]) if row else None
+    except Exception as e:
+        logger.error(f"Failed to load kv {key}: {e}")
+        return None
+
+
 # ── Open Positions ─────────────────────────────────────────────
 
 def save_position(pos: Position):
