@@ -226,3 +226,26 @@ NRestarts=0
 # Ops recovery order: `sudo systemctl stop <unit>` (ends the retry loop) → investigate → `sudo rm <app>/CI_HALTED` →
 # CI rollback/deploy (or a deliberate start). Not drilled: a real VPS reboot (live runs on the same host); the
 # guard is in the unit/drop-in and CI_HALTED is on disk, so a reboot hits the same refused ExecStartPre.
+
+## R1 positive confirm — tradebot-ci-confirm.timer run 2026-10-21T08:05:01Z (17:05 KST), after the real 08:00Z (17:00 KST) close
+# /var/log/tradebot/ci-confirm.log (verbatim):
+[2026-10-21T08:05:01Z] [live] action=confirm dry_run=0 current=0d82b19 unit=active
+[2026-10-21T08:05:01Z] [live] confirm: nothing pending (current=0d82b19 marker=yes)
+[2026-10-21T08:05:01Z] [testnet] action=confirm dry_run=0 current=ca87f853d7cb9c3d3d1bd62246e08a06b72fc5cb unit=active
+[2026-10-21T08:05:01Z] [testnet] stale pending marker of 2c1eb769bc0f0d9792722cde08cb8f4182d3cc17 removed (not current)
+[2026-10-21T08:05:01Z] [testnet] marker of ca87f853d7cb9c3d3d1bd62246e08a06b72fc5cb REVOKED (.citest_revoked: confirm after first real 4h close failed: process changed since the deploy (MainPID 34365 → 36250))
+[2026-10-21T08:05:01Z] [testnet] ALERT: Healthchecks /fail sent (/etc/tradebot/ci-alert-testnet.env)
+[2026-10-21T08:05:01Z] [testnet] FAIL: confirm: ca87f853d7cb9c3d3d1bd62246e08a06b72fc5cb NOT marked — process changed since the deploy (MainPID 34365 → 36250)
+# Result: .citest_verified NOT granted to ca87f85; the pending marker was revoked (fail-safe direction). Cause: the deploy
+# recorded MainPID 34365 (04:32:48Z); at 06:23:13Z (15:23 KST) unattended-upgrades/needrestart restarted live_v6-citest
+# (→ PID 36250) and live_v6-live (→ PID 36258). needrestart was set list-only at ~06:55Z (90-tradebot.conf).
+# Canary PID check (read 08:19Z): live_v6-citest MainPID=36250 NRestarts=0 ActiveEnterTimestamp=06:23:13Z, i.e. the
+# canary PID stayed 36250 with no restart from 06:23Z through the 08:05Z confirm (and after it). The revocation is due
+# only to the 15:23 KST needrestart restart, not to any restart near the close.
+# Engine itself processed the 08:00Z close: /var/lib/live_v6-citest/testnet.json last_bar_close=1792569600000 (17:00 KST),
+# all 6 models last_open=1792555200000 (13:00 KST), positions=0.
+# Marker files now: <app>/ca87f85…/.citest_revoked (08:05:01Z). Last .citest_verified = 660eea8 (01:38:18Z).
+# R1 positive path (a pending marker becoming .citest_verified) is therefore still NOT proven; it needs a fresh deploy
+# of ca87f85 (or successor) and the next real close without an intervening restart.
+# Note: at 08:19–08:30Z the citest unit was stopped/started 3 times by the testnet test runs for fix-unknown-position
+# (7dda201) — current MainPID 45343 on ca87f85.
