@@ -1,0 +1,4 @@
+# live_v6 test environment: runtime + pytest + pylint (tests/test_static.py W0101 must RUN, not skip — TA review 950438b)
+-r requirements.txt
+pytest==9.1.1
+pylint==4.1.3

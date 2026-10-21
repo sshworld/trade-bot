@@ -1,7 +1,8 @@
 """Static guard (TA, live bug 2026-10-20): unreachable code in the live package fails the suite. The deployed fae64af had
 `self.on_bar_close()` after `return` in healthy() — dead code, so 4h decisions never ran. Two independent checks:
-a dependency-free AST walk (always runs) and pylint W0101 / W0102-free run (when pylint is installed: pip install pylint)."""
+a dependency-free AST walk (always runs) and pylint W0101 / W0102-free run (pylint from live_v6/requirements-dev.txt; skipped only if absent and LIVE_V6_REQUIRE_PYLINT != 1)."""
 import ast
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -46,7 +47,12 @@ def test_no_unreachable_code_in_live_package():
 
 
 def test_pylint_w0101_unreachable():
-    pytest.importorskip("pylint")
+    # pylint is in requirements-dev.txt. LIVE_V6_REQUIRE_PYLINT=1 (pre-deploy / CI) turns a missing pylint into a FAILURE
+    # instead of a silent skip (TA review 950438b, condition c).
+    if os.getenv("LIVE_V6_REQUIRE_PYLINT") == "1":
+        import pylint  # noqa: F401  pylint: disable=import-outside-toplevel,unused-import
+    else:
+        pytest.importorskip("pylint")
     r = subprocess.run([sys.executable, "-m", "pylint", "--disable=all", "--enable=W0101", "--score=n", str(PKG)],
                        capture_output=True, text=True, timeout=300)
     assert r.returncode == 0, r.stdout[-3000:]

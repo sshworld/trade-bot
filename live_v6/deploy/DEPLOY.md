@@ -13,7 +13,9 @@ sudo -u bot python3 -m venv .venv && sudo -u bot .venv/bin/pip install httpx web
 sudo install -m 600 -o bot /dev/null /etc/live_v6.env   # then edit (never commit / echo it):
 #   LIVE_V6_NETWORK=testnet                        # mainnet only with LIVE_V6_MAINNET_ACK=real-money
 #   BINANCE_TESTNET_API_KEY=…  BINANCE_TESTNET_API_SECRET=…     (mainnet: BINANCE_API_KEY / BINANCE_API_SECRET)
-#   TELEGRAM_BOT_TOKEN=…  TELEGRAM_CHAT_ID=…   HEARTBEAT_URL=https://hc-ping.com/<uuid>   (optional)
+#   TELEGRAM_BOT_TOKEN=…  TELEGRAM_CHAT_ID=…
+#   NEVER HEARTBEAT_URL here: it goes only into the external heartbeat_ping.sh env (/etc/tradebot/heartbeat.env);
+#   in the bot env the in-process DeadMan would overwrite the external /fail every 60 s (TA review 950438b)
 #     (Telegram is only ever used when LIVE_V6_NETWORK=mainnet; testnet writes the would-be messages to
 #      LIVE_V6_ALERT_LOG, default /var/lib/live_v6/<network>_alerts.jsonl)
 #   LIVE_V6_STRATEGY=h7t

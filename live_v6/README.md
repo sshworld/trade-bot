@@ -36,7 +36,8 @@ Files: `engine.py` execution + safety · `strategy.py` pure v6 model (ATR/M20/H7
 ## Commands (from the repo root)
 ```bash
 VENV=/workspace/.venv-live6/bin/python
-$VENV -m pytest live_v6/tests -m "not testnet and not slow"          # offline suite
+$VENV -m pip install -r live_v6/requirements-dev.txt                 # pytest + pylint (W0101 check must run)
+LIVE_V6_REQUIRE_PYLINT=1 $VENV -m pytest live_v6/tests -m "not testnet and not slow"   # offline suite
 $VENV -m pytest live_v6/tests -m testnet -v                          # TESTNET (real orders, DOGE/SOL/XRP, prefix v6t)
 $VENV -m pytest live_v6/tests -m slow                                # replay vs trades_H7_100.csv
 research/.venv/bin/python -m live_v6.replay.export_data              # one-off data export (research venv)
@@ -118,6 +119,9 @@ untouched, nothing is closed (§8c L0). Fresh data on every feed → unblocked +
 ## Dead-man heartbeat
 `HEARTBEAT_URL` (e.g. healthchecks.io): GET every 60 s while healthy (started, not halted, REST reconcile OK in the
 last 15 s, no unprotected position). Unset → no-op.
+**Production: leave it unset in the bot env** (TA review 950438b). The external `deploy/heartbeat_ping.sh` (own env
+file) is the dead-man; it also checks bar progress and sends `/fail`, which an in-process success ping on the same
+URL would overwrite within 60 s. `tests/test_deadman.py::test_build_without_heartbeat_url_never_pings` pins the no-op.
 
 ## Telegram
 Env `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (both required; without them messages are only logged).
