@@ -173,3 +173,11 @@
 - 모의거래에서 보고할 것: 부분 체결 빈도, 슬리피지 대 가정, 체결률.
 - 그 뒤 TA 안전 점검을 하고, 실거래 여부는 **성헌이 결정**함.
 - '판정 불가'와 FAIL은 실거래 후보가 아님.
+
+## 부록 A (2026-10-21 16:30 KST, Trading Advisor). 손익 계산 전에 고정
+H25·H26 손익은 아직 한 번도 계산하지 않음. 이 부록을 붙이기 전 본문 sha는 `fb07ad28dee6e8bab0b197b464dbc9bf561224e07eb59f79251786896f6f5b8f`.
+1. **H26 알트 분기: 2021-12-01부터.** 월 파일 70개(14개월 × 5코인)가 모두 있고 CHECKSUM도 맞지만, 2021-07 월 파일 커버리지가 83.87%라 §5의 3번 조건(≥99%)을 채우지 못함. 일별 파일로 채우는 것은 허용하지 않음(데이터 정의 변경에 해당). 근거 매니페스트: `/workspace/trade-bot-research/data/v5/premium_2020-10_2021-11_manifest.sha256` sha256 `0156e034e50b504478d728ec368c689bdecbb54a00b8e8df66bb6b811c4af999`.
+2. **시장 데이터 매니페스트:** `/workspace/trade-bot-research/data/v5/v10_1_market_manifest.sha256` sha256 `dd09ac6681d12dcbae8862c7dbe34d52c5fc82ac004daff4d95383b49e71a4d4` (원본 zip 1,305개, 공개 CHECKSUM 모두 통과, TA가 sha와 줄 수를 다시 확인함). 이 목록에 없는 파일(일별 premium zip 포함)은 쓰지 않음. 커버리지 100% 미만인 파일 44개는 바이낸스 원본의 빈 구간이며, 기존 규칙대로 처리함(빈 구간은 채우지 않음, 데이터 90% 미만 정산은 건너뜀). 알트의 첫 정산(2021-12-01 00:00 UTC)도 건너뜀.
+3. **macro_events.csv:** `803f9d586c6f78d887c2d60d87def172c6aa44a56453ba5d61790c0ffcdf1cf5` (그대로).
+4. **H7-T 리플레이 일치(0d82b19):** `results/h7t_replay_0d82b19/`. $100 기준 355/355건, $300 기준 405/405건. 참조 열만 자른 파일 sha가 사고 전 값과 같음: `trades_H7T_100_refcols.csv` `35c1ce9b568f43addb903e58a91d7ce37b0a70935b1c6e8e0088f7f99fa48bb0`, `trades_H7T_300_refcols.csv` `cb9ac43aa62525779af44ddb849f7a20e2dcd2364965adbf2968439545b05b41`. 자산 기록 `equity_H7T_100.csv` `18fad39c883a44403e2b9512d3ac6a860d278a44bcefd7cb3517e3a6df313585`, `equity_H7T_300.csv` `7b87d7aa180c209b2f0e62901a0faed545aa857d9512f3a09c8060593b897bd3`. C4 결합 계산은 이 자산 기록을 씀.
+이로써 §8의 손익 전 고정 항목 네 개가 모두 채워짐. 이후 변경은 새 버전으로만 함.
