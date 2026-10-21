@@ -81,6 +81,37 @@ def build(network: str | None = None):
     return rest, eng
 
 
+def loop_once(eng, q, budget_s: float = 1.0, clock=time.time, block: bool = True, hooks=()):
+    """One iteration of the production loop: drain websocket events for up to `budget_s`, then `eng.tick()` (REST
+    reconcile, guards, 4h bar decision, dead-man). `block=False` drains without waiting (simulated-clock tests)."""
+    deadline = clock() + budget_s
+    while clock() < deadline or not block:
+        try:
+            ev = q.get(timeout=max(0.0, deadline - clock())) if block else q.get_nowait()
+        except queue.Empty:
+            break
+        try:
+            eng.on_event(ev)
+        except Exception:  # noqa: BLE001  never let one event kill the loop; REST reconcile re-checks
+            log.exception("event handling failed")
+    try:
+        eng.tick(force_reconcile=False)
+    except Exception:  # noqa: BLE001
+        log.exception("tick failed")
+    for h in hooks:                                      # e.g. Telegram read-only commands; never raise into the loop
+        try:
+            h()
+        except Exception:  # noqa: BLE001
+            log.exception("loop hook failed")
+
+
+def serve(eng, q, should_stop, clock=time.time, block=True, hooks=()):
+    """Production loop (run() and the end-to-end runner test share it)."""
+    eng.tick()
+    while not should_stop():
+        loop_once(eng, q, clock=clock, block=block, hooks=hooks)
+
+
 def run(network=None):
     logging.basicConfig(level=os.getenv("LIVE_V6_LOG", "INFO"), format="%(asctime)s %(levelname)s %(name)s %(message)s")
     for noisy in ("httpx", "httpcore"):                 # per-request "HTTP Request: ..." INFO lines flood the journal
@@ -96,22 +127,8 @@ def run(network=None):
     stop = {"flag": False}
     signal.signal(signal.SIGTERM, lambda *a: stop.update(flag=True))
     signal.signal(signal.SIGINT, lambda *a: stop.update(flag=True))
-    eng.tick()
-    while not stop["flag"]:
-        deadline = time.time() + 1.0
-        while time.time() < deadline:
-            try:
-                ev = q.get(timeout=max(0.0, deadline - time.time()))
-            except queue.Empty:
-                break
-            try:
-                eng.on_event(ev)
-            except Exception:  # noqa: BLE001  never let one event kill the loop; REST reconcile re-checks
-                log.exception("event handling failed")
-        try:
-            eng.tick(force_reconcile=False)
-        except Exception:  # noqa: BLE001
-            log.exception("tick failed")
+    hooks = []
+    serve(eng, q, lambda: stop["flag"], hooks=hooks)
     for st in streams:
         st.stop()
     eng.tg.send("⏹ live_v6 종료 (거래소 손절은 그대로 유지)")
