@@ -80,6 +80,17 @@ class V6H7(Strategy):
         atr = m.get("atr")
         return Decimal(repr(self.p.k * atr)) if atr and atr == atr else None
 
+    def exit_line(self, sym, side: int):
+        """TA R4: the model's exit line for an unknown position — 20-bar (M) channel of the last closed 4h bars: low
+        for a long, high for a short — and ATR14 (4h) for the 'price already beyond the line' case. None until the
+        model has M bars and a finite ATR."""
+        m = self.state["models"].get(sym) or {}
+        lows, highs, atr = m.get("lows") or [], m.get("highs") or [], m.get("atr")
+        if len(lows) < self.p.M or len(highs) < self.p.M or not (atr and atr == atr and atr > 0):
+            return None
+        line = min(lows[-self.p.M:]) if side > 0 else max(highs[-self.p.M:])
+        return Decimal(repr(line)), Decimal(repr(atr))
+
     # ── scheduled decision ──
     def on_bar_close(self, T, ctx, force=False):
         new, flags = {}, {}

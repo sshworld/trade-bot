@@ -6,7 +6,9 @@ The engine calls (all on one thread, never concurrently):
                              → intents. Intrabar strategies decide here.
   on_bar_close(T, ctx, force) scheduled decision at each `decision_interval_ms` boundary T (REST-confirmed bars)
                              → intents; raise DataNotReady to be called again on the next tick.
-  stop_hint(sym)             stop distance to use if the engine must adopt an unknown position
+  stop_hint(sym)             stop distance hint (ATR-based) — informational
+  exit_line(sym, side)       (exit line, ATR) for a position NOT in the state file (TA R4): the engine places its
+                             protective stop there; None = not available yet (engine retries, never closes)
   on_live_closed(sym, model_entry_open, reason, t_ms, ctx)
                              the LIVE position was closed by the exchange stop / a safety close (not by a strategy
                              exit) — e.g. stopped out while the bot was down → close the model too (no phantom hold)
@@ -64,4 +66,7 @@ class Strategy:
         return False
 
     def stop_hint(self, sym):
+        return None
+
+    def exit_line(self, sym, side: int):
         return None

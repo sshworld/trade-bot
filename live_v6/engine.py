@@ -12,6 +12,13 @@ Invariants (ported from the verified live_v1 safety layer, spec v1 §8-10 / v2 �
   * Any reconcile mismatch, API-error burst, unknown order, ledger gap or margin-mode failure blocks NEW entries;
     existing stops are never touched by a block.
   * strategy equity ≤ halt_fraction (0.75) × start capital (transfers excluded) → flatten all + halt (§8e-2). PF < 0.8 after 30 trades = review alert only.
+  * TA R4 (unknown positions): a position on the exchange that is NOT in the state file is never market-closed — not
+    by the strategy (model_sync), not by a breach / stop-failure close, not by flatten-all. It is kept in
+    st["unknown"]: 🚨 once (Telegram on mainnet only), new entries blocked for THAT coin, its risk counted in the
+    portfolio risk, and if it has no exchange stop a closePosition MARK_PRICE stop is placed at the model's exit
+    line (20-bar channel low for a long / high for a short; 1×ATR(14, 4h) from the mark if price is already beyond
+    the line). Existing stops are never moved or cancelled. Resolution is manual (close by hand, or
+    `python -m live_v6.tools.adopt_position`).
 """
 from __future__ import annotations
 
@@ -45,6 +52,7 @@ REASON_KO = {"stop_loss": "손절", "signal_exit": "M20 채널 청산", "model_s
              "sl_failed": "손절 등록 실패 정리", "emergency": "비상 전체 정리", "dust_entry": "소액 부분 체결 정리"}
 
 # entry-blocking reasons (transient; cleared automatically when the condition clears)
+UNKNOWN_POS = "unknown_position"                    # per-coin entry block (st["unknown"]), never a global block
 STARTUP, MISMATCH, API_ERRORS, UNKNOWN_ORDER, LEDGER, MARGIN, WS_STALE, MARKET_STALE, BAR_STALE, RATE_LIMIT = (
     "startup", "reconcile_mismatch", "api_errors", "order_status_unknown", "ledger_vs_exchange", "margin_mode",
     "stream_stale", "market_data_stale", "bar_close_stale", "rate_limited")
@@ -84,7 +92,7 @@ class Settings:
     pf_review_after: int = 30
     ledger_tol_pct: float = 0.5
     income_interval_s: float = 60
-    fallback_stop_pct: float = 3.0      # adopting an unknown position when no ATR is available
+    fallback_stop_pct: float = 3.0      # unused since TA R4 (unknown positions are no longer auto-adopted); kept for config output
     use_streams: bool = False           # runner sets True; then stale/down streams block entries
     pace_weight: int = 1000             # startup pacing: used weight ≥ this (≈42 % of 2400) → wait for the next minute
     bar_stale_s: float = 300.0          # TA: bar decision (meta.last_bar_close + every model's last_open) not advanced
@@ -111,7 +119,7 @@ class V6Engine:
         self.clock = clock or time.time
         self.sleep = sleep or time.sleep
         self.st = self.store.load() or {}
-        for k in ("strategy", "pos", "intents", "meta"):
+        for k in ("strategy", "pos", "intents", "meta", "unknown"):
             self.st.setdefault(k, {})
         if strategy is None:
             from .strategies.v6_h7 import V6H7
@@ -245,7 +253,7 @@ class V6Engine:
             self.resolve_intents()
             self.reconcile()
             for s in self.cfg.symbols:
-                if s not in self.st["pos"]:
+                if s not in self.st["pos"] and s not in self.st["unknown"]:
                     self.pace()
                     self.ensure_isolated(s)
             if "start_wallet" not in self.meta:
@@ -258,7 +266,8 @@ class V6Engine:
             self.save()
             self.blocks.pop(STARTUP, None)
             self.started = True
-            self.notify(f"▶️ live_v6 시작 · {self.ex!r} · 포지션 {len(self.st['pos'])}개 · "
+            self.notify(f"▶️ live_v6 시작 · {self.ex!r} · 포지션 {len(self.st['pos'])}개"
+                         + (f" · 기록 없는 포지션 {','.join(self.st['unknown'])}" if self.st["unknown"] else "") + " · "
                          f"{'중단 상태: ' + self.meta['halted'] if self.meta.get('halted') else '진입 가능' if self.entries_allowed() else '진입 차단: ' + ','.join(self.blocks)}")
         except ExchangeError as e:
             log.error("startup failed, entries stay blocked: %s", e)
@@ -491,14 +500,17 @@ class V6Engine:
         out = []
         for s, p in positions.items():
             if p["amt"] != 0:
-                j = self.st["pos"].get(s) or {}
+                j = self.st["pos"].get(s) or self.st["unknown"].get(s) or {}   # TA R4: unknown positions count too
                 out.append({"sym": s, "side": 1 if p["amt"] > 0 else -1,
-                            "risk_frac": float(j.get("risk_frac", self.cfg.sizing.risk_pct / 100 * 2))})  # unknown → 1%
+                            "risk_frac": float(j.get("risk_frac", self.cfg.sizing.risk_pct / 100 * 2))})  # not yet seen → 1%
         return out
 
     def enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None) -> bool:
         if not self.entries_allowed():
             self.skip(sym, "safety_block", str(self.meta.get("halted") or self.blocks))
+            return False
+        if sym in self.st["unknown"]:                       # TA R4: entries blocked for THIS coin only
+            self.skip(sym, UNKNOWN_POS, f"exchange position {self.st['unknown'][sym].get('amt')} not in the state file")
             return False
         if not (stop_dist > 0):
             self.skip(sym, "risk_cap", f"stop distance {stop_dist}")
@@ -799,17 +811,19 @@ class V6Engine:
         """Close the WHOLE position with reduceOnly MARKET orders until the exchange shows flat. The protective stop stays
         until flat is confirmed. A remainder (partial fill) is always closed in ONE order (no dust chunks)."""
         j = self.st["pos"].get(sym)
-        if j is not None and not j.get("closing"):
+        if j is None:                                       # TA R4: never market-close a position the state file
+            log.critical("close(%s, %s) refused: not in the state file (unknown positions are never closed by the bot)",
+                         sym, reason)                       # does not hold — whatever the caller
+            return False
+        if not j.get("closing"):
             j["closing"], j["close_reason"] = True, reason
             self.save()
         for attempt in range(self.cfg.exit_attempts):
             try:
                 amt = self.x("positions", self.cfg.symbols)[sym]["amt"]
                 if amt == 0:
-                    self._after_flat(sym, (j or {}).get("close_reason", reason))
+                    self._after_flat(sym, j.get("close_reason", reason))
                     return True
-                if j is None:
-                    j = {"cid": f"{self.cfg.cid_prefix}{sym.removesuffix('USDT')}a{self.now_ms() // 1000}", "exit_seq": 0}
                 seq = int(j.get("exit_seq", 0))
                 j["exit_seq"] = seq + 1
                 if not j.get("exit_ref"):
@@ -827,10 +841,9 @@ class V6Engine:
             except ExchangeError as e:
                 log.error("%s exit attempt %d failed: %s", sym, attempt + 1, e)
             self.sleep(self.cfg.exit_retry_delay_s)
-        n = (j or {}).get("exit_fail_n", 0) + 1
-        if j is not None:
-            j["exit_fail_n"] = n
-            self.save()
+        n = j.get("exit_fail_n", 0) + 1
+        j["exit_fail_n"] = n
+        self.save()
         if n == 1 or n % self.cfg.exit_alert_every == 0:
             self.alert(f"청산 미완료 — 계속 재시도 ({sym})", f"사유 {reason} · 거래소 손절 유지 · {n}회째")
         return False
@@ -849,13 +862,11 @@ class V6Engine:
         unprotected position → close ALL positions (reduceOnly MARKET) + halt."""
         self.halt(f"emergency: {reason}")
         self.alert("비상청산 — 전 포지션 정리 + 매매 중단", reason)
-        try:
-            pos = self.x("positions", self.cfg.symbols)
-        except ExchangeError:
-            pos = {s: {"amt": D(1)} for s in self.st["pos"]}     # unknown → try every journaled symbol
-        for s, p in pos.items():
-            if p["amt"] != 0 or s in self.st["pos"]:
-                self.close(s, f"emergency ({reason})")
+        for s in list(self.st["pos"]):                   # TA R4: only positions in the state file; unknown ones keep
+            self.close(s, f"emergency ({reason})")          # their exchange stop and stay for manual handling
+        if self.st["unknown"]:
+            self.alert("비상청산 대상 아님 — 기록 없는 포지션은 그대로 둠 (손절 유지, 수동 처리)",
+                       ", ".join(f"{s} {u.get('amt')} 손절 {u.get('stop_px')}" for s, u in self.st["unknown"].items()))
 
     def record_close(self, sym, reason):
         j = self.st["pos"].pop(sym, None)
@@ -918,6 +929,10 @@ class V6Engine:
             if amt == 0:
                 if j:
                     self.record_close(sym, j.get("close_reason") or "stop_loss")
+                u = self.st["unknown"].pop(sym, None)
+                if u is not None:                               # TA R4: resolved by hand (or its stop fired)
+                    self.save()
+                    self.notify(f"✅ 기록 없는 포지션 해소 — {sym} {u.get('amt')} 거래소에서 0 · 이 코인 신규 진입 재개", kind="recovery")
                 pending = tuple(f"{c}p" for c in self.st["intents"])        # pre-arm of an unresolved entry stays
                 for o in orders:
                     if (str(o["client_id"]).startswith(self.cfg.cid_prefix) and (o["close_position"] or o["reduce_only"])
@@ -931,12 +946,18 @@ class V6Engine:
                 if f"{MARGIN}:{sym}" in self.blocks:
                     self.ensure_isolated(sym)
                 continue
+            if j is None:
+                if any(it.get("sym") == sym for it in self.st["intents"].values()):
+                    mismatch.append(f"{sym} 진입 결과 확인 중 {amt}")     # our own unresolved entry (pre-arm protects it)
+                    continue
+                self._unknown_position(sym, pos[sym], orders, marks.get(sym))   # TA R4: never closed
+                continue
+            if sym in self.st["unknown"]:                    # adopted into the state file by ops meanwhile
+                self.st["unknown"].pop(sym, None)
+                self.save()
             if amt < 0:
                 mismatch.append(f"{sym} 숏 포지션 {amt} (롱 전용 전략)")
-            if j is None:
-                mismatch.append(f"{sym} 기록 없는 포지션 {amt} @ {pos[sym]['entry']}")
-                j = self._adopt(sym, pos[sym])
-            elif D(j["qty"]) != abs(amt):
+            if D(j["qty"]) != abs(amt):
                 mismatch.append(f"{sym} 수량 불일치 로컬 {j['qty']} / 거래소 {amt}")
                 j["qty"] = str(abs(amt))                       # exchange wins
                 self.save()
@@ -985,18 +1006,90 @@ class V6Engine:
         self.check_ledger()
         self.check_halts()
 
-    def _adopt(self, sym, p) -> dict:
-        """Unknown position on the exchange → journal it (exchange wins), stop = entry − 2×ATR (or 3%)."""
-        side = 1 if p["amt"] > 0 else -1
-        sd = self.strategy.stop_hint(sym) or p["entry"] * D(self.cfg.fallback_stop_pct) / 100
-        stp = stop_price(self.rules[sym], p["entry"], side, sd)
-        j = {"cid": f"{self.cfg.cid_prefix}{sym.removesuffix('USDT')}a{self.now_ms() // 1000}", "side": side,
-             "qty": str(abs(p["amt"])), "entry_px": str(p["entry"]), "stop_px": str(stp), "stop_dist": str(sd),
-             "risk_usdt": str(abs(p["entry"] - stp) * abs(p["amt"])), "risk_frac": self.cfg.sizing.max_risk_pct / 100,
-             "model_entry_open": None, "opened_ms": self.now_ms(), "adopted": True, "stop_seq": 0, "exit_seq": 0}
-        self.st["pos"][sym] = j
+    def _unknown_position(self, sym, p, orders, mark):
+        """TA R4: exchange position that is NOT in the state file (opened by hand, or the state file was lost).
+        Never market-closed by the bot. 🚨 once, entries blocked for this coin (st["unknown"]), risk counted in the
+        portfolio risk; without an exchange stop → closePosition MARK_PRICE stop at the model's exit line (20-bar
+        channel low / high), or 1×ATR(14, 4h) from the mark if price is already beyond it. An existing stop is never
+        moved or cancelled. Resolution is manual (close by hand, or tools/adopt_position.py)."""
+        amt = p["amt"]
+        side = 1 if amt > 0 else -1
+        u = self.st["unknown"].get(sym)
+        first = u is None or int(u.get("side", 0)) != side
+        if first:
+            u = {"side": side, "detected_ms": self.now_ms(), "stop_seq": 0}
+            self.st["unknown"][sym] = u
+        u.update(amt=str(amt), qty=str(abs(amt)), entry_px=str(p["entry"]))
+        prot = self.find_stop(amt, orders)
+        if prot is not None:
+            if u.get("stop_cid") != prot.get("client_id"):
+                u["stop_src"] = "exchange (existing, untouched)"
+            u.update(stop_px=str(prot["stop_price"]), stop_cid=prot.get("client_id"))
+            u.pop("unprotected", None)
+        else:
+            self._unknown_stop(sym, u, amt, mark)
+        self._unknown_risk(u, mark if mark is not None else p["entry"])
         self.save()
-        return j
+        if first:
+            self.alert(f"기록 없는 포지션 발견 — {sym} 자동 청산 안 함 · 이 코인 신규 진입 차단 · 수동 처리 필요",
+                       f"{sym} {'롱' if side > 0 else '숏'} {abs(amt)} @ {p['entry']} · "
+                       f"손절 {u.get('stop_px') or '없음 (등록 재시도 중)'} ({u.get('stop_src', '-')}) · "
+                       f"포트폴리오 위험에 포함 {u.get('risk_frac', 0):.2%} · 해결: 직접 청산 또는 ops가 adopt_position 으로 등록")
+
+    def _unknown_stop(self, sym, u, amt, mark):
+        side = 1 if amt > 0 else -1
+        ref = self.strategy.exit_line(sym, side)            # (20-bar channel line, ATR14 4h) or None
+        if ref is None or mark is None:
+            self._unknown_unprotected(sym, u, "모델 채널/ATR 또는 mark 가격 없음")
+            return
+        line, atr = D(ref[0]), D(ref[1])
+        r = self.rules[sym]
+        beyond = (mark <= line) if side > 0 else (mark >= line)
+        px, src = (mark - side * atr, "1×ATR14 from mark (price beyond the 20-bar line)") if beyond else (line, "20-bar channel exit line")
+        px = r.price(px, "down" if side > 0 else "up")
+        seq = int(u.get("stop_seq", 0))
+        u["stop_seq"] = seq + 1
+        self.save()
+        cs = "SELL" if side > 0 else "BUY"
+        cid = f"{self.cfg.cid_prefix}{sym.removesuffix('USDT')}u{int(u['detected_ms']) // 1000}s{seq}"
+        try:
+            try:
+                o = self.x("stop", sym, cs, px, cid)          # closePosition=true, MARK_PRICE (reduce-only by nature)
+            except WouldTrigger:
+                if beyond:
+                    raise
+                px = r.price(mark - side * atr, "down" if side > 0 else "up")
+                src = "1×ATR14 from mark (line would trigger)"
+                o = self.x("stop", sym, cs, px, f"{cid}b")
+        except ExchangeError as e:
+            self._unknown_unprotected(sym, u, f"손절 등록 실패 {px}: {str(e)[:80]}")
+            return
+        u.update(stop_px=str(o.get("stop_price") or px), stop_cid=o.get("client_id", cid), stop_src=src,
+                 stop_line=str(line), stop_atr=str(atr))
+        u.pop("unprotected", None)
+        log.warning("%s unknown position %s: stop %s placed (%s)", sym, amt, u["stop_px"], src)
+
+    def _unknown_unprotected(self, sym, u, why):
+        n = int(u.get("unprot_n", 0)) + 1
+        u["unprot_n"] = n
+        u["unprotected"] = u.get("unprotected") or self.clock()
+        self.save()
+        if n > 1 and n % self.cfg.exit_alert_every == 0:
+            self.alert(f"기록 없는 포지션 손절 미확인 — {sym} 정리 안 함, 계속 재시도", why)
+        log.error("%s unknown position without a confirmed stop: %s", sym, why)
+
+    def _unknown_risk(self, u, ref_px):
+        """Risk of the unknown position in the portfolio-risk sum: |ref − stop| × qty / capital (no stop → 10 % of
+        notional as a placeholder), never below the old 'unknown → 2 × risk_pct' floor."""
+        qty, ref = D(u["qty"]), D(ref_px)
+        stp = D(u["stop_px"]) if u.get("stop_px") else None
+        risk = abs(ref - stp) * qty if stp is not None else ref * qty / 10
+        try:
+            cap = self.strategy_equity() if "start_wallet" in self.meta else D(self.meta.get("wallet") or 0)
+        except Exception:  # noqa: BLE001
+            cap = D(self.meta.get("wallet") or 0)
+        frac = float(risk / cap) if cap > 0 else 1.0
+        u.update(risk_usdt=str(risk), risk_frac=max(frac, self.cfg.sizing.risk_pct / 100 * 2))
 
     # ───────────────────────── ledger / halts ─────────────────────────
     def check_ledger(self):
@@ -1085,6 +1178,7 @@ class V6Engine:
         if self.clock() - self.meta.get("heartbeat_at", 0) >= self.cfg.heartbeat_s:
             self.meta["heartbeat_at"] = self.clock()
             self.notify(f"💓 작동 중 · 잔고 {D(self.meta.get('wallet', '0')):.2f} USDT · 포지션 {len(self.st['pos'])}개"
+                         + (f" · 기록 없는 포지션 {','.join(self.st['unknown'])}" if self.st["unknown"] else "")
                          + (f" · 진입 보류: {','.join(self.blocks)}" if self.blocks else "")
                          + (f" · 중단: {self.meta['halted']}" if self.meta.get("halted") else ""))
             self.save()
@@ -1105,6 +1199,9 @@ class V6Engine:
                   + (f" ({t['R']}R)" if t.get("R") else "") for t in trades]
         lines.append("보유: " + (", ".join(f"{s} {j['qty']} @ {j['entry_px']} 손절 {j['stop_px']}" for s, j in self.st["pos"].items())
                                  or "없음"))
+        if self.st["unknown"]:
+            lines.append("⚠️ 기록 없는 포지션 (자동 청산 안 함): " + ", ".join(
+                f"{s} {u.get('amt')} @ {u.get('entry_px')} 손절 {u.get('stop_px') or '없음'}" for s, u in self.st["unknown"].items()))
         if sk:
             lines.append("진입 건너뜀: " + ", ".join(f"{k} {v}" for k, v in sorted(sk.items())))
         if self.meta.get("halted"):
@@ -1115,7 +1212,7 @@ class V6Engine:
         """§8c L3(c): exchange unresponsive > api_dead_s AND a position without a confirmed stop → flatten all."""
         if self._fault_since is None or self.clock() - self._fault_since <= self.cfg.api_dead_s:
             return
-        bad = [s for s, j in self.st["pos"].items() if j.get("unprotected")]
+        bad = [s for s, j in self.st["pos"].items() if j.get("unprotected")]   # unknown positions never trigger a flatten
         if bad and not str(self.meta.get("halted") or "").startswith("emergency"):
             self.emergency_flatten_all(f"API 무응답 {self.clock() - self._fault_since:.0f}s + 손절 미확인 {bad}")
 
@@ -1208,4 +1305,5 @@ class V6Engine:
         position flagged unprotected, bar decisions current (no stale-bar block)."""
         return (self.started and not self.meta.get("halted") and self.clock() - self._last_ok_reconcile <= 3 * self.cfg.reconcile_s
                 and BAR_STALE not in self.blocks
-                and not any(j.get("unprotected") for j in self.st["pos"].values()))
+                and not any(j.get("unprotected") for j in self.st["pos"].values())
+                and not any(u.get("unprotected") for u in self.st["unknown"].values()))
