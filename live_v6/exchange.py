@@ -5,6 +5,12 @@ Error model:
   ExchangeUnavailable  timeout / network / 5xx / 429 / 418 / -1007 / -1021 (timestamp outside recvWindow) — for WRITES the outcome is UNKNOWN:
                        the caller must query by client id before any retry (never double-submit an entry).
   WouldTrigger         -2021: the stop would trigger immediately.
+  RateLimited          429 / 418 (an ExchangeUnavailable): the client backs off for Retry-After. During the backoff only
+                       PROTECTIVE calls reach the network (stop placement, cancel, reduceOnly MARKET close, and the
+                       position / open-order / order-status reads that verify them); every other call (account, market
+                       data, income, funding, entries, leverage/margin) fails fast without a request, so the engine
+                       blocks new entries (§8c L0, transient — never a flatten by itself).
+Weight: X-MBX-USED-WEIGHT-1M of every response is tracked (`used_weight_1m`, per-minute peaks in `weight_peaks`).
 
 HARD GUARD: mainnet is refused unless LIVE_V6_NETWORK=mainnet AND LIVE_V6_MAINNET_ACK=real-money, and it is always
 refused inside pytest / when LIVE_V6_FORBID_MAINNET is set. Keys are never logged.
@@ -30,6 +36,8 @@ MAINNET_URL = "https://fapi.binance.com"
 TESTNET_URL = "https://testnet.binancefuture.com"
 
 
+RATE_DEFAULT_S = {429: 10.0, 418: 120.0}   # backoff when Retry-After is missing
+WEIGHT_WARN = 1200                         # 50 % of the 2400/min IP limit → warning log
 RECV_WINDOW_MS = 10000                     # -1021 seen live with 5000 (VPS latency spikes); Binance max 60000
 
 class ExchangeError(Exception):
@@ -48,6 +56,11 @@ class WouldTrigger(OrderRejected):
 
 class ExchangeUnavailable(ExchangeError):
     pass
+
+
+class RateLimited(ExchangeUnavailable):
+    """429 / 418, or a non-protective call refused locally while backing off (Retry-After)."""
+
 
 
 class MainnetForbidden(RuntimeError):
@@ -98,6 +111,11 @@ class BinanceREST:
         self._key = api_key
         self._secret = api_secret.encode()
         self._client = httpx.Client(base_url=self.base_url, timeout=timeout, transport=transport)
+        self.clock = time.time
+        self.backoff_until = 0.0
+        self.used_weight_1m = 0
+        self.weight_peaks: dict[int, int] = {}      # minute (epoch // 60) → max X-MBX-USED-WEIGHT-1M seen
+        self.requests: dict[int, int] = {}          # minute → requests sent
 
     def __repr__(self):
         return f"BinanceREST({self.base_url})"   # never the keys
@@ -105,7 +123,23 @@ class BinanceREST:
     def close(self):
         self._client.close()
 
-    def _req(self, method, path, params=None, signed=True, key_only=False):
+    def _note_weight(self, r):
+        m = int(self.clock() // 60)
+        self.requests[m] = self.requests.get(m, 0) + 1
+        w = r.headers.get("X-MBX-USED-WEIGHT-1M") or r.headers.get("x-mbx-used-weight-1m")
+        if w and str(w).isdigit():
+            self.used_weight_1m = int(w)
+            if int(w) > self.weight_peaks.get(m, 0):
+                self.weight_peaks[m] = int(w)
+                if int(w) >= WEIGHT_WARN:
+                    log.warning("Binance used weight %s/2400 in the current minute", w)
+        for k in [k for k in self.weight_peaks if k < m - 180]:
+            self.weight_peaks.pop(k, None)
+            self.requests.pop(k, None)
+
+    def _req(self, method, path, params=None, signed=True, key_only=False, critical=False):
+        if self.clock() < self.backoff_until and not critical:
+            raise RateLimited(f"{method} {path}: rate-limit backoff {self.backoff_until - self.clock():.0f}s (not sent)")
         params = dict(params or {})
         headers = {"X-MBX-APIKEY": self._key} if key_only else {}
         if signed:
@@ -117,7 +151,16 @@ class BinanceREST:
             r = self._client.request(method, path, params=params, headers=headers)
         except (httpx.TimeoutException, httpx.TransportError) as e:
             raise ExchangeUnavailable(f"{method} {path}: {type(e).__name__}") from e
-        if r.status_code >= 500 or r.status_code in (408, 418, 429):
+        self._note_weight(r)
+        if r.status_code in (418, 429):
+            try:
+                ra = float(r.headers.get("Retry-After"))
+            except (TypeError, ValueError):
+                ra = RATE_DEFAULT_S[r.status_code]
+            self.backoff_until = max(self.backoff_until, self.clock() + ra)
+            log.error("Binance HTTP %s on %s %s → backoff %.0fs (protective calls only)", r.status_code, method, path, ra)
+            raise RateLimited(f"{method} {path}: HTTP {r.status_code} retry-after {ra:.0f}s")
+        if r.status_code >= 500 or r.status_code == 408:
             raise ExchangeUnavailable(f"{method} {path}: HTTP {r.status_code}")
         try:
             body = r.json() if r.content else {}
@@ -185,7 +228,7 @@ class BinanceREST:
         raise ExchangeError("no USDT asset in account")
 
     def positions(self, symbols) -> dict[str, dict]:
-        rows = self._req("GET", "/fapi/v2/positionRisk")
+        rows = self._req("GET", "/fapi/v2/positionRisk", critical=True)
         out = {s: {"amt": Decimal(0), "entry": Decimal(0), "leverage": None, "margin_type": None} for s in symbols}
         for r in rows:
             s = r.get("symbol")
@@ -197,8 +240,8 @@ class BinanceREST:
         return out
 
     def open_orders(self, symbol) -> list[dict]:
-        std = self._req("GET", "/fapi/v1/openOrders", {"symbol": symbol})
-        algo = self._req("GET", "/fapi/v1/openAlgoOrders", {"symbol": symbol})
+        std = self._req("GET", "/fapi/v1/openOrders", {"symbol": symbol}, critical=True)
+        algo = self._req("GET", "/fapi/v1/openAlgoOrders", {"symbol": symbol}, critical=True)
         algo = algo if isinstance(algo, list) else (algo.get("orders") or [])
         out = [{"kind": "std", "id": str(o["orderId"]), "client_id": o.get("clientOrderId", ""), "symbol": symbol,
                 "type": o.get("type"), "side": o.get("side"), "stop_price": Decimal(str(o.get("stopPrice") or 0)),
@@ -254,7 +297,7 @@ class BinanceREST:
              "newOrderRespType": "RESULT"}
         if reduce_only:
             p["reduceOnly"] = "true"
-        return _norm_order(self._req("POST", "/fapi/v1/order", p))
+        return _norm_order(self._req("POST", "/fapi/v1/order", p, critical=bool(reduce_only)))   # closes: protective
 
     def stop(self, symbol, side, trigger, client_id, qty=None) -> dict:
         """Exchange-side STOP_MARKET on MARK_PRICE. Default closePosition=true (closes exactly the live qty, whatever it
@@ -266,11 +309,11 @@ class BinanceREST:
             p["closePosition"] = "true"
         else:
             p["quantity"], p["reduceOnly"] = fmt(qty), "true"
-        return _norm_algo(self._req("POST", "/fapi/v1/algoOrder", p))
+        return _norm_algo(self._req("POST", "/fapi/v1/algoOrder", p, critical=True))
 
     def get_order(self, symbol, client_id) -> dict | None:
         try:
-            return _norm_order(self._req("GET", "/fapi/v1/order", {"symbol": symbol, "origClientOrderId": client_id}))
+            return _norm_order(self._req("GET", "/fapi/v1/order", {"symbol": symbol, "origClientOrderId": client_id}, critical=True))
         except OrderRejected as e:
             if e.code == -2013:
                 return None
@@ -279,9 +322,9 @@ class BinanceREST:
     def cancel(self, symbol, order: dict):
         try:
             if order.get("kind") == "algo":
-                self._req("DELETE", "/fapi/v1/algoOrder", {"symbol": symbol, "algoId": order["id"]})
+                self._req("DELETE", "/fapi/v1/algoOrder", {"symbol": symbol, "algoId": order["id"]}, critical=True)
             else:
-                self._req("DELETE", "/fapi/v1/order", {"symbol": symbol, "orderId": order["id"]})
+                self._req("DELETE", "/fapi/v1/order", {"symbol": symbol, "orderId": order["id"]}, critical=True)
         except OrderRejected as e:
             if e.code not in (-2011, -2013):
                 raise

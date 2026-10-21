@@ -45,9 +45,9 @@ REASON_KO = {"stop_loss": "손절", "signal_exit": "M20 채널 청산", "model_s
              "sl_failed": "손절 등록 실패 정리", "emergency": "비상 전체 정리", "dust_entry": "소액 부분 체결 정리"}
 
 # entry-blocking reasons (transient; cleared automatically when the condition clears)
-STARTUP, MISMATCH, API_ERRORS, UNKNOWN_ORDER, LEDGER, MARGIN, WS_STALE, MARKET_STALE, BAR_STALE = (
+STARTUP, MISMATCH, API_ERRORS, UNKNOWN_ORDER, LEDGER, MARGIN, WS_STALE, MARKET_STALE, BAR_STALE, RATE_LIMIT = (
     "startup", "reconcile_mismatch", "api_errors", "order_status_unknown", "ledger_vs_exchange", "margin_mode",
-    "stream_stale", "market_data_stale", "bar_close_stale")
+    "stream_stale", "market_data_stale", "bar_close_stale", "rate_limited")
 
 
 @dataclass
@@ -179,7 +179,7 @@ class V6Engine:
                 self.unblock(API_ERRORS)
         return r
 
-    TRANSIENT = (API_ERRORS, WS_STALE)
+    TRANSIENT = (API_ERRORS, WS_STALE, RATE_LIMIT)
 
     def block(self, reason, detail="", alert=None):
         """Pause NEW entries. Transient reasons (§8c L0) alert only once they last > transient_alert_s."""
@@ -1114,7 +1114,14 @@ class V6Engine:
             self.startup()
             if not self.started:
                 return
-        if force_reconcile or self._dirty or self.clock() - self._last_reconcile >= self.cfg.reconcile_s:
+        backoff = self.rate_backoff()
+        if backoff:                                         # 429/418: honour Retry-After — no polling (it extends a
+            self.block(RATE_LIMIT, f"Retry-After {backoff:.0f}s")   # ban); exchange stops stay; protective calls
+            self.check_api_dead()                           # (stop / cancel / close) still go out when triggered
+        elif RATE_LIMIT in self.blocks:
+            self.unblock(RATE_LIMIT)
+            self._dirty = True
+        if not backoff and (force_reconcile or self._dirty or self.clock() - self._last_reconcile >= self.cfg.reconcile_s):
             self._dirty = False
             self._last_reconcile = self.clock()
             try:
@@ -1128,12 +1135,21 @@ class V6Engine:
         self.check_transient()
         self.reports()
         try:
-            self.on_bar_close()                             # scheduled strategy decision (4h close → models step)
+            if not backoff:
+                self.on_bar_close()                         # scheduled strategy decision (4h close → models step)
         except Exception:  # noqa: BLE001  never skip the guards / dead-man below; bar_guard alerts if it persists
             log.exception("bar decision failed (retry next tick)")
         self.bar_guard()
         if self.deadman is not None:
             self.deadman.maybe_ping(self.healthy())
+
+    def rate_backoff(self) -> float:
+        """Seconds left of the REST client's 429/418 backoff (0 if none / fake exchange)."""
+        ex = getattr(self.ex, "inner", self.ex)
+        until = getattr(ex, "backoff_until", 0) or 0
+        clk = getattr(ex, "clock", None)
+        left = until - (clk() if callable(clk) else time.time())
+        return left if left > 0 else 0.0
 
     def bar_lag(self) -> tuple[int | None, list]:
         """Latest decision boundary T and what has NOT been committed for it yet: [] when meta.last_bar_close ≥ T and
