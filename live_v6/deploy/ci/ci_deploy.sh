@@ -86,6 +86,7 @@ marker_ok() {     # $1 = dir name: marker present, root-owned, sha matches the d
 verified_target() {   # newest release with a valid marker, excluding $1 (the failed / current one)
   local d best="" bt="" t
   for d in "$APP"/*/; do
+    [ -L "${d%/}" ] && continue   # never the `current` symlink itself
     d=$(basename "$d"); [ "$d" = "$1" ] && continue
     [ "$(release_sha "$d")" = "$(release_sha "$1" 2>/dev/null)" ] && continue
     marker_ok "$d" || continue
@@ -133,7 +134,7 @@ write_pending() {  # $1 = dir name, $2 = sha40, $3 = verify summary. TA R1: rest
 do_confirm() {    # TA R1 — run by the root timer ~5 min after every 4h close
   local cur f now T rb pid nr t0 msg
   cur=$(current_dir)
-  for d in "$APP"/*/; do d=$(basename "$d")   # a pending marker of a release that is no longer current is void
+  for d in "$APP"/*/; do [ -L "${d%/}" ] && continue; d=$(basename "$d")   # (skip the `current` symlink) a pending marker of a release that is no longer current is void
     [ "$d" != "$cur" ] && [ -f "$APP/$d/$MARK.pending" ] && { rm -f "$APP/$d/$MARK.pending"; log "stale pending marker of $d removed (not current)"; }
   done
   f=$APP/$cur/$MARK.pending
@@ -361,7 +362,7 @@ case "$ACTION" in
   status)
     cur=$(current_dir)
     log "current=$cur sha=$(release_sha "$cur") marker=$(marker_ok "$cur" && echo yes || { [ -f "$APP/$cur/$MARK.pending" ] && echo pending-first-real-close || echo no; }) manual_rollback_target=$(verified_target "$cur" | sed 's/^$/none/') failed_deploy_rollback_target=$(verified_target "__none__" | sed 's/^$/none/') window_wait=$(in_window)s intents=$(intents_count)"
-    for d in "$APP"/*/; do [ -f "$d/$REVOKED" ] && log "revoked: $(basename "$d") — $(tail -1 "$d/$REVOKED")"; done
+    for d in "$APP"/*/; do [ -L "${d%/}" ] && continue; [ -f "$d/$REVOKED" ] && log "revoked: $(basename "$d") — $(tail -1 "$d/$REVOKED")"; done
     [ -f "$APP/CI_HALTED" ] && log "CI_HALTED: $(cat "$APP/CI_HALTED")"
     verify_stops || true; state_check 0 1 || true ;;
   confirm)
