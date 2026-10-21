@@ -1,0 +1,79 @@
+start 2026-10-22 02:28:20 KST sha e2695d9328d1d57189e337c11c32ab288a72e924
+pip install requirements-dev OK
+venv ok numpy 2.5.4 pandas 3.0.6
+live before: active 51227 0 
+citest before: 57304 0 
+citest stopped: inactive
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.7.0 -- /home/ops/.venv-tbtest/bin/python
+rootdir: /home/ops/tb-e2695d9328d1d57189e337c11c32ab288a72e924/live_v6
+configfile: pytest.ini
+plugins: anyio-4.15.1, platformdirs-4.13.5
+collecting ... collected 248 items / 197 deselected / 51 selected
+
+live_v6/tests/test_faults.py::test_stop_present_after_fill[testnet] PASSED [  1%]
+live_v6/tests/test_faults.py::test_isolated_set_and_read_back[testnet] PASSED [  3%]
+live_v6/tests/test_faults.py::test_isolated_failure_blocks_entries[testnet] PASSED [  5%]
+live_v6/tests/test_faults.py::test_no_averaging[testnet] PASSED          [  7%]
+live_v6/tests/test_faults.py::test_margin_skip_alert[testnet] PASSED     [  9%]
+live_v6/tests/test_faults.py::test_kill_after_fill_then_restart[testnet] PASSED [ 11%]
+live_v6/tests/test_faults.py::test_kill_before_entry_sent_cleans_prearm[testnet] PASSED [ 13%]
+live_v6/tests/test_faults.py::test_new_stop_confirmed_before_old_cancelled[testnet] PASSED [ 15%]
+live_v6/tests/test_faults.py::test_restart_with_stop_removed[testnet] PASSED [ 17%]
+live_v6/tests/test_faults.py::test_restart_multiple_positions_rearms_all[testnet] PASSED [ 19%]
+live_v6/tests/test_faults.py::test_entry_response_lost_no_duplicate[testnet] PASSED [ 21%]
+live_v6/tests/test_faults.py::test_entry_never_sent_is_not_resent[testnet] PASSED [ 23%]
+live_v6/tests/test_faults.py::test_drop_during_status_query[testnet] PASSED [ 25%]
+live_v6/tests/test_faults.py::test_outage_while_holding_never_closes[testnet] PASSED [ 27%]
+live_v6/tests/test_faults.py::test_http_faults_map_to_unavailable[testnet-http429] PASSED [ 29%]
+live_v6/tests/test_faults.py::test_http_faults_map_to_unavailable[testnet-http418] PASSED [ 31%]
+live_v6/tests/test_faults.py::test_http_faults_map_to_unavailable[testnet-http503] PASSED [ 33%]
+live_v6/tests/test_faults.py::test_http_faults_map_to_unavailable[testnet-http500] PASSED [ 35%]
+live_v6/tests/test_faults.py::test_http_faults_map_to_unavailable[testnet-timeout] PASSED [ 37%]
+live_v6/tests/test_faults.py::test_http_faults_map_to_unavailable[testnet-connect] PASSED [ 39%]
+live_v6/tests/test_faults.py::test_stop_rejected_closes_only_that_position[testnet] PASSED [ 41%]
+live_v6/tests/test_faults.py::test_unprotectable_position_flattens_all_and_halts[testnet] PASSED [ 43%]
+live_v6/tests/test_faults.py::test_breach_closes_only_that_position[testnet] PASSED [ 45%]
+live_v6/tests/test_faults.py::test_drawdown_25pct_flattens_all_and_halts[testnet] PASSED [ 47%]
+live_v6/tests/test_faults.py::test_overreaction_5xx_three_in_a_row[testnet] PASSED [ 49%]
+live_v6/tests/test_faults.py::test_overreaction_429_once[testnet] PASSED [ 50%]
+live_v6/tests/test_faults.py::test_overreaction_stop_rejected_once_then_retry_ok[testnet] PASSED [ 52%]
+live_v6/tests/test_faults.py::test_exit_response_lost_no_duplicate[testnet] PASSED [ 54%]
+live_v6/tests/test_faults.py::test_partial_fills_and_failed_final_exit[testnet] PASSED [ 56%]
+live_v6/tests/test_faults.py::test_risk_cap_enforced_at_placement[testnet] PASSED [ 58%]
+live_v6/tests/test_faults.py::test_max_positions_enforced_at_placement[testnet] PASSED [ 60%]
+live_v6/tests/test_faults.py::test_ledger_matches_income_after_round_trip[testnet] PASSED [ 62%]
+live_v6/tests/test_faults.py::test_ledger_gap_blocks_entries[testnet] PASSED [ 64%]
+live_v6/tests/test_gate_sigkill.py::test_gate_sigkill_multiple_positions_all_stops_present[offline] SKIPPED [ 66%]
+live_v6/tests/test_gate_sigkill.py::test_gate_sigkill_multiple_positions_all_stops_present[testnet] PASSED [ 68%]
+live_v6/tests/test_gate_sigkill.py::test_gate_sigkill_right_after_entry_fill[offline] SKIPPED [ 70%]
+live_v6/tests/test_gate_sigkill.py::test_gate_sigkill_right_after_entry_fill[testnet] PASSED [ 72%]
+live_v6/tests/test_h7t.py::test_h7t_touch_market_entry_stop_immediately[testnet] PASSED [ 74%]
+live_v6/tests/test_h7t.py::test_h7t_partial_fill_stop_sized_no_chase[testnet] PASSED [ 76%]
+live_v6/tests/test_h7t.py::test_h7t_revert_below_level_no_extra_exit_no_reentry[testnet] PASSED [ 78%]
+live_v6/tests/test_h7t.py::test_h7t_breakout_while_down_no_catch_up_entry[testnet] PASSED [ 80%]
+live_v6/tests/test_h7t.py::test_h7t_killed_right_after_entry_stop_on_exchange[testnet] PASSED [ 82%]
+live_v6/tests/test_h7t.py::test_h7t_stopped_while_down_closes_model_as_stopout[testnet] PASSED [ 84%]
+live_v6/tests/test_streams.py::test_testnet_market_stream_drop_and_resubscribe[offline] SKIPPED [ 86%]
+live_v6/tests/test_streams.py::test_testnet_market_stream_drop_and_resubscribe[testnet] PASSED [ 88%]
+live_v6/tests/test_streams.py::test_testnet_user_stream_fill_and_keepalive[offline] SKIPPED [ 90%]
+live_v6/tests/test_streams.py::test_testnet_user_stream_fill_and_keepalive[testnet] PASSED [ 92%]
+live_v6/tests/test_streams.py::test_testnet_overreaction_ws_down_30s[offline] SKIPPED [ 94%]
+live_v6/tests/test_streams.py::test_testnet_overreaction_ws_down_30s[testnet] PASSED [ 96%]
+live_v6/tests/test_streams.py::test_testnet_market_stream_killed_stale_guard[offline] SKIPPED [ 98%]
+live_v6/tests/test_streams.py::test_testnet_market_stream_killed_stale_guard[testnet] PASSED [100%]
+
+=========================== short test summary info ============================
+SKIPPED [1] live_v6/tests/test_gate_sigkill.py:54: testnet only
+SKIPPED [1] live_v6/tests/test_gate_sigkill.py:69: testnet only
+SKIPPED [1] live_v6/tests/test_streams.py:305: testnet only
+SKIPPED [1] live_v6/tests/test_streams.py:333: testnet only
+SKIPPED [1] live_v6/tests/test_streams.py:362: testnet only
+SKIPPED [1] live_v6/tests/test_streams.py:404: testnet only
+========== 45 passed, 6 skipped, 197 deselected in 593.52s (0:09:53) ===========
+pytest rc=0
+leftovers: positions none | open orders none
+citest: active pid/NRestarts 57986 0 on /opt/tradebot-ci-testnet/app/ca87f853d7cb9c3d3d1bd62246e08a06b72fc5cb
+live after: active 51227 0 
+end 2026-10-22 02:38:26 KST
+ALLDONE

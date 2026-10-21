@@ -15,7 +15,11 @@
 # TA review of 1ffa86c (02:19 KST 10/22) — conditions before live
 
 ## Progress checkpoints (KST)
-- 02:3x offline: fail-safe fix + tests written; offline suite (LIVE_V6_REQUIRE_PYLINT=1, not testnet/slow) 189 passed.
+- 02:24 offline: fail-safe fix + tests written; offline suite (LIVE_V6_REQUIRE_PYLINT=1, -m "not testnet and not slow")
+  189 passed, 53 deselected (167 before + 22 new).
+- 02:25 code commit e2695d9 (pushed to fix-leverage-readback). Code frozen from here; later commits = evidence only.
+- 02:26–02:27 testnet drill on e2695d9: PASS (§4).
+- 02:28–02:38 51 testnet set on e2695d9: 45 passed, 6 skipped (offline params of testnet tests), 0 failed (§5).
 
 ## 1. symbolConfig failure is fail-safe — FOUND A HOLE in 1ffa86c, fixed
 - 1ffa86c engine.py:672 `cfg_lev = self.x("leverage", sym)` sat inside `try … except ExchangeError`. Every transport /
@@ -60,3 +64,45 @@
   `AssertionError: assert 'symbolConfig 20x' in 'set 10x failed: read-back 20x'` — 2eb429b never reads symbolConfig.
 - Correction to the earlier "2 of 4 fail on old code": with BOTH old files 3 fail — also
   test_rest_set_leverage_echo_and_symbolconfig_parse (`set_leverage` returned None in 2eb429b: body discarded).
+
+## 4. Testnet drill — PASS (code e2695d9, VPS ~/tb-e2695d9…, live_v6-citest stopped 02:26:49–02:27:06 KST)
+`python -m live_v6.tests.drill_leverage_readback` (tests/drill_leverage_readback.py), CI testnet key, DOGEUSDT; Notifier
+token/chat empty, mode testnet → nothing sent to Telegram. VPS log stamps are UTC (17:26 UTC = 02:26 KST).
+```
+17:26:54 pre-check leftovers: positions none | open orders none
+17:26:54 manual set DOGEUSDT 20x response: {"symbol": "DOGEUSDT", "leverage": 20, "maxNotionalValue": "900000"}
+17:26:55 before: positionRisk 20 | symbolConfig raw (signed GET): [{"symbol": "DOGEUSDT", "marginType": "ISOLATED", "isAutoAddMargin": false, "leverage": 20, "maxNotionalValue": "900000"}]
+17:26:56 enter() returned True | skip_log tail []
+17:26:56 ENTERED DOGEUSDT qty 9321 entry_px 0.083200 lev 10 stop_px 0.08071 cid v6tDOGE1792603616 entry_order_id 2370411200
+17:26:56 exchange stops: [('algo', '1000000250428238', 'v6tDOGE1792603616s0', '0.08071', True)]
+17:26:56 after: positionRisk 10 | symbolConfig 10
+17:26:56 entry order (GET): {"orderId": 2370411200, "status": "FILLED", "clientOrderId": "v6tDOGE1792603616", "avgPrice": "0.083200", "executedQty": "9321", "type": "MARKET", "reduceOnly": false, "side": "BUY", "updateTime": 1792603616480}
+17:27:01 FINAL leftovers: positions none | open orders none
+17:27:01 ENGINE LOG: 2026-10-21 17:26:56,396 WARNING live_v6.engine DOGEUSDT leverage 10x: set response 10x, positionRisk 10x, symbolConfig 10x
+17:27:01 notifier records: 3 | sent to Telegram: 0 | new 🚨 during the entry: 0
+17:27:01 DRILL PASS
+```
+Bot-client raw REST (signature/timestamp stripped), in order:
+- POST /fapi/v1/leverage {DOGEUSDT, 10} → `{"symbol":"DOGEUSDT","leverage":10,"maxNotionalValue":"1800000"}` (t 1792603616356)
+- GET /fapi/v2/positionRisk → DOGEUSDT `"leverage":"10"` (t …367; no lag on testnet this time)
+- GET /fapi/v1/symbolConfig {symbol: DOGEUSDT}, signed → `[{"symbol":"DOGEUSDT","marginType":"ISOLATED","isAutoAddMargin":false,"leverage":10,"maxNotionalValue":"1800000"}]` (t …386)
+- POST /fapi/v1/algoOrder pre-arm reduceOnly STOP_MARKET 9321 @0.08071 → algoId 1000000250428233
+- POST /fapi/v1/order MARKET BUY 9321 cid v6tDOGE1792603616 → orderId 2370411200 FILLED avg 0.083200
+- POST /fapi/v1/algoOrder closePosition STOP_MARKET @0.08071 → algoId 1000000250428238; pre-arm 1000000250428233 cancelled
+- cleanup: engine reduceOnly MARKET SELL 9321 cid v6tDOGE1792603616x0 → orderId 2370411207 FILLED; positions/open orders 0
+- live_v6-live PID 51227 NRestarts 0 before and after; citest restarted active (PID 57304, still ca87f853).
+Full output: 2026-10-22_leverage_readback_drill.txt.
+
+## 5. 51 testnet set on the final code head e2695d9 — 45 passed, 6 skipped, 0 failed
+- VPS ~/tb-e2695d9…, ~/.venv-tbtest: `pip install -r live_v6/requirements-dev.txt` OK; `import numpy, pandas, pylint` OK
+  (numpy 2.5.4, pandas 3.0.6). live_v6-citest stopped 02:28 → restarted active at 02:38 KST (PID 57986, still ca87f853).
+- `pytest live_v6/tests -m testnet -v`: collected 248 / 197 deselected / 51 selected → **45 passed, 6 skipped, 593.5 s,
+  rc 0**. The 6 skips are the `[offline]` parameters of testnet-marked tests ("testnet only"), same 51-structure as R4
+  (39+6 failed+6 skipped = 51 on 2026-10-21 attempt 3).
+- After: testnet DOGE/SOL/XRP positions none, open orders none. live_v6-live PID 51227 NRestarts 0 before and after.
+- Full log: 2026-10-22_leverage_readback_testnet51.txt.
+
+## State / not done
+- NOT deployed to live. Live = 2eb429b, PID 51227, NRestarts 0 throughout.
+- citest's own testnet BTCUSDT/BNBUSDT positions (its state file) were not touched; the drill and the 51 only use
+  DOGE/SOL/XRP and both ended at 0 positions / 0 open orders there.
