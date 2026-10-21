@@ -102,6 +102,10 @@ class FakeExchange:
 
     def set_leverage(self, s, lev):
         self.lev[s] = int(lev)
+        return int(lev)                      # BinanceREST: leverage echoed in the response body
+
+    def leverage(self, s):                   # GET /fapi/v1/symbolConfig
+        return self.lev[s]
 
     def market(self, s, side, qty, cid, reduce_only=False, fill_qty=None):
         if cid in self.orders:

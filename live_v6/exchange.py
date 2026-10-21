@@ -256,6 +256,17 @@ class BinanceREST:
                           "margin_type": "ISOLATED" if mt == "isolated" else "CROSSED" if mt in ("cross", "crossed") else mt.upper()}
         return out
 
+    def leverage(self, symbol) -> int:
+        """Configured leverage from GET /fapi/v1/symbolConfig (the per-symbol config record). Used as the leverage
+        read-back when /fapi/v2/positionRisk still shows the old value right after a successful POST /fapi/v1/leverage
+        (live 2026-10-22 01:39 KST: BNBUSDT set 10x OK, positionRisk read-back 20x, symbolConfig 10x minutes later)."""
+        rows = self._req("GET", "/fapi/v1/symbolConfig", {"symbol": symbol})
+        rows = rows if isinstance(rows, list) else [rows]
+        for r in rows:
+            if r.get("symbol") == symbol:
+                return int(r["leverage"])
+        raise ExchangeError(f"symbolConfig: no row for {symbol}")
+
     def open_orders(self, symbol) -> list[dict]:
         std = self._req("GET", "/fapi/v1/openOrders", {"symbol": symbol}, critical=True)
         algo = self._req("GET", "/fapi/v1/openAlgoOrders", {"symbol": symbol}, critical=True)
@@ -306,8 +317,10 @@ class BinanceREST:
             if e.code != -4046:          # already set
                 raise
 
-    def set_leverage(self, symbol, lev: int):
-        self._req("POST", "/fapi/v1/leverage", {"symbol": symbol, "leverage": int(lev)})
+    def set_leverage(self, symbol, lev: int) -> int | None:
+        """Returns the leverage echoed in the response body ({"leverage": N, ...}), None if absent."""
+        r = self._req("POST", "/fapi/v1/leverage", {"symbol": symbol, "leverage": int(lev)})
+        return int(r["leverage"]) if isinstance(r, dict) and r.get("leverage") is not None else None
 
     def market(self, symbol, side, qty, client_id, reduce_only=False) -> dict:
         p = {"symbol": symbol, "side": side, "type": "MARKET", "quantity": fmt(qty), "newClientOrderId": client_id,

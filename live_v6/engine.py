@@ -662,10 +662,17 @@ class V6Engine:
         # leverage set + read-back; the same fresh positions read is the FINAL gate right before the order:
         # no averaging, ISOLATED, max positions, total open risk ≤ 2.5% (TA: enforced at order placement)
         try:
+            echoed = None
             if pos[sym]["leverage"] != sz.lev:              # skip the call when already set (entry latency)
-                self.x("set_leverage", sym, sz.lev)
+                echoed = self.x("set_leverage", sym, sz.lev)
             pos = self.x("positions", self.cfg.symbols)
             err = "" if pos[sym]["leverage"] == sz.lev else f"read-back {pos[sym]['leverage']}x"
+            if err and echoed == sz.lev:
+                # positionRisk can lag a successful leverage change (live 2026-10-22 BNBUSDT): confirm on symbolConfig
+                cfg_lev = self.x("leverage", sym)
+                log.warning("%s leverage set response %sx, positionRisk %sx, symbolConfig %sx", sym, echoed,
+                            pos[sym]["leverage"], cfg_lev)
+                err = "" if cfg_lev == sz.lev else f"{err}, symbolConfig {cfg_lev}x (set response {echoed}x)"
         except ExchangeError as e:
             err, pos = str(e)[:80], None
         if err:

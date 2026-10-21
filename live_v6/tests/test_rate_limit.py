@@ -14,7 +14,7 @@ from .fakes import FakeExchange
 from .test_faults import DOGE, SOL, alerts, close_calls, opened, ready
 
 NON_CRITICAL = {"account", "mark_prices", "klines", "funding", "income", "user_trades", "exchange_info", "brackets",
-                "book", "set_leverage", "set_margin_type"}
+                "book", "set_leverage", "set_margin_type", "leverage"}
 
 
 class Clock:
