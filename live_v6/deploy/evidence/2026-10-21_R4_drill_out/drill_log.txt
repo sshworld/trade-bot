@@ -1,0 +1,12 @@
+12:39:22 pre-check leftovers: positions none | open orders none
+12:39:23 user stream connected: 1
+12:39:32 entered DOGEUSDT qty 9438 stop_px 0.0796 cid v6tDOGE1792586363
+12:39:32 exchange stops before cancel: [('algo', '1000000250000559', 'v6tDOGE1792586363s0', '0.0796')]
+12:39:32 MANUAL CANCEL sent algo 1000000250000559 v6tDOGE1792586363s0 t_ms 1792586372774
+12:39:33 ALERT RECORD {"event_ts": "2026-10-21T12:39:32.786Z", "decision_ts": "2026-10-21T12:39:32.795Z", "delay_s": 0.009, "type": "alert", "mode": "testnet", "sent": false, "text": "🧪[TESTNET·모의] 🚨 손절 주문 CANCELED 감지 — DOGEUSDT 즉시 재등록\nv6tDOGE1792586363s0 · 손절 0.0796 · 수량 9438"}
+12:39:33 ALERT RECORD {"event_ts": "2026-10-21T12:39:32.836Z", "decision_ts": "2026-10-21T12:39:32.836Z", "delay_s": 0.0, "type": "recovery", "mode": "testnet", "sent": false, "text": "🧪[TESTNET·모의] ✅ 손절 재등록 완료 — DOGEUSDT 손절 0.0796"}
+12:39:33 REPLACEMENT ('algo', '1000000250000751', 'v6tDOGE1792586363s1') | stop_lost still set: False
+12:39:33 RAW USER EVENT for victim: {"e":"ALGO_UPDATE","T":1792586363983,"E":1792586363987,"o":{"caid":"v6tDOGE1792586363s0","aid":1000000250000559,"at":"CONDITIONAL","o":"STOP_MARKET","s":"DOGEUSDT","S":"SELL","ps":"BOTH","f":"GTE_GTC","q":"0","X":"NEW","ai":"","tp":"0.0796","p":"0","V":"EXPIRE_MAKER","wt":"MARK_PRICE","pm":"NONE","cp":true,"pP":false,"R":true,"tt":0,"gtd":0,"ia":false}}
+12:39:33 RAW USER EVENT for victim: {"e":"ALGO_UPDATE","T":1792586372783,"E":1792586372786,"o":{"caid":"v6tDOGE1792586363s0","aid":1000000250000559,"at":"CONDITIONAL","o":"STOP_MARKET","s":"DOGEUSDT","S":"SELL","ps":"BOTH","f":"GTE_GTC","q":"0","X":"CANCELED","ai":"","tp":"0.0796","p":"0","V":"EXPIRE_MAKER","wt":"MARK_PRICE","pm":"NONE","cp":true,"pP":false,"R":true,"tt":0,"gtd":0,"ia":false}}
+12:39:46 FINAL leftovers: positions none | open orders none
+12:39:46 DRILL PASS
