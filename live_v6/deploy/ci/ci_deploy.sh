@@ -290,7 +290,7 @@ log "action=$ACTION dry_run=$DRY current=$(current_dir) unit=$(systemctl is-acti
 case "$ACTION" in
   status)
     cur=$(current_dir)
-    log "current=$cur sha=$(release_sha "$cur") marker=$(marker_ok "$cur" && echo yes || echo no) rollback_target=$(verified_target "$cur") window_wait=$(in_window)s intents=$(intents_count)"
+    log "current=$cur sha=$(release_sha "$cur") marker=$(marker_ok "$cur" && echo yes || echo no) manual_rollback_target=$(verified_target "$cur" | sed 's/^$/none/') failed_deploy_rollback_target=$(verified_target "__none__" | sed 's/^$/none/') window_wait=$(in_window)s intents=$(intents_count)"
     [ -f "$APP/CI_HALTED" ] && log "CI_HALTED: $(cat "$APP/CI_HALTED")"
     verify_stops || true; state_check 0 1 || true ;;
   rollback)
@@ -328,7 +328,7 @@ case "$ACTION" in
     check_stop_timeout
     verify_stops || die "stops NOT verified for every open position — deploy ABORTED before restart (nothing changed)" 5
     if [ $DRY = 1 ]; then
-      log "DRY-RUN would: wait for no in-flight intents, back up $STATE → $BACKUP_DIR/, install $APP/$SHA, swap current → $SHA, systemctl restart $UNIT, strict verify, write $MARK; on failure: rollback to $(verified_target "$CUR" | sed 's/^$/<none: stop + alert>/') without waiting"
+      log "DRY-RUN would: wait for no in-flight intents, back up $STATE → $BACKUP_DIR/, install $APP/$SHA, swap current → $SHA, systemctl restart $UNIT, strict verify, write $MARK; on failure: rollback to $(verified_target "$SHA" | sed 's/^$/<none: stop + alert>/') without waiting"
       exit 0
     fi
     wait_no_intents || die "in-flight intents did not clear — deploy refused before restart (nothing changed)" 11
@@ -345,7 +345,7 @@ case "$ACTION" in
     else
       log "$APP/$SHA already installed (reusing; marker $(marker_ok "$SHA" && echo present || echo absent))"
     fi
-    [ "$CUR" != none ] && echo "$CUR" > "$APP/PREVIOUS"     # informational only — rollback uses the marker
+    [ "$CUR" != none ] && [ "$CUR" != "$SHA" ] && echo "$CUR" > "$APP/PREVIOUS"   # informational only — rollback uses the marker
     # 5. swap + restart + strict verify
     swap_to "$SHA"
     if restart_and_verify "$SIM_FAIL"; then
@@ -356,6 +356,9 @@ case "$ACTION" in
     fi
     # 6. failure → act immediately (TA E): rollback to a marked release, else stop + alert (TA H)
     log "post-restart verification FAILED for $SHA — reacting now (no window wait)"
+    if [ -f "$APP/$SHA/$MARK" ]; then   # a release that failed verification is never a rollback target again
+      mv -f "$APP/$SHA/$MARK" "$APP/$SHA/$MARK.revoked-$(date -u +%Y%m%dT%H%M%SZ)"; log "marker of $SHA revoked"
+    fi
     do_rollback "verification failed for $SHA" 1 "$SHA"
     alert_fail "deploy of $SHA failed verification; rolled back to $(current_dir) (verified)" || true
     die "deploy of $SHA failed; rolled back to $(current_dir)" 9 ;;

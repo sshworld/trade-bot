@@ -19,6 +19,7 @@ All actions are pinned to commit SHAs (TA I). Commits that predate this pipeline
 | `live_v6-citest.service` | VPS — TESTNET canary unit (user `tradebot-ci`, own app root/venv/state/env, capped) |
 | `install_vps_ci.sh` | one-time manual installer / upgrader (VPS) |
 | `../../tools/verify_stops.py` | installed as `/opt/tradebot/ci/verify_stops_testnet.py` |
+| `drill_testnet_position.py` | VPS `/usr/local/lib/tradebot-ci/` — TA G drill: one real TESTNET position via the canary engine (testnet only) |
 | `../../tools/verify_stops_live.py` | installed as `/opt/tradebot/verify_stops_live.py` (TA D; test: `tests/test_verify_stops_live.py`) |
 
 The VPS copies of `ci_*.sh` and the verify scripts are installed by hand from a reviewed commit and are NOT updated

@@ -1,0 +1,427 @@
+# Evidence — TA review ci-deploy fixes (H, A–K, recommendations), 2026-10-21. Times: UTC in log lines (KST = UTC+9).
+# Server side installed from the ci-deploy working tree (install_vps_ci.sh); drills on the TESTNET canary
+# live_v6-citest only. LIVE unit live_v6-live untouched throughout: MainPID=12861 NRestarts=0, current=0d82b19
+# (deployed by hand 01:07:55Z = 10:07:55 KST). The live target was used read-only (status, dry-run).
+# Healthchecks in drills = DUMMY local listener (127.0.0.1, /etc/tradebot/ci-alert-testnet.env), never the live URL.
+# Drill sha's: 0d82b19 (main, ta-pass-0d82b19) and 660eea8 (first fix commit on ci-deploy; live_v6 runtime code is
+# identical to 0d82b19). Client = live_v6/deploy/ci/gh_ssh_deploy.sh with the CI testnet / live key (forced command).
+# Failure drills that need CI_SIMULATE_* were started by root with ci_job.sh start (same detached path).
+# Exit codes: 0 ok · 2 refused input · 4 no marked release (manual rollback) · 5 stops not verified · 6 rollback not
+# verified → stopped · 9 deploy failed, rolled back to a marked release · 10 deploy failed, no marked release → stopped.
+
+## GitHub settings 2026-10-21T01:44:25Z (read back via API)
+ruleset: {"id": 25517698, "name": "ta-pass-tags", "target": "tag", "enforcement": "active", "conditions": {"ref_name": {"exclude": [], "include": ["refs/tags/ta-pass-*"]}}, "rules": [{"type": "creation"}, {"type": "update"}, {"type": "deletion"}, {"type": "non_fast_forward"}], "bypass_actors": [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}], "current_user_can_bypass": "always"}
+env live can_admins_bypass= False rules= [('required_reviewers', False, ['sshworld']), ('branch_policy', None, [])] policy= {'protected_branches': False, 'custom_branch_policies': True}
+   ref policies: [('main', 'branch'), ('ta-pass-*', 'tag')]
+   env secrets: ['VPS_SSH_KEY']
+env testnet can_admins_bypass= True rules= [('branch_policy', None, [])] policy= {'protected_branches': False, 'custom_branch_policies': True}
+   ref policies: [('main', 'branch'), ('ta-pass-*', 'tag')]
+   env secrets: ['VPS_SSH_KEY']
+repo secrets: ['VPS_HOST', 'VPS_KNOWN_HOSTS'] | repo-level VPS_SSH_KEY present: False
+
+## K 2026-10-21T01:23:17Z canary user + InaccessiblePaths
+tradebo+   14144 /opt/tradebot-ci-testnet/.venv/bin/python -m live_v6 run
+User=tradebot-ci
+InaccessiblePaths=-/etc/tradebot -/var/lib/live_v6-live -/opt/tradebot -/var/log/tradebot -/root -/var/lib/tradebot-ci
+/etc/tradebot/live.env                             inside citest ns: denied
+/etc/tradebot/telegram.env                         inside citest ns: denied
+/etc/tradebot/heartbeat.env                        inside citest ns: denied
+/var/lib/live_v6-live/mainnet.json                 inside citest ns: denied
+/opt/tradebot/app/current/live_v6/engine.py        inside citest ns: denied
+/opt/tradebot/verify_stops_live.py                 inside citest ns: denied
+/var/log/tradebot/ci-deploy.log                    inside citest ns: denied
+write live state as tradebot-ci (host ns):         denied
+read live.env as tradebot-ci (host ns):            denied
+total 28
+drwxr-x---  2 tradebot-ci tradebot-ci 4096 Oct 21 01:23 .
+drwxr-xr-x 53 root        root        4096 Oct 21 01:19 ..
+-rw-r--r--  1 tradebot-ci tradebot-ci 4291 Oct 21 01:22 alerts.jsonl
+MainPID=12861
+NRestarts=0
+
+## K positive control 2026-10-21T01:44:44Z (same nsenter method, canary's own paths)
+tradebot-ci    22824
+/opt/tradebot-ci-testnet/app/current/live_v6/engine.py inside citest ns: READABLE
+/var/lib/live_v6-citest/testnet.json               inside citest ns: READABLE
+write own code as tradebot-ci:                     denied
+
+
+## D1 2026-10-21T01:22:00Z testnet deploy 0d82b19 via CI testnet key (forced command, detached job, client polls)
+server job 20261021T012204Z-ec994d started (detached on the VPS)
+[2026-10-21T01:22:04Z] [testnet] action=deploy dry_run=0 current=950438b unit=inactive
+import ok, tick calls on_bar_close
+[2026-10-21T01:22:04Z] [testnet] import check OK for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b (user=tradebot-ci, sandbox: no network, denied: -/etc/tradebot -/var/lib/live_v6-live -/opt/tradebot/app -/var/log/tradebot -/root -/var/lib/tradebot-ci/uploads -/opt/tradebot)
+[2026-10-21T01:22:04Z] [testnet] time window OK (01:22 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T01:22:04Z] [testnet] unit live_v6-citest TimeoutStopUSec=30s (SIGTERM → runner finishes the current event; SIGKILL after this)
+  verify-stops: pass=True positions=0 []
+[2026-10-21T01:22:05Z] [testnet] verify-stops exit=0
+[2026-10-21T01:22:05Z] [testnet] state: no in-flight intents
+[2026-10-21T01:22:05Z] [testnet] state backed up
+[2026-10-21T01:22:05Z] [testnet] installed /opt/tradebot-ci-testnet/app/0d82b19291ba9ded0d49e2511ade1964a48e8b0b
+[2026-10-21T01:22:05Z] [testnet] symlink current → 0d82b19291ba9ded0d49e2511ade1964a48e8b0b
+[2026-10-21T01:22:05Z] [testnet] restarted live_v6-citest at 01:22:05Z; verifying strictly (≤240s)
+[2026-10-21T01:22:15Z] [testnet]   state: health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=0
+  verify-stops: pass=True positions=0 []
+[2026-10-21T01:23:00Z] [testnet] verify-stops exit=0
+[2026-10-21T01:23:00Z] [testnet] verification PASSED
+[2026-10-21T01:23:00Z] [testnet] marker .citest_verified written for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b (health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=0)
+[2026-10-21T01:23:00Z] [testnet] DEPLOYED 0d82b19291ba9ded0d49e2511ade1964a48e8b0b (previous: 950438b). Heartbeat script NOT changed (manual step, runbook §5).
+job 20261021T012204Z-ec994d finished OK
+CLIENT_EXIT=0
+
+## D2 2026-10-21T01:24:00Z testnet deploy 660eea8 (upgrade), then idempotent re-run
+server job 20261021T012403Z-eaa615 started (detached on the VPS)
+[2026-10-21T01:24:03Z] [testnet] action=deploy dry_run=0 current=0d82b19291ba9ded0d49e2511ade1964a48e8b0b unit=active
+import ok, tick calls on_bar_close
+[2026-10-21T01:24:04Z] [testnet] import check OK for 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (user=tradebot-ci, sandbox: no network, denied: -/etc/tradebot -/var/lib/live_v6-live -/opt/tradebot/app -/var/log/tradebot -/root -/var/lib/tradebot-ci/uploads -/opt/tradebot)
+[2026-10-21T01:24:04Z] [testnet] time window OK (01:24 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T01:24:04Z] [testnet] unit live_v6-citest TimeoutStopUSec=30s (SIGTERM → runner finishes the current event; SIGKILL after this)
+  verify-stops: pass=True positions=0 []
+[2026-10-21T01:24:04Z] [testnet] verify-stops exit=0
+[2026-10-21T01:24:04Z] [testnet] state: no in-flight intents
+[2026-10-21T01:24:04Z] [testnet] state backed up
+[2026-10-21T01:24:04Z] [testnet] installed /opt/tradebot-ci-testnet/app/660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+[2026-10-21T01:24:04Z] [testnet] symlink current → 660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+[2026-10-21T01:24:08Z] [testnet] restarted live_v6-citest at 01:24:04Z; verifying strictly (≤240s)
+[2026-10-21T01:24:18Z] [testnet]   state: health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=0
+  verify-stops: pass=True positions=0 []
+[2026-10-21T01:25:04Z] [testnet] verify-stops exit=0
+[2026-10-21T01:25:04Z] [testnet] verification PASSED
+[2026-10-21T01:25:04Z] [testnet] marker .citest_verified written for 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=0)
+[2026-10-21T01:25:04Z] [testnet] DEPLOYED 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (previous: 0d82b19291ba9ded0d49e2511ade1964a48e8b0b). Heartbeat script NOT changed (manual step, runbook §5).
+job 20261021T012403Z-eaa615 finished OK
+CLIENT_EXIT=0
+server job 20261021T012509Z-2ce1ae started (detached on the VPS)
+[2026-10-21T01:25:09Z] [testnet] action=deploy dry_run=0 current=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 unit=active
+[2026-10-21T01:25:09Z] [testnet] 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 already current (660eea8eac39a0962ef86ff3f083939e9ddaa6a2) and live_v6-citest active — no-op (marker: present)
+job 20261021T012509Z-2ce1ae finished OK
+CLIENT_EXIT=0
+
+## G-open 2026-10-21T01:25:30Z open ONE real TESTNET position via the canary engine (citest stopped meanwhile)
+inactive
+[tg:testnet] 🧪[TESTNET·모의] ▶️ live_v6 시작 · BinanceREST(https://testnet.binancefuture.com) · 포지션 0개 · 진입 가능
+[tg:testnet] 🧪[TESTNET·모의] 🟢 진입 DOGEUSDT 롱 · 수량 9628 · 체결가 0.081940
+손절 0.07948 · 10x · 위험 23.6849 USDT (0.5%)
+{"entered": true, "symbol": "DOGEUSDT", "amt": "9628", "entry": "0.08194", "stop_dist": "0.00246", "journal": "v6DOGE1792545935", "exchange_orders": [{"type": "STOP_MARKET", "side": "SELL", "stop": "0.07948", "closePosition": true, "reduceOnly": true, "cid": "v6DOGE1792545935s0"}], "skip_log_tail": []}
+drill rc=0
+verify_stops_testnet pass= True [('DOGEUSDT', '9628', True)]
+active
+journal pos: {'DOGEUSDT': ('9628', '0.07948')} health True []
+MainPID=12861
+NRestarts=0
+
+
+## D3/G 2026-10-21T01:26:02Z testnet deploy 0d82b19 WITH a real open testnet position (DOGEUSDT 9628, exchange stop 0.07948)
+server job 20261021T012605Z-7da379 started (detached on the VPS)
+[2026-10-21T01:26:05Z] [testnet] action=deploy dry_run=0 current=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 unit=active
+import ok, tick calls on_bar_close
+[2026-10-21T01:26:05Z] [testnet] import check OK for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b (user=tradebot-ci, sandbox: no network, denied: -/etc/tradebot -/var/lib/live_v6-live -/opt/tradebot/app -/var/log/tradebot -/root -/var/lib/tradebot-ci/uploads -/opt/tradebot)
+[2026-10-21T01:26:05Z] [testnet] time window OK (01:26 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T01:26:05Z] [testnet] unit live_v6-citest TimeoutStopUSec=30s (SIGTERM → runner finishes the current event; SIGKILL after this)
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:26:06Z] [testnet] verify-stops exit=0
+[2026-10-21T01:26:06Z] [testnet] state: no in-flight intents
+[2026-10-21T01:26:06Z] [testnet] state backed up
+[2026-10-21T01:26:06Z] [testnet] /opt/tradebot-ci-testnet/app/0d82b19291ba9ded0d49e2511ade1964a48e8b0b already installed (reusing; marker present)
+[2026-10-21T01:26:06Z] [testnet] symlink current → 0d82b19291ba9ded0d49e2511ade1964a48e8b0b
+[2026-10-21T01:26:11Z] [testnet] restarted live_v6-citest at 01:26:06Z; verifying strictly (≤240s)
+[2026-10-21T01:26:21Z] [testnet]   state: health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=1
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:27:06Z] [testnet] verify-stops exit=0
+[2026-10-21T01:27:06Z] [testnet] verification PASSED
+[2026-10-21T01:27:06Z] [testnet] marker .citest_verified written for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b (health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=1)
+[2026-10-21T01:27:06Z] [testnet] DEPLOYED 0d82b19291ba9ded0d49e2511ade1964a48e8b0b (previous: 660eea8eac39a0962ef86ff3f083939e9ddaa6a2). Heartbeat script NOT changed (manual step, runbook §5).
+job 20261021T012605Z-7da379 finished OK
+CLIENT_EXIT=0
+
+## D4/G 2026-10-21T01:27:17Z SSH-disconnect drill: client SIGKILLed ~25 s into the deploy of 660eea8 (position still open)
+client killed at 2026-10-21T01:27:42Z
+--- client output before the kill:
+server job 20261021T012721Z-2226c2 started (detached on the VPS)
+[2026-10-21T01:27:21Z] [testnet] action=deploy dry_run=0 current=0d82b19291ba9ded0d49e2511ade1964a48e8b0b unit=active
+import ok, tick calls on_bar_close
+[2026-10-21T01:27:21Z] [testnet] import check OK for 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (user=tradebot-ci, sandbox: no network, denied: -/etc/tradebot -/var/lib/live_v6-live -/opt/tradebot/app -/var/log/tradebot -/root -/var/lib/tradebot-ci/uploads -/opt/tradebot)
+[2026-10-21T01:27:21Z] [testnet] time window OK (01:27 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T01:27:21Z] [testnet] unit live_v6-citest TimeoutStopUSec=30s (SIGTERM → runner finishes the current event; SIGKILL after this)
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:27:21Z] [testnet] verify-stops exit=0
+[2026-10-21T01:27:22Z] [testnet] state: no in-flight intents
+[2026-10-21T01:27:22Z] [testnet] state backed up
+[2026-10-21T01:27:22Z] [testnet] /opt/tradebot-ci-testnet/app/660eea8eac39a0962ef86ff3f083939e9ddaa6a2 already installed (reusing; marker present)
+[2026-10-21T01:27:22Z] [testnet] symlink current → 660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+[2026-10-21T01:27:27Z] [testnet] restarted live_v6-citest at 01:27:22Z; verifying strictly (≤240s)
+--: line 8: 1098816 Killed                  setsid ./ci_client.sh testnet SHA=$SHA POLL_S=5 > /tmp/d4client.txt 2>&1
+job id=20261021T012721Z-2226c2
+--- 2026-10-21T01:28:57Z reconnect with a NEW ssh session: job 20261021T012721Z-2226c2
+Host key verification failed.
+--- 2026-10-21T01:29:03Z reconnect with a NEW ssh session (testnet CI key): job 20261021T012721Z-2226c2
+[2026-10-21T01:27:21Z] [testnet] action=deploy dry_run=0 current=0d82b19291ba9ded0d49e2511ade1964a48e8b0b unit=active
+import ok, tick calls on_bar_close
+[2026-10-21T01:27:21Z] [testnet] import check OK for 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (user=tradebot-ci, sandbox: no network, denied: -/etc/tradebot -/var/lib/live_v6-live -/opt/tradebot/app -/var/log/tradebot -/root -/var/lib/tradebot-ci/uploads -/opt/tradebot)
+[2026-10-21T01:27:21Z] [testnet] time window OK (01:27 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T01:27:21Z] [testnet] unit live_v6-citest TimeoutStopUSec=30s (SIGTERM → runner finishes the current event; SIGKILL after this)
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:27:21Z] [testnet] verify-stops exit=0
+[2026-10-21T01:27:22Z] [testnet] state: no in-flight intents
+[2026-10-21T01:27:22Z] [testnet] state backed up
+[2026-10-21T01:27:22Z] [testnet] /opt/tradebot-ci-testnet/app/660eea8eac39a0962ef86ff3f083939e9ddaa6a2 already installed (reusing; marker present)
+[2026-10-21T01:27:22Z] [testnet] symlink current → 660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+[2026-10-21T01:27:27Z] [testnet] restarted live_v6-citest at 01:27:22Z; verifying strictly (≤240s)
+[2026-10-21T01:27:37Z] [testnet]   state: health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=1
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:28:22Z] [testnet] verify-stops exit=0
+[2026-10-21T01:28:22Z] [testnet] verification PASSED
+[2026-10-21T01:28:22Z] [testnet] marker .citest_verified written for 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=1)
+[2026-10-21T01:28:22Z] [testnet] DEPLOYED 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (previous: 0d82b19291ba9ded0d49e2511ade1964a48e8b0b). Heartbeat script NOT changed (manual step, runbook §5).
+JOB_STATE done rc=0
+
+## D5 2026-10-21T01:29:22Z post-restart verification FAILS (drill) → rollback ONLY to a marked release, strictly verified, no window wait
+root drill: env [CI_SIMULATE_VERIFY_FAIL=1] job 20261021T012927Z-886c15
+[2026-10-21T01:29:27Z] [testnet] action=deploy dry_run=0 current=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 unit=active
+import ok, tick calls on_bar_close
+[2026-10-21T01:29:28Z] [testnet] import check OK for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b (user=tradebot-ci, sandbox: no network, denied: -/etc/tradebot -/var/lib/live_v6-live -/opt/tradebot/app -/var/log/tradebot -/root -/var/lib/tradebot-ci/uploads -/opt/tradebot)
+[2026-10-21T01:29:28Z] [testnet] time window OK (01:29 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T01:29:28Z] [testnet] unit live_v6-citest TimeoutStopUSec=30s (SIGTERM → runner finishes the current event; SIGKILL after this)
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:29:28Z] [testnet] verify-stops exit=0
+[2026-10-21T01:29:28Z] [testnet] state: no in-flight intents
+[2026-10-21T01:29:28Z] [testnet] state backed up
+[2026-10-21T01:29:28Z] [testnet] /opt/tradebot-ci-testnet/app/0d82b19291ba9ded0d49e2511ade1964a48e8b0b already installed (reusing; marker present)
+[2026-10-21T01:29:28Z] [testnet] symlink current → 0d82b19291ba9ded0d49e2511ade1964a48e8b0b
+[2026-10-21T01:29:32Z] [testnet] restarted live_v6-citest at 01:29:28Z; verifying strictly (≤240s)
+[2026-10-21T01:29:42Z] [testnet]   state: health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=1
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:30:28Z] [testnet] verify-stops exit=0
+[2026-10-21T01:30:28Z] [testnet] SIMULATED verification failure (testnet drill)
+[2026-10-21T01:30:28Z] [testnet] post-restart verification FAILED for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b — reacting now (no window wait)
+[2026-10-21T01:30:28Z] [testnet] rollback candidates: verified (.citest_verified) releases other than 0d82b19291ba9ded0d49e2511ade1964a48e8b0b → 660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+[2026-10-21T01:30:28Z] [testnet] ROLLBACK to 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (660eea8eac39a0962ef86ff3f083939e9ddaa6a2) (reason: verification failed for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b)
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:30:28Z] [testnet] verify-stops exit=0
+[2026-10-21T01:30:28Z] [testnet] automatic reaction to a failed deploy — NOT waiting for the time window (TA E)
+[2026-10-21T01:30:28Z] [testnet] symlink current → 660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+[2026-10-21T01:30:33Z] [testnet] restarted live_v6-citest at 01:30:28Z; verifying strictly (≤240s)
+[2026-10-21T01:30:43Z] [testnet]   state: health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=1
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:31:28Z] [testnet] verify-stops exit=0
+[2026-10-21T01:31:28Z] [testnet] verification PASSED
+[2026-10-21T01:31:28Z] [testnet] rollback to 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 verified (strict: health, bars caught up, stable, journal clean, stops)
+[2026-10-21T01:31:28Z] [testnet] ALERT: Healthchecks /fail sent (/etc/tradebot/ci-alert-testnet.env)
+[2026-10-21T01:31:28Z] [testnet] FAIL: deploy of 0d82b19291ba9ded0d49e2511ade1964a48e8b0b failed; rolled back to 660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+JOB_STATE done rc=9
+unit live_v6-citest: active current=660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+dummy Healthchecks log tail:
+2026-10-21T01:19:49Z POST /ci-testnet-dummy/fail body='selftest'
+2026-10-21T01:31:28Z POST /ci-testnet-dummy/fail body='ci-deploy[testnet]: deploy of 0d82b19291ba9ded0d49e2511ade1964a48e8b0b failed verification; rolled back to 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (verified)'
+live untouched: MainPID=12861 NRestarts=0  current=/opt/tradebot/app/0d82b19
+
+
+## D6 2026-10-21T01:32:05Z post-restart verification FAILS and NO marked release exists (setup: 660eea8's .citest_verified moved aside to recreate the first-live-deploy situation; only unmarked old releases 950438b/27dabf5 = fae64af analogue remain) → NO rollback, stop + /fail (dummy URL)
+  0d82b19291ba9ded0d49e2511ade1964a48e8b0b: .ci_complete .citest_verified 
+  27dabf5: .ci_complete 
+  660eea8eac39a0962ef86ff3f083939e9ddaa6a2: .ci_complete 
+  950438b: .ci_complete 
+  current: .ci_complete 
+
+root drill: env [CI_SIMULATE_VERIFY_FAIL=1] job 20261021T013213Z-d962ea
+[2026-10-21T01:32:13Z] [testnet] action=deploy dry_run=0 current=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 unit=active
+import ok, tick calls on_bar_close
+[2026-10-21T01:32:13Z] [testnet] import check OK for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b (user=tradebot-ci, sandbox: no network, denied: -/etc/tradebot -/var/lib/live_v6-live -/opt/tradebot/app -/var/log/tradebot -/root -/var/lib/tradebot-ci/uploads -/opt/tradebot)
+[2026-10-21T01:32:13Z] [testnet] time window OK (01:32 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T01:32:13Z] [testnet] unit live_v6-citest TimeoutStopUSec=30s (SIGTERM → runner finishes the current event; SIGKILL after this)
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:32:13Z] [testnet] verify-stops exit=0
+[2026-10-21T01:32:13Z] [testnet] state: no in-flight intents
+[2026-10-21T01:32:13Z] [testnet] state backed up
+[2026-10-21T01:32:13Z] [testnet] /opt/tradebot-ci-testnet/app/0d82b19291ba9ded0d49e2511ade1964a48e8b0b already installed (reusing; marker present)
+[2026-10-21T01:32:13Z] [testnet] symlink current → 0d82b19291ba9ded0d49e2511ade1964a48e8b0b
+[2026-10-21T01:32:18Z] [testnet] restarted live_v6-citest at 01:32:13Z; verifying strictly (≤240s)
+[2026-10-21T01:32:28Z] [testnet]   state: health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=1
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:33:14Z] [testnet] verify-stops exit=0
+[2026-10-21T01:33:14Z] [testnet] SIMULATED verification failure (testnet drill)
+[2026-10-21T01:33:14Z] [testnet] post-restart verification FAILED for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b — reacting now (no window wait)
+[2026-10-21T01:33:14Z] [testnet] marker of 0d82b19291ba9ded0d49e2511ade1964a48e8b0b revoked
+[2026-10-21T01:33:14Z] [testnet] rollback candidates: verified (.citest_verified) releases other than 0d82b19291ba9ded0d49e2511ade1964a48e8b0b → none
+[2026-10-21T01:33:14Z] [testnet] STOPPING live_v6-citest — reason: no .citest_verified release to roll back to (verification failed for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b) (exchange stops stay in place; nothing is closed or cancelled)
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:33:14Z] [testnet] verify-stops exit=0
+[2026-10-21T01:33:19Z] [testnet] unit live_v6-citest is now: inactive
+[2026-10-21T01:33:19Z] [testnet] ALERT: Healthchecks /fail sent (/etc/tradebot/ci-alert-testnet.env)
+[2026-10-21T01:33:19Z] [testnet] FAIL: no .citest_verified release to roll back to (verification failed for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b) — live_v6-citest stopped
+JOB_STATE done rc=10
+unit live_v6-citest: inactive current=0d82b19291ba9ded0d49e2511ade1964a48e8b0b
+dummy Healthchecks log tail:
+2026-10-21T01:31:28Z POST /ci-testnet-dummy/fail body='ci-deploy[testnet]: deploy of 0d82b19291ba9ded0d49e2511ade1964a48e8b0b failed verification; rolled back to 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (verified)'
+2026-10-21T01:33:19Z POST /ci-testnet-dummy/fail body='ci-deploy[testnet]: no .citest_verified release to roll back to (verification failed for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b) — live_v6-citest STOPPED, manual action required'
+live untouched: MainPID=12861 NRestarts=0  current=/opt/tradebot/app/0d82b19
+
+after stop: testnet exchange position + stop still there: True [('DOGEUSDT', '9628', True)]
+2026-10-21T01:33:19Z no .citest_verified release to roll back to (verification failed for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b)
+
+
+## D7 2026-10-21T01:33:41Z setup: restore 660eea8 marker, redeploy 660eea8 via CI key (unit was stopped by D6)
+
+[2026-10-21T01:34:43Z] [testnet] verification PASSED
+[2026-10-21T01:34:43Z] [testnet] marker .citest_verified written for 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=1)
+[2026-10-21T01:34:43Z] [testnet] DEPLOYED 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (previous: 0d82b19291ba9ded0d49e2511ade1964a48e8b0b). Heartbeat script NOT changed (manual step, runbook §5).
+job 20261021T013346Z-8952c7 finished OK
+CLIENT_EXIT=0
+## D7 2026-10-21T01:34:49Z deploy verification FAILS and the ROLLBACK verification FAILS too (drill) → stop + /fail
+root drill: env [CI_SIMULATE_VERIFY_FAIL=1 CI_SIMULATE_ROLLBACK_VERIFY_FAIL=1] job 20261021T013455Z-05b14b
+[2026-10-21T01:34:55Z] [testnet] action=deploy dry_run=0 current=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 unit=active
+import ok, tick calls on_bar_close
+[2026-10-21T01:34:55Z] [testnet] import check OK for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b (user=tradebot-ci, sandbox: no network, denied: -/etc/tradebot -/var/lib/live_v6-live -/opt/tradebot/app -/var/log/tradebot -/root -/var/lib/tradebot-ci/uploads -/opt/tradebot)
+[2026-10-21T01:34:55Z] [testnet] time window OK (01:34 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T01:34:55Z] [testnet] unit live_v6-citest TimeoutStopUSec=30s (SIGTERM → runner finishes the current event; SIGKILL after this)
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:34:55Z] [testnet] verify-stops exit=0
+[2026-10-21T01:34:55Z] [testnet] state: no in-flight intents
+[2026-10-21T01:34:55Z] [testnet] state backed up
+[2026-10-21T01:34:55Z] [testnet] /opt/tradebot-ci-testnet/app/0d82b19291ba9ded0d49e2511ade1964a48e8b0b already installed (reusing; marker absent)
+[2026-10-21T01:34:55Z] [testnet] symlink current → 0d82b19291ba9ded0d49e2511ade1964a48e8b0b
+[2026-10-21T01:35:01Z] [testnet] restarted live_v6-citest at 01:34:55Z; verifying strictly (≤240s)
+[2026-10-21T01:35:11Z] [testnet]   state: health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=1
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:35:57Z] [testnet] verify-stops exit=0
+[2026-10-21T01:35:57Z] [testnet] SIMULATED verification failure (testnet drill)
+[2026-10-21T01:35:57Z] [testnet] post-restart verification FAILED for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b — reacting now (no window wait)
+[2026-10-21T01:35:57Z] [testnet] rollback candidates: verified (.citest_verified) releases other than 0d82b19291ba9ded0d49e2511ade1964a48e8b0b → 660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+[2026-10-21T01:35:57Z] [testnet] ROLLBACK to 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (660eea8eac39a0962ef86ff3f083939e9ddaa6a2) (reason: verification failed for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b)
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:35:57Z] [testnet] verify-stops exit=0
+[2026-10-21T01:35:57Z] [testnet] automatic reaction to a failed deploy — NOT waiting for the time window (TA E)
+[2026-10-21T01:35:57Z] [testnet] symlink current → 660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+[2026-10-21T01:36:02Z] [testnet] restarted live_v6-citest at 01:35:57Z; verifying strictly (≤240s)
+[2026-10-21T01:36:12Z] [testnet]   state: health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=1
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:36:57Z] [testnet] verify-stops exit=0
+[2026-10-21T01:36:57Z] [testnet] SIMULATED verification failure (testnet drill)
+[2026-10-21T01:36:57Z] [testnet] STOPPING live_v6-citest — reason: rollback to 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 did NOT verify (verification failed for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b) (exchange stops stay in place; nothing is closed or cancelled)
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:36:58Z] [testnet] verify-stops exit=0
+[2026-10-21T01:37:02Z] [testnet] unit live_v6-citest is now: inactive
+[2026-10-21T01:37:02Z] [testnet] ALERT: Healthchecks /fail sent (/etc/tradebot/ci-alert-testnet.env)
+[2026-10-21T01:37:02Z] [testnet] FAIL: rollback to 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 did NOT verify (verification failed for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b) — live_v6-citest stopped
+JOB_STATE done rc=6
+unit live_v6-citest: inactive current=660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+dummy Healthchecks log tail:
+2026-10-21T01:33:19Z POST /ci-testnet-dummy/fail body='ci-deploy[testnet]: no .citest_verified release to roll back to (verification failed for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b) — live_v6-citest STOPPED, manual action required'
+2026-10-21T01:37:02Z POST /ci-testnet-dummy/fail body='ci-deploy[testnet]: rollback to 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 did NOT verify (verification failed for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b) — live_v6-citest STOPPED, manual action required'
+live untouched: MainPID=12861 NRestarts=0  current=/opt/tradebot/app/0d82b19
+
+
+## D8 2026-10-21T01:37:18Z setup: redeploy 660eea8 via CI key (D7 stopped the unit)
+[2026-10-21T01:38:18Z] [testnet] DEPLOYED 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (previous: 660eea8eac39a0962ef86ff3f083939e9ddaa6a2). Heartbeat script NOT changed (manual step, runbook §5).
+job 20261021T013721Z-4601e1 finished OK
+citest before D8: MainPID=19490 ActiveEnterTimestamp=Wed 2026-10-21 01:37:23 UTC 
+
+## D8 2026-10-21T01:38:26Z verify-stops reports an unprotected position (drill) → deploy ABORTED before restart, nothing changed
+root drill: env [CI_SIMULATE_STOPS_FAIL=1] job 20261021T013832Z-eeda4e
+[2026-10-21T01:38:32Z] [testnet] action=deploy dry_run=0 current=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 unit=active
+import ok, tick calls on_bar_close
+[2026-10-21T01:38:32Z] [testnet] import check OK for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b (user=tradebot-ci, sandbox: no network, denied: -/etc/tradebot -/var/lib/live_v6-live -/opt/tradebot/app -/var/log/tradebot -/root -/var/lib/tradebot-ci/uploads -/opt/tradebot)
+[2026-10-21T01:38:32Z] [testnet] time window OK (01:38 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T01:38:32Z] [testnet] unit live_v6-citest TimeoutStopUSec=30s (SIGTERM → runner finishes the current event; SIGKILL after this)
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:38:32Z] [testnet] SIMULATED: verify-stops reports an unprotected position (testnet drill)
+[2026-10-21T01:38:32Z] [testnet] verify-stops exit=1
+[2026-10-21T01:38:32Z] [testnet] FAIL: stops NOT verified for every open position — deploy ABORTED before restart (nothing changed)
+JOB_STATE done rc=5
+unit live_v6-citest: active current=660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+dummy Healthchecks log tail:
+2026-10-21T01:33:19Z POST /ci-testnet-dummy/fail body='ci-deploy[testnet]: no .citest_verified release to roll back to (verification failed for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b) — live_v6-citest STOPPED, manual action required'
+2026-10-21T01:37:02Z POST /ci-testnet-dummy/fail body='ci-deploy[testnet]: rollback to 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 did NOT verify (verification failed for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b) — live_v6-citest STOPPED, manual action required'
+live untouched: MainPID=12861 NRestarts=0  current=/opt/tradebot/app/0d82b19
+
+citest after D8: MainPID=19490 ActiveEnterTimestamp=Wed 2026-10-21 01:37:23 UTC 
+
+
+## D9 2026-10-21T01:39:56Z archive with a symlink entry
+[2026-10-21T01:39:59Z] [testnet] FAIL: archive contains non-regular entries (types: l ) — symlinks/hardlinks/devices refused
+JOB_STATE done rc=2
+## D9 2026-10-21T01:40:06Z archive with a hardlink entry
+[2026-10-21T01:40:08Z] [testnet] FAIL: archive contains non-regular entries (types: h ) — symlinks/hardlinks/devices refused
+JOB_STATE done rc=2
+## D9 2026-10-21T01:40:25Z truncated upload (connection drops mid-upload): sha256 of the full tar, only half the bytes sent
+entry: sha256 mismatch (incomplete upload?) — nothing started
+exit=2
+## D9 forced-command rejections (testnet key)
+bash -i                        -> entry: command not allowed 
+cat /etc/tradebot/live.env     -> entry: command not allowed 
+deploy 0d82b19 abc             -> entry: command not allowed 
+rollback; id                   -> entry: command not allowed 
+job ../../etc/passwd           -> entry: command not allowed 
+status live                    -> entry: command not allowed 
+DEPLOY x                       -> entry: command not allowed 
+
+## D10 2026-10-21T01:40:52Z manual rollback via CI key when no OTHER marked release exists (0d82b19's marker was revoked in D6) → refused, nothing changed
+server job 20261021T014054Z-4abf57 started (detached on the VPS)
+[2026-10-21T01:40:54Z] [testnet] action=rollback dry_run=0 current=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 unit=active
+[2026-10-21T01:40:54Z] [testnet] rollback candidates: verified (.citest_verified) releases other than 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 → none
+[2026-10-21T01:40:54Z] [testnet] FAIL: no .citest_verified release to roll back to — manual rollback refused, nothing changed
+::error::job 20261021T014054Z-4abf57 failed rc=4 (see log above)
+CLIENT_EXIT=4
+## D10 2026-10-21T01:41:02Z deploy 0d82b19 again (re-verified → new marker), then manual rollback → newest marked other release (660eea8), strict verify
+[2026-10-21T01:41:06Z] [testnet] /opt/tradebot-ci-testnet/app/0d82b19291ba9ded0d49e2511ade1964a48e8b0b already installed (reusing; marker absent)
+[2026-10-21T01:42:06Z] [testnet] marker .citest_verified written for 0d82b19291ba9ded0d49e2511ade1964a48e8b0b (health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=1)
+[2026-10-21T01:42:06Z] [testnet] DEPLOYED 0d82b19291ba9ded0d49e2511ade1964a48e8b0b (previous: 660eea8eac39a0962ef86ff3f083939e9ddaa6a2). Heartbeat script NOT changed (manual step, runbook §5).
+job 20261021T014105Z-ca8438 finished OK
+CLIENT_EXIT=0
+server job 20261021T014210Z-55fe1e started (detached on the VPS)
+[2026-10-21T01:42:10Z] [testnet] action=rollback dry_run=0 current=0d82b19291ba9ded0d49e2511ade1964a48e8b0b unit=active
+[2026-10-21T01:42:10Z] [testnet] rollback candidates: verified (.citest_verified) releases other than 0d82b19291ba9ded0d49e2511ade1964a48e8b0b → 660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+[2026-10-21T01:42:10Z] [testnet] ROLLBACK to 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (660eea8eac39a0962ef86ff3f083939e9ddaa6a2) (reason: manual request)
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:42:10Z] [testnet] verify-stops exit=0
+[2026-10-21T01:42:10Z] [testnet] time window OK (01:42 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T01:42:10Z] [testnet] state: no in-flight intents
+[2026-10-21T01:42:10Z] [testnet] symlink current → 660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+[2026-10-21T01:42:15Z] [testnet] restarted live_v6-citest at 01:42:10Z; verifying strictly (≤240s)
+[2026-10-21T01:42:25Z] [testnet]   state: health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=1
+  verify-stops: pass=True positions=1 [('DOGEUSDT', '9628', True)]
+[2026-10-21T01:43:11Z] [testnet] verify-stops exit=0
+[2026-10-21T01:43:11Z] [testnet] verification PASSED
+[2026-10-21T01:43:11Z] [testnet] rollback to 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 verified (strict: health, bars caught up, stable, journal clean, stops)
+job 20261021T014210Z-55fe1e finished OK
+CLIENT_EXIT=0
+
+## D11 2026-10-21T01:43:21Z LIVE target, read-only: status + deploy DRY-RUN via the live CI key (no install, no restart)
+[2026-10-21T01:43:24Z] [live] action=status dry_run=0 current=0d82b19 unit=active
+[2026-10-21T01:43:24Z] [live] current=0d82b19 sha=0d82b19291ba9ded0d49e2511ade1964a48e8b0b marker=yes rollback_target= window_wait=0s intents=0
+  verify-stops: pass=True positions=0 []
+[2026-10-21T01:43:24Z] [live] verify-stops exit=0
+health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=0
+---
+server job 20261021T014328Z-bcbac5 started (detached on the VPS)
+[2026-10-21T01:43:28Z] [live] action=deploy dry_run=1 current=0d82b19 unit=active
+import ok, tick calls on_bar_close
+[2026-10-21T01:43:28Z] [live] import check OK for 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (user=tradebot, sandbox: no network, denied: -/etc/tradebot -/var/lib/live_v6-live -/opt/tradebot/app -/var/log/tradebot -/root -/var/lib/tradebot-ci/uploads)
+[2026-10-21T01:43:28Z] [live] time window OK (01:43 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T01:43:28Z] [live] unit live_v6-live TimeoutStopUSec=30s (SIGTERM → runner finishes the current event; SIGKILL after this)
+  verify-stops: pass=True positions=0 []
+[2026-10-21T01:43:29Z] [live] verify-stops exit=0
+[2026-10-21T01:43:29Z] [live] DRY-RUN would: wait for no in-flight intents, back up /var/lib/live_v6-live/mainnet.json → /root/ci-backups/live/, install /opt/tradebot/app/660eea8eac39a0962ef86ff3f083939e9ddaa6a2, swap current → 660eea8eac39a0962ef86ff3f083939e9ddaa6a2, systemctl restart live_v6-live, strict verify, write .ta_pass_verified; on failure: rollback to <none: stop + alert> without waiting
+job 20261021T014328Z-bcbac5 finished OK
+CLIENT_EXIT=0
+live after: MainPID=12861 NRestarts=0 ActiveEnterTimestamp=Wed 2026-10-21 01:07:55 UTC  current=/opt/tradebot/app/0d82b19
+0d82b19
+93f208c
+c3f6ee2
+current
+DEPLOYED
+fae64af
+
+## D11b 2026-10-21T01:43:52Z (after fixing the dry-run/status wording) LIVE status + DRY-RUN
+[2026-10-21T01:43:54Z] [live] action=status dry_run=0 current=0d82b19 unit=active
+[2026-10-21T01:43:54Z] [live] current=0d82b19 sha=0d82b19291ba9ded0d49e2511ade1964a48e8b0b marker=yes manual_rollback_target=none failed_deploy_rollback_target=0d82b19 window_wait=0s intents=0
+[2026-10-21T01:43:55Z] [live] verify-stops exit=0
+health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up, positions=0
+[2026-10-21T01:43:59Z] [live] DRY-RUN would: wait for no in-flight intents, back up /var/lib/live_v6-live/mainnet.json → /root/ci-backups/live/, install /opt/tradebot/app/660eea8eac39a0962ef86ff3f083939e9ddaa6a2, swap current → 660eea8eac39a0962ef86ff3f083939e9ddaa6a2, systemctl restart live_v6-live, strict verify, write .ta_pass_verified; on failure: rollback to 0d82b19 without waiting
+job 20261021T014358Z-9fe948 finished OK
+CLIENT_EXIT=0
+[2026-10-21T01:44:08Z] [testnet] action=status dry_run=0 current=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 unit=active
+[2026-10-21T01:44:08Z] [testnet] current=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 sha=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 marker=yes manual_rollback_target=0d82b19291ba9ded0d49e2511ade1964a48e8b0b failed_deploy_rollback_target=0d82b19291ba9ded0d49e2511ade1964a48e8b0b window_wait=0s intents=0
+live after: MainPID=12861 NRestarts=0  current=/opt/tradebot/app/0d82b19
+
+

@@ -23,7 +23,10 @@ chown -R root:root /opt/tradebot-ci-testnet/app/*/ 2>/dev/null || true
 chmod -R u=rwX,go=rX /opt/tradebot-ci-testnet/app/*/ 2>/dev/null || true
 if [ ! -x /opt/tradebot-ci-testnet/.venv/bin/python ]; then
   python3 -m venv /opt/tradebot-ci-testnet/.venv
-  /opt/tradebot-ci-testnet/.venv/bin/pip install -q -r "$SRC/live_v6/requirements.txt"
+  # same package versions as the live venv (pip freeze), else the repo pins
+  if [ -x /opt/tradebot/.venv/bin/pip ]; then /opt/tradebot/.venv/bin/pip freeze > /root/ci-venv-freeze.txt
+  else cp "$SRC/live_v6/requirements.txt" /root/ci-venv-freeze.txt; fi
+  /opt/tradebot-ci-testnet/.venv/bin/pip install -q -r /root/ci-venv-freeze.txt
 fi
 chown -R root:root /opt/tradebot-ci-testnet/.venv; chmod -R go-w /opt/tradebot-ci-testnet/.venv
 [ -f /etc/tradebot/citest.env ] && chgrp tradebot-ci /etc/tradebot/citest.env && chmod 640 /etc/tradebot/citest.env
