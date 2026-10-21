@@ -44,13 +44,13 @@ case "$TARGET" in
   live)
     APP=/opt/tradebot/app; UNIT=live_v6-live; STATE=/var/lib/live_v6-live/mainnet.json
     STOPS_CMD=(python3 /opt/tradebot/verify_stops_live.py); STOPS_ENV=""
-    MARK=.ta_pass_verified; ALERT_ENV=/etc/tradebot/heartbeat.env
+    MARK=.ta_pass_verified; REVOKED=.ta_pass_revoked; ALERT_ENV=/etc/tradebot/heartbeat.env
     IMPORT_USER=tradebot; IMPORT_PY=/opt/tradebot/.venv/bin/python
     BACKUP_DIR=/root/ci-backups/live ;;
   testnet)
     APP=/opt/tradebot-ci-testnet/app; UNIT=live_v6-citest; STATE=/var/lib/live_v6-citest/testnet.json
     STOPS_CMD=(python3 /opt/tradebot/ci/verify_stops_testnet.py); STOPS_ENV=/etc/tradebot/citest.env
-    MARK=.citest_verified; ALERT_ENV=/etc/tradebot/ci-alert-testnet.env     # DUMMY Healthchecks URL, never the live one
+    MARK=.citest_verified; REVOKED=.citest_revoked; ALERT_ENV=/etc/tradebot/ci-alert-testnet.env     # DUMMY Healthchecks URL, never the live one
     IMPORT_USER=tradebot-ci; IMPORT_PY=/opt/tradebot-ci-testnet/.venv/bin/python
     SANDBOX_DENY="$SANDBOX_DENY -/opt/tradebot"
     BACKUP_DIR=/root/ci-backups/testnet ;;
@@ -72,8 +72,9 @@ release_sha() {   # $1 = dir name → full sha if known, else the dir name
   [ -z "$s" ] && [ -f "$d/$MARK" ] && s=$(sed -n 's/^sha=//p' "$d/$MARK" | head -1)
   [[ "$s" =~ ^[0-9a-f]{40}$ ]] && echo "$s" || echo "$1"
 }
-marker_ok() {     # $1 = dir name: marker present, root-owned, and its sha matches the directory
+marker_ok() {     # $1 = dir name: marker present, root-owned, sha matches the directory, and not revoked (TA R3)
   local d=$APP/$1 s
+  [ -e "$d/$REVOKED" ] && return 1
   [ -f "$d/$MARK" ] && [ "$(stat -c %u "$d/$MARK")" = 0 ] || return 1
   s=$(sed -n 's/^sha=//p' "$d/$MARK" | head -1)
   [[ "$s" =~ ^[0-9a-f]{40}$ ]] && [[ "$s" == "$1"* ]]
@@ -101,7 +102,17 @@ print("models=%d" % len(lo)); print("health_ok=%s" % str(bool((m.get("health") o
 PY
     echo "stops_exit=0"; } > "$f.tmp"
   chown root:root "$f.tmp"; chmod 644 "$f.tmp"; mv -f "$f.tmp" "$f"
+  [ -f "$APP/$1/$REVOKED" ] && mv -f "$APP/$1/$REVOKED" "$APP/$1/$REVOKED.cleared-$(date -u +%Y%m%dT%H%M%SZ)"   # fresh verified deploy
   log "marker $MARK written for $1 ($3)"
+}
+
+revoke_marker() {  # $1 = dir name, $2 = reason (TA R3). The marker is moved aside and $REVOKED records why; the release
+  local d=$APP/$1 now   # can only be marked again by a fresh tagged deploy that passes verification.
+  now=$(date -u +%Y%m%dT%H%M%SZ)
+  [ -f "$d/$MARK" ] && mv -f "$d/$MARK" "$d/$MARK.revoked-$now"
+  rm -f "$d/$MARK.pending"
+  echo "$(ts) $2" >> "$d/$REVOKED"; chown root:root "$d/$REVOKED"; chmod 644 "$d/$REVOKED"
+  log "marker of $1 REVOKED ($REVOKED: $2)"
 }
 
 # ── checks ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -278,6 +289,7 @@ do_rollback() {    # $1 = reason, $2 = auto(1: failure path, no window wait) / m
   if restart_and_verify "$SIM_RB_FAIL"; then
     log "rollback to $prev verified (strict: health, bars caught up, stable, journal clean, stops)"
   else
+    revoke_marker "$prev" "rollback target failed its own verification ($reason)"   # TA R3
     stop_and_alert "rollback to $prev did NOT verify ($reason)" 6
   fi
 }
@@ -291,6 +303,7 @@ case "$ACTION" in
   status)
     cur=$(current_dir)
     log "current=$cur sha=$(release_sha "$cur") marker=$(marker_ok "$cur" && echo yes || echo no) manual_rollback_target=$(verified_target "$cur" | sed 's/^$/none/') failed_deploy_rollback_target=$(verified_target "__none__" | sed 's/^$/none/') window_wait=$(in_window)s intents=$(intents_count)"
+    for d in "$APP"/*/; do [ -f "$d/$REVOKED" ] && log "revoked: $(basename "$d") — $(tail -1 "$d/$REVOKED")"; done
     [ -f "$APP/CI_HALTED" ] && log "CI_HALTED: $(cat "$APP/CI_HALTED")"
     verify_stops || true; state_check 0 1 || true ;;
   rollback)
@@ -356,9 +369,7 @@ case "$ACTION" in
     fi
     # 6. failure → act immediately (TA E): rollback to a marked release, else stop + alert (TA H)
     log "post-restart verification FAILED for $SHA — reacting now (no window wait)"
-    if [ -f "$APP/$SHA/$MARK" ]; then   # a release that failed verification is never a rollback target again
-      mv -f "$APP/$SHA/$MARK" "$APP/$SHA/$MARK.revoked-$(date -u +%Y%m%dT%H%M%SZ)"; log "marker of $SHA revoked"
-    fi
+    revoke_marker "$SHA" "deploy verification failed"   # never a rollback target again unless re-deployed + re-verified
     do_rollback "verification failed for $SHA" 1 "$SHA"
     alert_fail "deploy of $SHA failed verification; rolled back to $(current_dir) (verified)" || true
     die "deploy of $SHA failed; rolled back to $(current_dir)" 9 ;;
