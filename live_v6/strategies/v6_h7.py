@@ -55,6 +55,8 @@ class V6H7(Strategy):
     def on_start(self, ctx):
         for sym in ctx.cfg.symbols:
             if sym not in self.state["models"]:
+                if callable(getattr(ctx, "pace", None)):
+                    ctx.pace()                              # bootstrap = heaviest calls (klines 1500 + funding)
                 if ctx.closed_bars(sym, "4h", 2):
                     self.state["models"][sym] = self._bootstrap(ctx, sym).to_dict()
 

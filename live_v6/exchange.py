@@ -137,6 +137,10 @@ class BinanceREST:
             self.weight_peaks.pop(k, None)
             self.requests.pop(k, None)
 
+    def weight_now(self) -> int:
+        """Highest X-MBX-USED-WEIGHT-1M seen in the CURRENT minute (0 if none yet)."""
+        return self.weight_peaks.get(int(self.clock() // 60), 0)
+
     def _req(self, method, path, params=None, signed=True, key_only=False, critical=False):
         if self.clock() < self.backoff_until and not critical:
             raise RateLimited(f"{method} {path}: rate-limit backoff {self.backoff_until - self.clock():.0f}s (not sent)")

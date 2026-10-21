@@ -86,6 +86,7 @@ class Settings:
     income_interval_s: float = 60
     fallback_stop_pct: float = 3.0      # adopting an unknown position when no ATR is available
     use_streams: bool = False           # runner sets True; then stale/down streams block entries
+    pace_weight: int = 1000             # startup pacing: used weight ≥ this (≈42 % of 2400) → wait for the next minute
     bar_stale_s: float = 300.0          # TA: bar decision (meta.last_bar_close + every model's last_open) not advanced
                                         # within this long after a decision boundary → block entries + 🚨; ✅ on catch-up
     market_stale_s: float = 60.0        # TA: no mark / kline / aggTrade (per feed) for > 60 s → block entries + alert
@@ -245,6 +246,7 @@ class V6Engine:
             self.reconcile()
             for s in self.cfg.symbols:
                 if s not in self.st["pos"]:
+                    self.pace()
                     self.ensure_isolated(s)
             if "start_wallet" not in self.meta:
                 a = self.x("account")
@@ -301,6 +303,17 @@ class V6Engine:
             return True
         self.block(key, f"{sym} {mt} {err[:80]}", "마진 모드 ISOLATED 설정 실패 — 신규 진입 중단")
         return False
+
+    def pace(self):
+        """Startup / bootstrap pacing (TA rate-limit rule: stay < 50 % of 2400/min): if this minute's used weight
+        is already ≥ pace_weight, sleep to the next minute boundary. No-op for clients without weight tracking."""
+        ex = getattr(self.ex, "inner", self.ex)
+        fn = getattr(ex, "weight_now", None)
+        w = fn() if callable(fn) else 0
+        if w >= self.cfg.pace_weight:
+            wait = 61 - (time.time() % 60)
+            log.warning("startup pacing: used weight %s ≥ %s → waiting %.0fs", w, self.cfg.pace_weight, wait)
+            self.sleep(wait)
 
     # ───────────────────────── data for strategies (ctx) ─────────────────────────
     def live_positions(self) -> dict:

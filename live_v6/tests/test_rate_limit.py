@@ -155,3 +155,22 @@ def test_engine_418_blocks_entries_keeps_protection_never_flattens(offline):
         clk.t += 5
     assert RATE_LIMIT not in eng.blocks and API_ERRORS not in eng.blocks and eng.entries_allowed(), eng.blocks
     offline.assert_safe()
+
+
+def test_startup_pacing_waits_when_weight_high(offline):
+    from live_v6.strategies.h7t import H7T
+    from live_v6 import strategy as S
+    slept = []
+    state = {"w": 0}
+    offline.inner.weight_now = lambda: state["w"]
+    eng = offline.engine(strategy=H7T(params=S.Params()))
+    eng.sleep = slept.append
+    eng.startup()
+    assert not slept                                          # normal startup: no pacing
+    eng2 = offline.engine(strategy=H7T(params=S.Params()))
+    eng2.st["strategy"] = {}
+    eng2.strategy.state = {"models": {}, "bar": {}}
+    eng2.sleep = slept.append
+    state["w"] = 1100
+    eng2.startup()
+    assert slept and all(0 < s <= 61 for s in slept)          # waited for the next minute before heavy calls
