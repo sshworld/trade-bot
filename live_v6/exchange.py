@@ -263,8 +263,11 @@ class BinanceREST:
         rows = self._req("GET", "/fapi/v1/symbolConfig", {"symbol": symbol})
         rows = rows if isinstance(rows, list) else [rows]
         for r in rows:
-            if r.get("symbol") == symbol:
-                return int(r["leverage"])
+            if isinstance(r, dict) and r.get("symbol") == symbol:
+                try:
+                    return int(r["leverage"])
+                except (KeyError, TypeError, ValueError) as e:
+                    raise ExchangeError(f"symbolConfig: bad leverage for {symbol}: {type(e).__name__}") from e
         raise ExchangeError(f"symbolConfig: no row for {symbol}")
 
     def open_orders(self, symbol) -> list[dict]:
@@ -320,7 +323,10 @@ class BinanceREST:
     def set_leverage(self, symbol, lev: int) -> int | None:
         """Returns the leverage echoed in the response body ({"leverage": N, ...}), None if absent."""
         r = self._req("POST", "/fapi/v1/leverage", {"symbol": symbol, "leverage": int(lev)})
-        return int(r["leverage"]) if isinstance(r, dict) and r.get("leverage") is not None else None
+        try:
+            return int(r["leverage"]) if isinstance(r, dict) and r.get("leverage") is not None else None
+        except (TypeError, ValueError):
+            return None                      # unparseable echo = not confirmed (engine skips the entry)
 
     def market(self, symbol, side, qty, client_id, reduce_only=False) -> dict:
         p = {"symbol": symbol, "side": side, "type": "MARKET", "quantity": fmt(qty), "newClientOrderId": client_id,

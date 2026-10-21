@@ -617,6 +617,27 @@ class V6Engine:
                             "risk_frac": float(j.get("risk_frac", self.cfg.sizing.risk_pct / 100 * 2))})  # not yet seen → 1%
         return out
 
+    def _confirm_leverage(self, sym, lev: int, echoed, pr_lev) -> str:
+        """After POST /fapi/v1/leverage: the new leverage counts only when the set response AND GET /fapi/v1/symbolConfig
+        both equal the requested value (positionRisk can lag a successful change: live 2026-10-22 01:39 KST BNBUSDT,
+        set 10x OK, positionRisk 20x, symbolConfig 10x). '' = confirmed, else the skip reason. Fail-safe: a failed
+        symbolConfig read (timeout / 5xx / 429 / 418 / backoff / rejected / malformed body) = NOT confirmed — this
+        method never raises, so the entry flow (and the other coins of the same bar) is not interrupted."""
+        cfg_lev, cfg_err = None, ""
+        if echoed == lev:
+            try:
+                cfg_lev = self.x("leverage", sym)
+            except ExchangeError as e:
+                cfg_err = f"symbolConfig failed: {str(e)[:70]}"
+            except Exception as e:  # noqa: BLE001  malformed response must not escape into execute()
+                log.exception("%s symbolConfig read failed", sym)
+                cfg_err = f"symbolConfig failed: {type(e).__name__}"
+        cfg_txt = cfg_err or (f"symbolConfig {cfg_lev}x" if cfg_lev is not None else "symbolConfig not read")
+        log.warning("%s leverage %sx: set response %sx, positionRisk %sx, %s", sym, lev, echoed, pr_lev, cfg_txt)
+        if echoed == lev and cfg_lev == lev:
+            return ""
+        return f"read-back {pr_lev}x, {cfg_txt} (set response {echoed}x)"
+
     def enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None) -> bool:
         if not self.entries_allowed():
             self.skip(sym, "safety_block", str(self.meta.get("halted") or self.blocks))
@@ -662,17 +683,13 @@ class V6Engine:
         # leverage set + read-back; the same fresh positions read is the FINAL gate right before the order:
         # no averaging, ISOLATED, max positions, total open risk ≤ 2.5% (TA: enforced at order placement)
         try:
-            echoed = None
             if pos[sym]["leverage"] != sz.lev:              # skip the call when already set (entry latency)
                 echoed = self.x("set_leverage", sym, sz.lev)
-            pos = self.x("positions", self.cfg.symbols)
-            err = "" if pos[sym]["leverage"] == sz.lev else f"read-back {pos[sym]['leverage']}x"
-            if err and echoed == sz.lev:
-                # positionRisk can lag a successful leverage change (live 2026-10-22 BNBUSDT): confirm on symbolConfig
-                cfg_lev = self.x("leverage", sym)
-                log.warning("%s leverage set response %sx, positionRisk %sx, symbolConfig %sx", sym, echoed,
-                            pos[sym]["leverage"], cfg_lev)
-                err = "" if cfg_lev == sz.lev else f"{err}, symbolConfig {cfg_lev}x (set response {echoed}x)"
+                pos = self.x("positions", self.cfg.symbols)
+                err = self._confirm_leverage(sym, sz.lev, echoed, pos[sym]["leverage"])
+            else:
+                pos = self.x("positions", self.cfg.symbols)
+                err = "" if pos[sym]["leverage"] == sz.lev else f"read-back {pos[sym]['leverage']}x"
         except ExchangeError as e:
             err, pos = str(e)[:80], None
         if err:
