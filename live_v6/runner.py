@@ -127,8 +127,14 @@ def run(network=None):
     stop = {"flag": False}
     signal.signal(signal.SIGTERM, lambda *a: stop.update(flag=True))
     signal.signal(signal.SIGINT, lambda *a: stop.update(flag=True))
-    hooks = []
+    network = network or os.getenv("LIVE_V6_NETWORK", "testnet")
+    from .tgcmd import maybe_start
+    cmd = maybe_start(eng, network, os.getenv("LIVE_V6_CMD_LOG", os.path.join(
+        os.path.dirname(os.getenv("LIVE_V6_STATE", f"/var/lib/live_v6/{network}.json")), f"{network}_commands.jsonl")))
+    hooks = [cmd.poll] if cmd else []                  # read-only /status /today /more (mainnet only)
     serve(eng, q, lambda: stop["flag"], hooks=hooks)
+    if cmd:
+        cmd.stop()
     for st in streams:
         st.stop()
     eng.tg.send("⏹ live_v6 종료 (거래소 손절은 그대로 유지)")
