@@ -1,0 +1,13 @@
+# /etc/systemd/system/tradebot-ci-confirm.service — TA R1: grant the rollback marker (.ta_pass_verified /
+# .citest_verified) only after the first REAL 4h close after a CI restart was processed for all 6 coins.
+# Read-only towards the bots: reads state + journal, runs verify-stops (GET only), writes marker files under the app
+# roots. Never starts, stops or restarts a unit; never places or cancels orders. Started by tradebot-ci-confirm.timer.
+[Unit]
+Description=tradebot CI: confirm pending deploy markers after the first real 4h close (TA R1)
+
+[Service]
+Type=oneshot
+ExecStart=-/opt/tradebot/ci/ci_deploy.sh confirm live
+ExecStart=-/opt/tradebot/ci/ci_deploy.sh confirm testnet
+StandardOutput=append:/var/log/tradebot/ci-confirm.log
+StandardError=append:/var/log/tradebot/ci-confirm.log

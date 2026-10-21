@@ -7,6 +7,7 @@
 #   ci_deploy.sh deploy   <live|testnet> <sha40> <tarfile> [--dry-run]
 #   ci_deploy.sh rollback <live|testnet> [--dry-run]
 #   ci_deploy.sh status   <live|testnet>
+#   ci_deploy.sh confirm  <live|testnet>   (root timer tradebot-ci-confirm.timer, 4h close + 5 min; TA R1)
 #
 # Safety (TA review ci-deploy 2026-10-21, runbook DEPLOY_950438b.md):
 #  * never places orders, never flattens, never touches exchange stops: it only swaps a symlink and runs
@@ -15,8 +16,11 @@
 #    ≥20 min before the next); the AUTOMATIC reaction to a failed deploy (rollback or stop) never waits (TA E);
 #  * exchange stops must cover every open position (verify-stops exit 0) BEFORE a restart and BEFORE a rollback;
 #  * no restart while the state file has in-flight entry intents (waits, then refuses);
-#  * rollback ONLY to a release carrying the verified marker (live: .ta_pass_verified, written only after the full
-#    strict verification of a gate-approved ta-pass-* commit; testnet: .citest_verified) and the rollback is verified
+#  * rollback ONLY to a release carrying the verified marker (live: .ta_pass_verified; testnet: .citest_verified).
+#    TA R1: a deploy that passes the strict post-restart verification only gets <marker>.pending; the marker itself is
+#    granted by `confirm` (root timer, 4h close + 5 min) once the FIRST REAL 4h close after the restart has been
+#    processed for all 6 coins by the same process. Until then the rollback target stays the previous marked release.
+#    The rollback is verified
 #    strictly as well. No marked release / rollback not verified / stops not verified → systemctl stop + Healthchecks
 #    /fail + log + non-zero exit (TA H). Stopping the bot leaves exchange stops in place; nothing is closed.
 set -euo pipefail
@@ -54,7 +58,7 @@ case "$TARGET" in
     IMPORT_USER=tradebot-ci; IMPORT_PY=/opt/tradebot-ci-testnet/.venv/bin/python
     SANDBOX_DENY="$SANDBOX_DENY -/opt/tradebot"
     BACKUP_DIR=/root/ci-backups/testnet ;;
-  *) echo "usage: $0 deploy|rollback|status live|testnet [sha40 tarfile] [--dry-run]" >&2; exit 2 ;;
+  *) echo "usage: $0 deploy|rollback|status|confirm live|testnet [sha40 tarfile] [--dry-run]" >&2; exit 2 ;;
 esac
 if [ "$SIM_FAIL$SIM_STOPS$SIM_RB_FAIL" != 000 ] && [ "$TARGET" != testnet ]; then echo "CI_SIMULATE_* drills are testnet-only" >&2; exit 2; fi
 
@@ -113,6 +117,54 @@ revoke_marker() {  # $1 = dir name, $2 = reason (TA R3). The marker is moved asi
   rm -f "$d/$MARK.pending"
   echo "$(ts) $2" >> "$d/$REVOKED"; chown root:root "$d/$REVOKED"; chmod 644 "$d/$REVOKED"
   log "marker of $1 REVOKED ($REVOKED: $2)"
+}
+
+write_pending() {  # $1 = dir name, $2 = sha40, $3 = verify summary. TA R1: restart-time catch-up earns only .pending
+  local f=$APP/$1/$MARK.pending now
+  now=$(date -u +%s)
+  { echo "sha=$2"; echo "target=$TARGET"; echo "verified_at_utc=$(ts)"
+    echo "restart_boundary_ms=$(( now / H4 * H4 * 1000 ))"
+    echo "pid=$(systemctl show "$UNIT" -p MainPID --value)"; echo "nrestarts=$(restarts)"; echo "restart_epoch=${RESTART_T0:-$now}"
+    echo "summary=$3"; } > "$f.tmp"
+  chown root:root "$f.tmp"; chmod 644 "$f.tmp"; mv -f "$f.tmp" "$f"
+  log "marker PENDING for $1: $MARK is granted only after the first real 4h close after this restart is processed for all 6 coins (confirm timer, close + 5 min); rollback target meanwhile: $(verified_target "$1" | sed 's/^$/none/')"
+}
+
+do_confirm() {    # TA R1 — run by the root timer ~5 min after every 4h close
+  local cur f now T rb pid nr t0 msg
+  cur=$(current_dir)
+  for d in "$APP"/*/; do d=$(basename "$d")   # a pending marker of a release that is no longer current is void
+    [ "$d" != "$cur" ] && [ -f "$APP/$d/$MARK.pending" ] && { rm -f "$APP/$d/$MARK.pending"; log "stale pending marker of $d removed (not current)"; }
+  done
+  f=$APP/$cur/$MARK.pending
+  [ -f "$f" ] || { log "confirm: nothing pending (current=$cur marker=$(marker_ok "$cur" && echo yes || echo no))"; return 0; }
+  now=$(date -u +%s); T=$(( now / H4 * H4 * 1000 ))
+  rb=$(sed -n 's/^restart_boundary_ms=//p' "$f"); pid=$(sed -n 's/^pid=//p' "$f"); nr=$(sed -n 's/^nrestarts=//p' "$f")
+  t0=$(sed -n 's/^restart_epoch=//p' "$f")
+  [ "$T" -gt "$rb" ] || { log "confirm: $cur pending — no real 4h close since the restart yet (boundary $rb)"; return 0; }
+  local why=""
+  [ "$(systemctl is-active "$UNIT")" = active ] || why="unit not active"
+  [ -z "$why" ] && [ "$(systemctl show "$UNIT" -p MainPID --value)" != "$pid" ] && why="process changed since the deploy (MainPID $pid → $(systemctl show "$UNIT" -p MainPID --value))"
+  [ -z "$why" ] && [ "$(restarts)" != "$nr" ] && why="unit restarted since the deploy (NRestarts $nr → $(restarts))"
+  if [ -z "$why" ]; then msg=$(state_check "$t0" 1) || why="first real close not processed: $msg"; fi
+  if [ -z "$why" ]; then
+    python3 - "$STATE" "$T" <<'PY' || why="meta.health not refreshed after the close"
+import json, sys
+h = (json.load(open(sys.argv[1])).get("meta") or {}).get("health") or {}
+sys.exit(0 if int(h.get("t") or 0) >= int(sys.argv[2]) else 1)
+PY
+  fi
+  [ -z "$why" ] && { journal_clean "$t0" || why="journal problems since the restart"; }
+  [ -z "$why" ] && { verify_stops || why="stops not verified"; }
+  if [ -n "$why" ]; then
+    revoke_marker "$cur" "confirm after first real 4h close failed: $why"
+    alert_fail "release $cur did NOT earn $MARK: $why — rollback target stays $(verified_target "$cur" | sed 's/^$/none/'); bot NOT stopped by confirm" || true
+    die "confirm: $cur NOT marked — $why" 14
+  fi
+  write_marker "$cur" "$(sed -n 's/^sha=//p' "$f")" "first real 4h close $T processed by PID $pid: $msg"
+  echo "first_real_close_ms=$T" >> "$APP/$cur/$MARK"; echo "confirmed_by=ci_deploy.sh confirm (timer)" >> "$APP/$cur/$MARK"
+  rm -f "$f"
+  log "confirm: $cur now carries $MARK"
 }
 
 # ── checks ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -218,7 +270,7 @@ restarts() { systemctl show "$UNIT" -p NRestarts --value 2>/dev/null || echo 0; 
 
 restart_and_verify() {   # strict verification (TA H: deploys AND rollbacks); $1 = simulate failure (0/1)
   local sim=$1 t0 r0 pid deadline msg=""
-  t0=$(date -u +%s)
+  t0=$(date -u +%s); RESTART_T0=$t0
   systemctl restart "$UNIT"
   r0=$(restarts); deadline=$(( t0 + VERIFY_TIMEOUT ))
   log "restarted $UNIT at $(date -u -d "@$t0" +%H:%M:%SZ); verifying strictly (≤${VERIFY_TIMEOUT}s)"
@@ -296,16 +348,18 @@ do_rollback() {    # $1 = reason, $2 = auto(1: failure path, no window wait) / m
 
 mkdir -p /run/lock
 exec 9>/run/tradebot-ci.lock
-flock -n 9 || die "another CI deploy is running" 7
+if [ "$ACTION" = confirm ]; then flock -w 1200 9 || die "confirm: lock busy for 20 min" 7; else flock -n 9 || die "another CI deploy is running" 7; fi
 log "action=$ACTION dry_run=$DRY current=$(current_dir) unit=$(systemctl is-active "$UNIT" || true)"
 
 case "$ACTION" in
   status)
     cur=$(current_dir)
-    log "current=$cur sha=$(release_sha "$cur") marker=$(marker_ok "$cur" && echo yes || echo no) manual_rollback_target=$(verified_target "$cur" | sed 's/^$/none/') failed_deploy_rollback_target=$(verified_target "__none__" | sed 's/^$/none/') window_wait=$(in_window)s intents=$(intents_count)"
+    log "current=$cur sha=$(release_sha "$cur") marker=$(marker_ok "$cur" && echo yes || { [ -f "$APP/$cur/$MARK.pending" ] && echo pending-first-real-close || echo no; }) manual_rollback_target=$(verified_target "$cur" | sed 's/^$/none/') failed_deploy_rollback_target=$(verified_target "__none__" | sed 's/^$/none/') window_wait=$(in_window)s intents=$(intents_count)"
     for d in "$APP"/*/; do [ -f "$d/$REVOKED" ] && log "revoked: $(basename "$d") — $(tail -1 "$d/$REVOKED")"; done
     [ -f "$APP/CI_HALTED" ] && log "CI_HALTED: $(cat "$APP/CI_HALTED")"
     verify_stops || true; state_check 0 1 || true ;;
+  confirm)
+    do_confirm ;;
   rollback)
     do_rollback "manual request" 0 "$(current_dir)" ;;
   deploy)
@@ -341,7 +395,7 @@ case "$ACTION" in
     check_stop_timeout
     verify_stops || die "stops NOT verified for every open position — deploy ABORTED before restart (nothing changed)" 5
     if [ $DRY = 1 ]; then
-      log "DRY-RUN would: wait for no in-flight intents, back up $STATE → $BACKUP_DIR/, install $APP/$SHA, swap current → $SHA, systemctl restart $UNIT, strict verify, write $MARK; on failure: rollback to $(verified_target "$SHA" | sed 's/^$/<none: stop + alert>/') without waiting"
+      log "DRY-RUN would: wait for no in-flight intents, back up $STATE → $BACKUP_DIR/, install $APP/$SHA, swap current → $SHA, systemctl restart $UNIT, strict verify, write $MARK.pending (marker after the first real 4h close, TA R1); on failure: rollback to $(verified_target "$SHA" | sed 's/^$/<none: stop + alert>/') without waiting"
       exit 0
     fi
     wait_no_intents || die "in-flight intents did not clear — deploy refused before restart (nothing changed)" 11
@@ -362,7 +416,7 @@ case "$ACTION" in
     # 5. swap + restart + strict verify
     swap_to "$SHA"
     if restart_and_verify "$SIM_FAIL"; then
-      write_marker "$SHA" "$SHA" "$VERIFIED_MSG"
+      write_pending "$SHA" "$SHA" "$VERIFIED_MSG"   # TA R1: the marker itself only after the first real 4h close
       rm -f "$APP/CI_HALTED"
       log "DEPLOYED $SHA (previous: $CUR). Heartbeat script NOT changed (manual step, runbook §5)."
       exit 0

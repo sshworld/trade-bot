@@ -1,0 +1,11 @@
+# /etc/systemd/system/tradebot-ci-confirm.timer — 5 min after every UTC 4h close (KST 01/05/09/13/17/21:05).
+[Unit]
+Description=tradebot CI: confirm pending deploy markers 5 min after each 4h close (TA R1)
+
+[Timer]
+OnCalendar=*-*-* 00,04,08,12,16,20:05:00 UTC
+Persistent=true
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

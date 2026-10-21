@@ -1,7 +1,7 @@
 #!/bin/bash
 # ONE-TIME manual install / upgrade of the CI deploy plumbing on the VPS (root). Run from a checkout of the REVIEWED
 # commit:   bash live_v6/deploy/ci/install_vps_ci.sh <path-to-repo-checkout>
-# Installs: /opt/tradebot/ci/{ci_deploy.sh,ci_deploy_entry.sh,ci_job.sh,verify_stops_testnet.py} (root:root 0755),
+# Installs: tradebot-ci-confirm.{service,timer} (TA R1, enabled), /opt/tradebot/ci/{ci_deploy.sh,ci_deploy_entry.sh,ci_job.sh,verify_stops_testnet.py} (root:root 0755),
 #           /opt/tradebot/verify_stops_live.py (root:tradebot 0750, TA D; previous copy kept as .bak-<ts>),
 #           user tradebot-ci + /opt/tradebot-ci-testnet/{app,.venv} (TA K), /etc/systemd/system/live_v6-citest.service.
 # Does not touch live_v6-live, its env, state or code, and does not start/restart any unit.
@@ -17,6 +17,7 @@ install -m 755 -o root -g root "$SRC/live_v6/tools/verify_stops.py" /opt/tradebo
 [ -f /opt/tradebot/verify_stops_live.py ] && cp -p /opt/tradebot/verify_stops_live.py /opt/tradebot/verify_stops_live.py.bak-$TS
 install -m 750 -o root -g tradebot "$SRC/live_v6/tools/verify_stops_live.py" /opt/tradebot/verify_stops_live.py
 install -m 644 -o root -g root "$SRC/live_v6/deploy/ci/live_v6-citest.service" /etc/systemd/system/live_v6-citest.service
+for f in tradebot-ci-confirm.service tradebot-ci-confirm.timer; do install -m 644 -o root -g root "$SRC/live_v6/deploy/ci/$f" /etc/systemd/system/$f; done   # TA R1
 # canary tree: root-owned code, readable by tradebot-ci only; own venv (the live venv under /opt/tradebot is hidden)
 install -d -m 750 -o root -g tradebot-ci /opt/tradebot-ci-testnet /opt/tradebot-ci-testnet/app
 chown -R root:root /opt/tradebot-ci-testnet/app/*/ 2>/dev/null || true
@@ -37,4 +38,5 @@ install -d -m 711 -o root -g root /var/lib/tradebot-ci /var/lib/tradebot-ci/stag
 install -d -m 700 -o root -g root /var/lib/tradebot-ci/uploads /root/ci-backups
 install -d -m 750 -o root -g root /var/log/tradebot/ci-jobs
 systemctl daemon-reload
-echo "installed; no unit started or restarted"
+systemctl enable --now tradebot-ci-confirm.timer   # timer only (TA R1); no bot unit is started or restarted
+echo "installed; no bot unit started or restarted"
