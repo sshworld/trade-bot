@@ -1,0 +1,43 @@
+# /etc/systemd/system/live_v6-citest.service — TESTNET canary for CI deploys (Binance Futures TESTNET only).
+# Separate from live_v6-live in every path: own app root (/opt/tradebot-ci-testnet/app/current), own state dir
+# (/var/lib/live_v6-citest), own env (/etc/tradebot/citest.env = testnet keys only), own alert/command logs.
+# NOT named live_v6-testnet on purpose: live_v6-live.service has Conflicts=live_v6-testnet.service, so starting that
+# unit would STOP the live bot. No Telegram (no telegram.env; notifier is disabled outside mainnet), no heartbeat.
+# Resource-capped below the live bot so it can never starve it (1 vCPU / 1 GB host).
+[Unit]
+Description=live_v6 CI canary (H7-T) — Binance Futures TESTNET
+After=network-online.target time-sync.target
+Wants=network-online.target
+
+[Service]
+User=tradebot
+Group=tradebot
+WorkingDirectory=/opt/tradebot-ci-testnet/app/current
+EnvironmentFile=/etc/tradebot/citest.env
+Environment=LIVE_V6_NETWORK=testnet
+Environment=LIVE_V6_FORBID_MAINNET=1
+Environment=LIVE_V6_STRATEGY=h7t
+Environment=LIVE_V6_STATE=/var/lib/live_v6-citest/testnet.json
+Environment=LIVE_V6_ALERT_LOG=/var/lib/live_v6-citest/alerts.jsonl
+Environment=LIVE_V6_CMD_LOG=/var/lib/live_v6-citest/commands.jsonl
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/tradebot/.venv/bin/python -m live_v6 run
+Restart=always
+RestartSec=10
+Nice=10
+CPUWeight=20
+CPUQuota=30%
+MemoryHigh=160M
+MemoryMax=220M
+OOMScoreAdjust=500
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StateDirectory=live_v6-citest
+StateDirectoryMode=0750
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,100 @@
+# CI/CD for live_v6. PROPOSED — pending TA safety review; must not be on main until TA approves.
+# test (no secrets, offline) → deploy-testnet (canary: live_v6-citest on the VPS) → gate (commit must carry a
+# ta-pass-* tag and be on main) → deploy-live (GitHub Environment `live`: required reviewer sshworld).
+# The VPS side is ci_deploy_entry.sh behind an SSH forced command (one key per target, environment secrets).
+# Binance / Telegram keys are never in GitHub.
+name: ci-deploy
+on:
+  push:
+    branches: [main]
+    tags: ['ta-pass-*']
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'full 40-char commit sha to deploy (default: the selected ref)'
+        required: false
+permissions:
+  contents: read
+concurrency:
+  group: tradebot-deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      LIVE_V6_FORBID_MAINNET: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install 'httpx==0.28.1' 'websockets==17.3' 'pytest==9.1.1' 'pylint==4.1.3'
+      - name: offline test suite (no testnet, no slow replay; FakeExchange only)
+        run: python -m pytest live_v6/tests -m "not testnet and not slow" -q -p no:cacheprovider
+      - name: static unreachable-code check (pylint W0101)
+        run: python -m pylint --disable=all --enable=W0101 --score=n live_v6
+
+  resolve:
+    needs: test
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.r.outputs.sha }}
+    steps:
+      - id: r
+        env:
+          IN_SHA: ${{ github.event.inputs.sha }}
+          REF_SHA: ${{ github.sha }}
+        run: |
+          SHA="${IN_SHA:-$REF_SHA}"
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "bad sha"; exit 1; }
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+  deploy-testnet:
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: testnet
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - name: deploy to the testnet canary
+        env:
+          SHA: ${{ needs.resolve.outputs.sha }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: bash live_v6/deploy/ci/gh_ssh_deploy.sh
+
+  gate:
+    needs: [resolve, deploy-testnet]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - name: commit must carry a ta-pass-* tag (TA verdict) and be on main
+        env:
+          SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          git fetch --force --tags origin
+          TAGS=$(git tag --points-at "$SHA" --list 'ta-pass-*')
+          [ -n "$TAGS" ] || { echo "::error::$SHA has no ta-pass-* tag — live deploy blocked (TA PASS required)"; exit 1; }
+          git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$SHA is not on main"; exit 1; }
+          echo "TA tag(s): $TAGS"
+
+  deploy-live:
+    needs: [resolve, gate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: live          # required reviewer: sshworld (approval before this job starts)
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
+      - name: deploy to LIVE (restart only; never orders, never flatten)
+        env:
+          SHA: ${{ needs.resolve.outputs.sha }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: bash live_v6/deploy/ci/gh_ssh_deploy.sh
