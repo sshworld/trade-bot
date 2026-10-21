@@ -28,3 +28,6 @@ Go-live checks (mainnet host): `.venv/bin/python live_v6/tools/ws_check_mainnet.
 routed ws URLs) and `LIVE_V6_NETWORK=mainnet .venv/bin/python -m live_v6 --telegram-check` (ONE confirmation message).
 Operations: `python -m live_v6 status` (halt reason, positions, skips) · `python -m live_v6 resume` clears a halt
 after review · testnet first for ≥ 1 full 4h cycle on the VPS · back up `/var/lib/live_v6/state.json`.
+
+## OS updates (2026-10-21)
+Unattended security updates install only; needrestart is list-only (`/etc/needrestart/conf.d/90-tradebot.conf`) and auto-reboot is off. Restarts needed by patches are done by hand outside the 4h-close windows; see `ci/evidence/2026-10-21_needrestart_no_autorestart.md`.
