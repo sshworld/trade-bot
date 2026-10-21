@@ -45,9 +45,9 @@ REASON_KO = {"stop_loss": "손절", "signal_exit": "M20 채널 청산", "model_s
              "sl_failed": "손절 등록 실패 정리", "emergency": "비상 전체 정리", "dust_entry": "소액 부분 체결 정리"}
 
 # entry-blocking reasons (transient; cleared automatically when the condition clears)
-STARTUP, MISMATCH, API_ERRORS, UNKNOWN_ORDER, LEDGER, MARGIN, WS_STALE, MARKET_STALE = (
+STARTUP, MISMATCH, API_ERRORS, UNKNOWN_ORDER, LEDGER, MARGIN, WS_STALE, MARKET_STALE, BAR_STALE = (
     "startup", "reconcile_mismatch", "api_errors", "order_status_unknown", "ledger_vs_exchange", "margin_mode",
-    "stream_stale", "market_data_stale")
+    "stream_stale", "market_data_stale", "bar_close_stale")
 
 
 @dataclass
@@ -86,6 +86,8 @@ class Settings:
     income_interval_s: float = 60
     fallback_stop_pct: float = 3.0      # adopting an unknown position when no ATR is available
     use_streams: bool = False           # runner sets True; then stale/down streams block entries
+    bar_stale_s: float = 300.0          # TA: bar decision (meta.last_bar_close + every model's last_open) not advanced
+                                        # within this long after a decision boundary → block entries + 🚨; ✅ on catch-up
     market_stale_s: float = 60.0        # TA: no mark / kline / aggTrade (per feed) for > 60 s → block entries + alert
     stream_stale_s: float = 15.0        # no market event for this long → entries blocked (markPrice@1s)
     reconcile_s: float = 5.0            # REST safety net cadence (always on)
@@ -1125,12 +1127,54 @@ class V6Engine:
         self.market_data_guard()
         self.check_transient()
         self.reports()
+        try:
+            self.on_bar_close()                             # scheduled strategy decision (4h close → models step)
+        except Exception:  # noqa: BLE001  never skip the guards / dead-man below; bar_guard alerts if it persists
+            log.exception("bar decision failed (retry next tick)")
+        self.bar_guard()
         if self.deadman is not None:
             self.deadman.maybe_ping(self.healthy())
 
+    def bar_lag(self) -> tuple[int | None, list]:
+        """Latest decision boundary T and what has NOT been committed for it yet: [] when meta.last_bar_close ≥ T and
+        every model stepped the bar that closed at T (last_open ≥ T − interval)."""
+        iv = self.strategy.decision_interval_ms
+        if not iv:
+            return None, []
+        T = self.now_ms() // iv * iv
+        behind = []
+        if int(self.meta.get("last_bar_close") or 0) < T:
+            behind.append(f"last_bar_close {self.meta.get('last_bar_close')}")
+        for s, m in (self.strategy.state.get("models") or {}).items():
+            if int(m.get("last_open", -1)) < T - iv:
+                behind.append(f"{s} last_open {m.get('last_open')}")
+        return T, behind
+
+    def bar_guard(self):
+        """TA stale-bar guard: the bar decision for the latest boundary is not committed within bar_stale_s after it →
+        block NEW entries + 🚨 (positions / exchange stops untouched); caught up → unblock + ✅."""
+        T, behind = self.bar_lag()
+        if T is None:
+            return
+        if behind and self.now_ms() - T > self.cfg.bar_stale_s * 1000:
+            detail = f"봉 {datetime.fromtimestamp(T / 1000, KST):%m-%d %H:%M} KST 마감 미반영 · " + ", ".join(behind)[:300]
+            if BAR_STALE not in self.blocks:
+                self.block(BAR_STALE, detail)
+                self._block_alerted.add(BAR_STALE)
+                self.alert(f"4시간 봉 마감 {self.cfg.bar_stale_s:.0f}초 넘게 미반영 — 신규 진입 차단 (포지션·손절 유지, 정리 안 함)",
+                           detail, event_ms=T)
+            else:
+                self.blocks[BAR_STALE] = detail
+        elif not behind and BAR_STALE in self.blocks:
+            self.blocks.pop(BAR_STALE, None)
+            self._block_since.pop(BAR_STALE, None)
+            self._block_alerted.discard(BAR_STALE)
+            self.notify(f"✅ 4시간 봉 마감 반영 완료 — {'신규 진입 재개' if self.entries_allowed() else '다른 차단 사유 남음: ' + ','.join(self.blocks)}",
+                        kind="recovery")
+
     def healthy(self) -> bool:
         """Dead-man ping only while: started, not halted, last REST reconcile succeeded within 3× reconcile_s, no
-        position flagged unprotected."""
+        position flagged unprotected, bar decisions current (no stale-bar block)."""
         return (self.started and not self.meta.get("halted") and self.clock() - self._last_ok_reconcile <= 3 * self.cfg.reconcile_s
+                and BAR_STALE not in self.blocks
                 and not any(j.get("unprotected") for j in self.st["pos"].values()))
-        self.on_bar_close()

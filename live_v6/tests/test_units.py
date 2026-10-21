@@ -181,7 +181,7 @@ def _transfer(fx, amount):
 
 def _eng(offline, **kw):
     eng = offline.engine(income_interval_s=kw.pop("income_interval_s", 0), **kw)
-    eng.on_bar_close = lambda *a, **k: None
+    eng.on_bar_close = eng.bar_guard = lambda *a, **k: None   # bar decisions off (covered by test_bar_close_live)
     eng.startup()
     return eng
 

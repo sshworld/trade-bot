@@ -31,7 +31,7 @@ def now_ms():
 def h7t_engine(b, store_keep=False):
     strat = H7T(params=S.Params(h7_min_obs=10 ** 9))      # funding window never "ready" → never crowded (isolates entry path)
     eng = b.engine(strategy=strat)
-    eng.on_bar_close = lambda *a, **k: None
+    eng.on_bar_close = eng.bar_guard = lambda *a, **k: None   # bar decisions off (covered by test_bar_close_live)
     eng.startup()
     return eng, strat
 
@@ -246,7 +246,7 @@ def test_h7t_killed_right_after_entry_stop_on_exchange(backend, tmp_path):
     backend.assert_safe()
     strat2 = H7T(params=S.Params(h7_min_obs=10 ** 9))
     eng2 = backend.engine(strategy=strat2)
-    eng2.on_bar_close = lambda *a, **k: None
+    eng2.on_bar_close = eng2.bar_guard = lambda *a, **k: None   # bar decisions off (covered by test_bar_close_live)
     eng2.startup()
     assert DOGE in eng2.st["pos"] and strat2.state["bar"][DOGE]["entered"]
     backend.assert_safe()
@@ -277,7 +277,7 @@ def _stopped_while_down(b):
     assert b.amt(DOGE) == 0
     strat2 = H7T(params=S.Params(h7_min_obs=10 ** 9))
     eng2 = b.engine(strategy=strat2)
-    eng2.on_bar_close = lambda *a, **k: None
+    eng2.on_bar_close = eng2.bar_guard = lambda *a, **k: None   # bar decisions off (covered by test_bar_close_live)
     eng2.startup()
     return eng2, strat2, trig, ei
 

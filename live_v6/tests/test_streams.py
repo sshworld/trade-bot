@@ -28,7 +28,7 @@ class Clock:
 
 def stream_engine(b, **kw):
     eng = b.engine(use_streams=True, **kw)
-    eng.on_bar_close = lambda *a, **k: None          # these tests exercise the stream/safety path only
+    eng.on_bar_close = eng.bar_guard = lambda *a, **k: None   # bar decisions off (covered by test_bar_close_live)          # these tests exercise the stream/safety path only
     eng.startup()
     return eng
 
@@ -237,7 +237,7 @@ def test_market_data_guard_per_feed_includes_aggtrade_for_h7t(offline):
     from live_v6.strategies.h7t import H7T
     clk = Clock()
     eng = offline.engine(use_streams=True, clock=clk, strategy=H7T(params=S.Params(h7_min_obs=10 ** 9)))
-    eng.on_bar_close = lambda *a, **k: None
+    eng.on_bar_close = eng.bar_guard = lambda *a, **k: None   # bar decisions off (covered by test_bar_close_live)
     eng.startup()
     assert eng.expected_feeds() == ("mark", "kline", "trade")
     eng.market_data_guard()

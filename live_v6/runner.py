@@ -70,6 +70,7 @@ def build(network: str | None = None):
         from .strategies.h7t import H7T as Strat
     elif name == "v6_h7":
         from .strategies.v6_h7 import V6H7 as Strat
+        cfg.bar_stale_s = max(cfg.bar_stale_s, cfg.funding_wait_s + 120)   # bar close may legitimately wait for funding
     else:
         raise SystemExit(f"unknown LIVE_V6_STRATEGY {name!r}")
     strat = Strat(params=cfg.params, kline_fetch=cfg.kline_fetch, bootstrap_bars=cfg.bootstrap_bars,
@@ -82,6 +83,8 @@ def build(network: str | None = None):
 
 def run(network=None):
     logging.basicConfig(level=os.getenv("LIVE_V6_LOG", "INFO"), format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    for noisy in ("httpx", "httpcore"):                 # per-request "HTTP Request: ..." INFO lines flood the journal
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     rest, eng = build(network)
     q: queue.Queue = queue.Queue()
     ws = ws_base_for(rest.base_url)

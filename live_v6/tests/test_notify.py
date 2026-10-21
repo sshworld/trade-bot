@@ -38,7 +38,7 @@ def eng_with(post, clock=None, mode="live", log_path=None):
                                             query_delay_s=0, exit_retry_delay_s=0, breach_grace_s=0, income_interval_s=0,
                                             bootstrap_bars=60),
                    store=MemoryStore(), notifier=tg, clock=clock, sleep=lambda s: None)
-    eng.on_bar_close = lambda *a, **k: None
+    eng.on_bar_close = eng.bar_guard = lambda *a, **k: None   # bar decisions off (covered by test_bar_close_live)
     eng.startup()
     return eng, tg
 

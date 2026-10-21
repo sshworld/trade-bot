@@ -2,7 +2,7 @@
 
 Error model:
   OrderRejected        definitive 4xx with code — nothing happened.
-  ExchangeUnavailable  timeout / network / 5xx / 429 / 418 / -1007 — for WRITES the outcome is UNKNOWN:
+  ExchangeUnavailable  timeout / network / 5xx / 429 / 418 / -1007 / -1021 (timestamp outside recvWindow) — for WRITES the outcome is UNKNOWN:
                        the caller must query by client id before any retry (never double-submit an entry).
   WouldTrigger         -2021: the stop would trigger immediately.
 
@@ -29,6 +29,8 @@ log = logging.getLogger("live_v6.exchange")
 MAINNET_URL = "https://fapi.binance.com"
 TESTNET_URL = "https://testnet.binancefuture.com"
 
+
+RECV_WINDOW_MS = 10000                     # -1021 seen live with 5000 (VPS latency spikes); Binance max 60000
 
 class ExchangeError(Exception):
     pass
@@ -108,7 +110,7 @@ class BinanceREST:
         headers = {"X-MBX-APIKEY": self._key} if key_only else {}
         if signed:
             params["timestamp"] = int(time.time() * 1000)
-            params["recvWindow"] = 5000
+            params["recvWindow"] = RECV_WINDOW_MS
             params["signature"] = hmac.new(self._secret, urlencode(params).encode(), hashlib.sha256).hexdigest()
             headers["X-MBX-APIKEY"] = self._key
         try:
@@ -124,7 +126,7 @@ class BinanceREST:
         if r.status_code >= 400:
             code = body.get("code") if isinstance(body, dict) else None
             msg = str(body.get("msg", "")) if isinstance(body, dict) else r.text[:200]
-            if code == -1007:
+            if code in (-1007, -1021):                    # -1021: timestamp vs recvWindow (latency / clock) → transient
                 raise ExchangeUnavailable(f"{path}: {code} {msg}")
             if code == -2021 or "immediately trigger" in msg.lower():
                 raise WouldTrigger(code, msg)

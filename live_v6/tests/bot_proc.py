@@ -45,7 +45,7 @@ def main():
     eng = V6Engine(ex, Settings(symbols=("DOGEUSDT", "SOLUSDT", "XRPUSDT"), entry_order=("DOGEUSDT", "SOLUSDT", "XRPUSDT"),
                                 cid_prefix="v6t", bootstrap_bars=60, income_interval_s=1e9),
                    store=JsonStore(state), notifier=NullNotifier())
-    eng.on_bar_close = lambda *a, **k: None
+    eng.on_bar_close = eng.bar_guard = lambda *a, **k: None   # bar decisions off (covered by test_bar_close_live)
     eng.startup()
     T = int(time.time()) * 1000
     for i, s in enumerate(syms):

@@ -40,7 +40,7 @@ def test_engine_health_gates_ping(offline):
     clk, calls = Clock(), []
     clk.t = __import__("time").time()
     eng = offline.engine(clock=clk)
-    eng.on_bar_close = lambda *a, **k: None
+    eng.on_bar_close = eng.bar_guard = lambda *a, **k: None   # bar decisions off (covered by test_bar_close_live)
     eng.deadman = DeadMan("https://x", get=lambda u, t: calls.append(u), clock=clk, threaded=False)
     eng.tick()
     assert len(calls) == 1
