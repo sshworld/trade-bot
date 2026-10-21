@@ -51,7 +51,7 @@ KST = timezone(timedelta(hours=9))
 
 MODEL_EXITS = ("signal_exit", "model_sync")   # strategy-driven exits: the model is already flat
 REASON_KO = {"stop_loss": "손절", "signal_exit": "M20 채널 청산", "model_sync": "모델 동기화 청산", "stop_breach": "손절 미작동 정리",
-             "sl_failed": "손절 등록 실패 정리", "emergency": "비상 전체 정리", "dust_entry": "소액 부분 체결 정리"}
+             "sl_failed": "손절 등록 실패 정리", "stop_lost_breach": "손절 주문 소실 후 손절가 돌파 정리", "emergency": "비상 전체 정리", "dust_entry": "소액 부분 체결 정리"}
 
 # entry-blocking reasons (transient; cleared automatically when the condition clears)
 UNKNOWN_POS = "unknown_position"                    # per-coin entry block (st["unknown"]), never a global block
@@ -154,6 +154,11 @@ class V6Engine:
         self._ledger_strikes = 0
         self._bar_first_try: dict[int, float] = {}
         self._cache: dict = {}
+        self._own_cancels: dict[str, float] = {}           # client ids WE cancelled → not a "stop lost" event
+        self._queued: dict[str, str] = {}                  # 418 ban: sym → "stop" | "close", sent the moment it ends
+        inner = getattr(ex, "inner", ex)
+        if hasattr(inner, "on_rate_limit"):
+            inner.on_rate_limit = self._on_rate_limit
 
     # ───────────────────────── infra ─────────────────────────
     def now_ms(self) -> int:
@@ -177,6 +182,11 @@ class V6Engine:
     def x(self, name, *a, **kw):
         """Exchange call with §8c L0 accounting: a transient error (timeout / 5xx / 429 / 418 / network) pauses NEW
         entries only — never closes anything; 3 successful calls clear it; alert only if it lasts > 60 s."""
+        if name == "cancel" and len(a) > 1 and isinstance(a[1], dict):
+            now = self.clock()
+            self._own_cancels[str(a[1].get("client_id"))] = now      # our cancel → its CANCELED event is expected
+            for k in [k for k, t in self._own_cancels.items() if now - t > 3600]:
+                self._own_cancels.pop(k, None)
         try:
             r = getattr(self.ex, name)(*a, **kw)
         except ExchangeUnavailable as e:
@@ -431,11 +441,16 @@ class V6Engine:
             if isinstance(ev, Mark):
                 self.marks[ev.sym] = ev.price
                 j = self.st["pos"].get(ev.sym)
-                if (j and not j.get("closing") and ev.price <= D(j["stop_px"])
+                if j and j.get("stop_lost") and not j.get("closing") and ev.price <= D(j["stop_lost"]["px"]):
+                    self.lost_stop_breach(ev.sym, ev.price)  # no exchange stop + price through it → reduceOnly close
+                elif self.ban_left() > 0:
+                    pass                                    # 418: no REST at all; the exchange stop protects
+                elif (j and not j.get("closing") and ev.price <= D(j["stop_px"])
                         and now - self._breach_seen.get(ev.sym, -1e18) >= self.cfg.reconcile_s):
                     self._breach_seen[ev.sym] = now                 # at most one REST check per symbol per 5 s
                     self.breach_check(ev.sym, ev.price, "mark stream")
         elif isinstance(ev, (OrderUpdate, AccountUpdate)):
+            self.stop_monitor(ev)                           # TA: stop CANCELED/EXPIRED → replace now (no REST read)
             self._dirty = True                              # fills / position change → reconcile from REST now
         if self.started:
             intents = self.strategy.on_event(ev, self)
@@ -486,6 +501,99 @@ class V6Engine:
             self.block(WS_STALE, f"stale={stale} down={down}", "웹소켓 지연/끊김 — 신규 진입 중단 (REST 대조 유지)")
         elif WS_STALE in self.blocks:
             self.unblock(WS_STALE)
+
+    # ───────────────────────── protection monitor (TA 2026-10-21) ─────────────────────────
+    STOP_GONE = ("CANCELED", "EXPIRED", "REJECTED")
+
+    def _on_rate_limit(self, status, retry_after):
+        if status == 418:
+            self.alert(f"IP 차단 (HTTP 418) — {retry_after:.0f}초 동안 REST 요청 전면 중단",
+                       "신규 진입 중단 · 거래소 손절만 보호 · 손절 소실/돌파 시 조치는 차단 해제 즉시 실행 · 자동 정리 안 함")
+
+    def ban_left(self) -> float:
+        """Seconds left of a 418 IP ban (0 if none / fake exchange)."""
+        ex = getattr(self.ex, "inner", self.ex)
+        until = getattr(ex, "ban_until", 0) or 0
+        clk = getattr(ex, "clock", None)
+        left = until - (clk() if callable(clk) else time.time())
+        return left if left > 0 else 0.0
+
+    def stop_monitor(self, ev):
+        """User data stream: the protective stop of an open position went CANCELED / EXPIRED (std ORDER_TRADE_UPDATE or
+        ALGO_UPDATE — Binance conditional orders live in the algo service) and it was not our own cancel →
+        🚨 + one replacement stop at once (critical call; during a 418 ban it is queued for the moment the ban ends)."""
+        raw = ev.raw if isinstance(ev, OrderUpdate) else (ev.raw.get("o") if ev.raw.get("e") == "ALGO_UPDATE" else None)
+        if not isinstance(raw, dict):
+            return
+        sym, status = raw.get("s"), str(raw.get("X") or "")
+        cid = str(raw.get("caid") or raw.get("c") or "")
+        j = self.st["pos"].get(sym)
+        if status not in self.STOP_GONE or not j or j.get("closing") or not cid.startswith(j["cid"]):
+            return
+        if cid[len(j["cid"]):][:1] not in ("p", "s"):        # p = pre-arm, s<n> = protective stop; x<n> = exits
+            return
+        if self._own_cancels.pop(cid, None) is not None:
+            return
+        cp = raw.get("cp")
+        j["stop_lost"] = {"cid": cid, "status": status, "t": self.now_ms(), "px": j["stop_px"],
+                          "cp": cp is True or str(cp).lower() == "true"}
+        self.save()
+        self.alert(f"손절 주문 {status} 감지 — {sym} 즉시 재등록" + (" (IP 차단 중: 해제 즉시 전송)" if self.ban_left() else ""),
+                   f"{cid} · 손절 {j['stop_px']} · 수량 {j['qty']}", event_ms=ev.t or None)
+        self.replace_lost_stop(sym)
+
+    def replace_lost_stop(self, sym) -> bool:
+        j = self.st["pos"].get(sym)
+        if not j or not j.get("stop_lost"):
+            return True
+        if self.ban_left() > 0:
+            self._queued.setdefault(sym, "stop")
+            return False
+        lost = j["stop_lost"]
+        seq = int(j.get("stop_seq", 0))
+        j["stop_seq"] = seq + 1
+        self.save()
+        try:                                                # one closePosition per side → a lost qty stop is
+            self.x("stop", sym, "SELL", D(lost["px"]), f"{j['cid']}s{seq}",       # replaced by a qty stop
+                   **({} if lost.get("cp") else {"qty": D(j["qty"])}))
+        except WouldTrigger:
+            self.lost_stop_breach(sym, self.marks.get(sym))
+            return False
+        except ExchangeError as e:
+            if self.ban_left() > 0:
+                self._queued.setdefault(sym, "stop")
+                return False
+            lost["failed"] = str(e)[:120]
+            self.save()
+            self.alert(f"손절 재등록 실패 — {sym} 시장가가 원래 손절가 {lost['px']} 도달 시 즉시 시장가 정리",
+                       f"{str(e)[:100]} · 대조 루프가 계속 재시도")
+            return False
+        j.pop("stop_lost", None)
+        self.save()
+        self.notify(f"✅ 손절 재등록 완료 — {sym} 손절 {lost['px']}", kind="recovery")
+        return True
+
+    def lost_stop_breach(self, sym, mark):
+        """No exchange stop (lost, replacement failed / pending) and mark through the original stop → reduceOnly MARKET
+        close of THIS position at once (no grace: there is no exchange stop to wait for). 418 → queued for unban."""
+        j = self.st["pos"].get(sym)
+        if not j or j.get("closing"):
+            return
+        self.alert("손절 주문 없음 + 손절가 돌파 — 이 포지션 시장가 정리" + (" (IP 차단 중: 해제 즉시 전송)" if self.ban_left() else ""),
+                   f"{sym} mark {mark} vs 손절 {j['stop_lost']['px']} · 다른 포지션 유지")
+        self.close(sym, "stop_lost_breach")
+
+    def flush_queued(self):
+        """First tick after a 418 ban: send the queued protective actions before anything else."""
+        for sym, kind in list(self._queued.items()):
+            self._queued.pop(sym, None)
+            j = self.st["pos"].get(sym)
+            if not j:
+                continue
+            if kind == "close" or j.get("closing"):
+                self.close(sym, j.get("close_reason") or "stop_lost_breach")
+            else:
+                self.replace_lost_stop(sym)
 
     def breach_check(self, sym, mark, source):
         self.sleep(self.cfg.breach_grace_s)                 # give the exchange stop a moment to fire
@@ -822,6 +930,10 @@ class V6Engine:
         if not j.get("closing"):
             j["closing"], j["close_reason"] = True, reason
             self.save()
+        if self.ban_left() > 0:                             # 418: nothing can be sent → queued for the unban tick
+            self._queued[sym] = "close"
+            log.error("%s close (%s) queued: IP ban %.0fs left", sym, reason, self.ban_left())
+            return False
         for attempt in range(self.cfg.exit_attempts):
             try:
                 amt = self.x("positions", self.cfg.symbols)[sym]["amt"]
@@ -984,6 +1096,9 @@ class V6Engine:
                 orders = self.x("open_orders", sym)
             elif j.get("unprotected"):
                 j.pop("unprotected", None)
+                self.save()
+            if j.get("stop_lost") and self.find_stop(amt, orders):
+                j.pop("stop_lost", None)                    # REST confirms a protective stop again
                 self.save()
             prot = self.find_stop(amt, orders)
             if prot and prot["stop_price"] > 0 and D(prot["stop_price"]) != stp:
@@ -1268,6 +1383,8 @@ class V6Engine:
         """§8c L3(c): exchange unresponsive > api_dead_s AND a position without a confirmed stop → flatten all."""
         if self._fault_since is None or self.clock() - self._fault_since <= self.cfg.api_dead_s:
             return
+        if self.ban_left() > 0:                             # 418: nothing can be sent; queued actions run at unban
+            return
         bad = [s for s, j in self.st["pos"].items() if j.get("unprotected")]   # unknown positions never trigger a flatten
         if bad and not str(self.meta.get("halted") or "").startswith("emergency"):
             self.emergency_flatten_all(f"API 무응답 {self.clock() - self._fault_since:.0f}s + 손절 미확인 {bad}")
@@ -1281,6 +1398,8 @@ class V6Engine:
             if not self.started:
                 return
         backoff = self.rate_backoff()
+        if self._queued and not self.ban_left():
+            self.flush_queued()                             # 418 over → queued stop / close go out first
         if backoff:                                         # 429/418: honour Retry-After — no polling (it extends a
             self.block(RATE_LIMIT, f"Retry-After {backoff:.0f}s")   # ban); exchange stops stay; protective calls
             self.check_api_dead()                           # (stop / cancel / close) still go out when triggered

@@ -29,6 +29,13 @@ Files: `engine.py` execution + safety · `strategy.py` pure v6 model (ATR/M20/H7
   L2 mismatch → exchange is truth; protected positions are left alone; unknown position → see below (never closed).
   L3 flatten ALL + halt only on strategy equity ≤ `halt_fraction` (0.75) × S0 (−25 %, §8e-2), a position still unprotected after L1, or API dead > 5 min with an
   unprotected position. Flatten-all closes only positions in the state file.
+- **429 / 418 (TA 2026-10-21):** Retry-After honoured (default 10 s / 120 s); no polling, NEW entries blocked, never a
+  flatten by itself. 429: protective calls (stop / cancel / reduceOnly close + positions / open-order reads) still go out.
+  418 = IP ban (Binance docs): 🚨 at once and NOTHING is sent until it ends, protective calls included; queued stop /
+  close actions go out on the first tick after the ban. The exchange stop is the only protection during a 418.
+  Protection monitor (user stream ORDER_TRADE_UPDATE / ALGO_UPDATE, no extra REST): a position's stop CANCELED / EXPIRED
+  / REJECTED not by us → 🚨 + one replacement stop at once; replacement failed → reduceOnly MARKET close as soon as the
+  mark crosses the original stop price.
 - **Unknown positions (TA R4, 2026-10-21):** an exchange position that is NOT in the state file (opened by hand, or
   the state file was lost / corrupted) is NEVER market-closed by the bot — not by the strategy (`model_sync`), not by
   a breach / stop-failure close, not by flatten-all (`close()` refuses any symbol not in the state file). It is kept

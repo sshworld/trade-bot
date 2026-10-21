@@ -82,10 +82,22 @@ class Backend:
             assert not d, f"duplicate client ids: {d}"
 
     def entry_orders(self, sym, t0_ms) -> int:
-        """Distinct entry (BUY, non-reduce) orders accepted since t0."""
+        """Distinct entry orders accepted since t0: EVERY non-reduceOnly BUY order on `sym` created at/after t0
+        (exchange server time, no backward margin), whatever its client id (TA: a duplicate under another id must
+        count too). Only the fixture's own `v6tclean…` cleanup orders are excluded. (Old version: BUY userTrades
+        since now − 5 s, which on the shared testnet account also caught the PREVIOUS test's entry.)"""
         if self.kind == "offline":
             return sum(1 for o in self.inner.orders.values() if o["symbol"] == sym and o["side"] == "BUY")
-        return len({t["order_id"] for t in self.inner.user_trades(sym, t0_ms) if t["side"] == "BUY"})
+        return len({o["orderId"] for o in self.inner._req("GET", "/fapi/v1/allOrders",
+                                                           {"symbol": sym, "startTime": t0_ms}, signed=True)
+                    if o["side"] == "BUY" and str(o.get("reduceOnly")).lower() != "true"
+                    and not str(o.get("clientOrderId", "")).startswith("v6tclean") and int(o["time"]) >= t0_ms})
+
+    def now_ms(self) -> int:
+        """t0 for entry_orders: exchange server time, taken AFTER fixture cleanup, no backward margin."""
+        if self.kind == "offline":
+            return int(time.time() * 1000)
+        return int(self.inner._req("GET", "/fapi/v1/time", {}, signed=False)["serverTime"])
 
     def cleanup(self):
         if self.kind != "testnet":

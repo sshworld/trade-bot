@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 
 from live_v6 import engine as E
-from live_v6.exchange import BinanceREST, ExchangeUnavailable, OrderRejected, WouldTrigger
+from live_v6.exchange import BinanceREST, ExchangeUnavailable, OrderRejected, RateLimited, WouldTrigger
 from live_v6.rules import floor_to
 from live_v6.sizing import SizingParams
 
@@ -101,7 +101,7 @@ def test_isolated_failure_blocks_entries(backend):
 
 def test_no_averaging(backend):
     eng = ready(backend)
-    t0 = int(time.time() * 1000) - 5000
+    t0 = backend.now_ms()
     opened(backend, eng)
     assert not eng.enter(DOGE, backend.stop_dist(), unique_T())
     assert backend.entry_orders(DOGE, t0) == 1
@@ -125,7 +125,7 @@ def test_kill_after_fill_then_restart(backend):
     """Process dies right after the entry fill: the PRE-ARMED reduceOnly stop already protects the position (no
     fill→stop window); restart resolves the intent by client id, upgrades protection, never re-sends the entry."""
     eng = ready(backend)
-    t0 = int(time.time() * 1000) - 5000
+    t0 = backend.now_ms()
     T = unique_T()
     backend.fx.inject("market", "kill_after", match=is_entry)
     with pytest.raises(ProcessKilled):
@@ -193,7 +193,7 @@ def test_restart_with_stop_removed(backend):
 def test_restart_multiple_positions_rearms_all(backend):
     """TA (a): restart while holding several positions → every stop re-armed, no duplicate entries."""
     eng = ready(backend)
-    t0 = int(time.time() * 1000) - 5000
+    t0 = backend.now_ms()
     Ts = {s: opened(backend, eng, s) for s in TEST_SYMBOLS}
     for s in TEST_SYMBOLS:
         for o in backend.stops(s):
@@ -210,7 +210,7 @@ def test_restart_multiple_positions_rearms_all(backend):
 # ───────────── network / API faults ─────────────
 def test_entry_response_lost_no_duplicate(backend):
     eng = ready(backend)
-    t0 = int(time.time() * 1000) - 5000
+    t0 = backend.now_ms()
     if backend.kind == "testnet":
         backend.transport.inject("/fapi/v1/order", "lost", method="POST")
     else:
@@ -235,7 +235,7 @@ def test_drop_during_status_query(backend):
     """Entry executed, response lost, AND every status query fails → entries blocked + 🚨; once the network is
     back, reconcile resolves the intent by client id, arms the stop and unblocks."""
     eng = ready(backend)
-    t0 = int(time.time() * 1000) - 5000
+    t0 = backend.now_ms()
     sent = {"market": False}
 
     def lost_mark(fn, *a, **kw):
@@ -304,6 +304,10 @@ def test_http_faults_map_to_unavailable(backend, mode):
     with pytest.raises(ExchangeUnavailable):
         c.book(DOGE)
     if backend.kind == "testnet":
+        if mode in ("http429", "http418"):               # 002c069: Retry-After honoured, non-critical calls refused
+            with pytest.raises(RateLimited, match="not sent"):
+                c.book(DOGE)                             # locally until the backoff ends (10 s / 120 s default)
+            c.backoff_until = c.ban_until = 0            # simulate Retry-After elapsed
         assert c.book(DOGE)["bid"] > 0                   # next call fine
 
 
@@ -460,6 +464,9 @@ def test_overreaction_429_once(backend):
         backend.fx.inject("account", "unavailable", times=1)
     with pytest.raises(ExchangeUnavailable):
         eng.reconcile()
+    if backend.kind == "testnet":                        # 002c069: 10 s backoff; entries blocked meanwhile,
+        assert backend.inner.clock() < backend.inner.backoff_until  # protective calls still allowed
+        backend.inner.backoff_until = 0                  # simulate Retry-After elapsed
     eng.reconcile()
     assert close_orders(backend) == 0 and not eng.meta.get("halted") and not alerts(eng)
     backend.assert_safe()
@@ -481,7 +488,7 @@ def test_overreaction_stop_rejected_once_then_retry_ok(backend):
 def test_exit_response_lost_no_duplicate(backend):
     eng = ready(backend)
     opened(backend, eng)
-    t0 = int(time.time() * 1000) - 5000
+    t0 = backend.now_ms()
     if backend.kind == "testnet":
         backend.transport.inject("/fapi/v1/order", "lost", method="POST")
     else:

@@ -113,6 +113,8 @@ class BinanceREST:
         self._client = httpx.Client(base_url=self.base_url, timeout=timeout, transport=transport)
         self.clock = time.time
         self.backoff_until = 0.0
+        self.ban_until = 0.0                        # 418 IP ban: NOTHING is sent until then (critical included)
+        self.on_rate_limit = None                   # engine hook (status, retry_after_s) → immediate 🚨 on a 418
         self.used_weight_1m = 0
         self.weight_peaks: dict[int, int] = {}      # minute (epoch // 60) → max X-MBX-USED-WEIGHT-1M seen
         self.requests: dict[int, int] = {}          # minute → requests sent
@@ -142,6 +144,8 @@ class BinanceREST:
         return self.weight_peaks.get(int(self.clock() // 60), 0)
 
     def _req(self, method, path, params=None, signed=True, key_only=False, critical=False):
+        if self.clock() < self.ban_until:                 # TA 2026-10-21: 418 = IP ban → send nothing (docs: banned IP)
+            raise RateLimited(f"{method} {path}: IP ban (418) {self.ban_until - self.clock():.0f}s left (not sent)")
         if self.clock() < self.backoff_until and not critical:
             raise RateLimited(f"{method} {path}: rate-limit backoff {self.backoff_until - self.clock():.0f}s (not sent)")
         params = dict(params or {})
@@ -162,7 +166,16 @@ class BinanceREST:
             except (TypeError, ValueError):
                 ra = RATE_DEFAULT_S[r.status_code]
             self.backoff_until = max(self.backoff_until, self.clock() + ra)
-            log.error("Binance HTTP %s on %s %s → backoff %.0fs (protective calls only)", r.status_code, method, path, ra)
+            if r.status_code == 418:                      # Binance docs: IP auto-banned for not backing off after 429s;
+                self.ban_until = max(self.ban_until, self.clock() + ra)   # requests during it only feed the ban
+                log.error("Binance HTTP 418 (IP ban) on %s %s → NO requests at all for %.0fs", method, path, ra)
+            else:
+                log.error("Binance HTTP 429 on %s %s → backoff %.0fs (protective calls only)", method, path, ra)
+            if self.on_rate_limit is not None:
+                try:
+                    self.on_rate_limit(r.status_code, ra)
+                except Exception:  # noqa: BLE001  an alert hook must never break the request path
+                    log.exception("rate-limit hook failed")
             raise RateLimited(f"{method} {path}: HTTP {r.status_code} retry-after {ra:.0f}s")
         if r.status_code >= 500 or r.status_code == 408:
             raise ExchangeUnavailable(f"{method} {path}: HTTP {r.status_code}")
