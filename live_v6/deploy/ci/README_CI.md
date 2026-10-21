@@ -74,13 +74,20 @@ by deploys (pushed code cannot change the deployer).
 8. Strict post-restart verification (deploy AND rollback): unit active, no restart loop (NRestarts / MainPID stable
    45 s), state rewritten after restart, fresh `meta.health.ok`, `last_bar_close` = current boundary and all 6
    `last_open` = boundary − 4h, no Traceback/CRITICAL/모델 재구성 in the journal, stops verified again.
-9. Pass → marker written (`live`: `$APP/<release>/.ta_pass_verified`; testnet: `.citest_verified`), root-owned, with
-   sha, time, last_bar_close, health. A live deploy only happens for a gate-approved `ta-pass-*` commit after 성헌's
-   approval, so the live marker = "TA PASS + live-verified".
+9. Pass → only `<marker>.pending` (TA R1; marker = `live`: `$APP/<release>/.ta_pass_verified`, testnet:
+   `.citest_verified`). The marker itself is granted by the root timer `tradebot-ci-confirm.timer` (4h close + 5 min,
+   `ci_deploy.sh confirm <target>`) once the FIRST REAL 4h close after the restart was processed: same MainPID and
+   NRestarts as at deploy, `last_bar_close` = that close, all 6 `last_open` = close − 4h, fresh health, clean journal,
+   stops verified. Otherwise the pending marker is revoked + `/fail` (the bot is not stopped by confirm). Until the
+   marker exists the rollback target stays the previous marked release. A live deploy only happens for a
+   gate-approved `ta-pass-*` commit after 성헌's approval, so the live marker = "TA PASS + live-verified + one real close".
 10. Fail → **rollback only to the newest release whose marker is valid** (root-owned, sha matches dir), strictly
     verified → exit 9 + Healthchecks /fail notice. No marked release (exit 10), stops not verified (exit 5) or rollback
     not verified (exit 6) → `systemctl stop <unit>` + Healthchecks `/fail` (URL from the env file, never printed) +
     log + `CI_HALTED` file + non-zero exit (GitHub job fails). Exchange stops stay; nothing is closed (TA H).
+    A rollback target that fails its own verification has its marker revoked too (TA R3): marker moved to
+    `<marker>.revoked-<ts>`, reason appended to `.ta_pass_revoked` / `.citest_revoked`; only a fresh verified deploy
+    (and its first real close) marks it again.
 11. Idempotent: same full sha current + unit active → no-op. flock + one transient unit per target: one run at a time.
 12. Detached (TA J): body runs in `systemd-run --collect` with output to `/var/log/tradebot/ci-jobs/<target>-<id>.log`;
     a dropped SSH session only stops the client's polling.
@@ -91,5 +98,10 @@ Live releases on the VPS today: `0d82b19` (current, hand-deployed 2026-10-21 10:
 present, tag `ta-pass-0d82b19`), `fae64af`, `93f208c`, `c3f6ee2` (no marker). The first CI live deploy therefore rolls
 back only to `0d82b19`; `fae64af` (frozen-bar bug) can never be a rollback target. If 0d82b19 itself were the failing
 release, the bot is stopped and /fail is sent instead.
-Note: a stopped unit stays enabled — after a VPS reboot it would start the release `current` points to; `CI_HALTED`
-and the heartbeat (/fail while bars are not committed) flag this.
+After a CI halt the unit cannot start (TA R2): `ExecStartPre=+…` refuses while `$APP/CI_HALTED` exists — on `systemctl
+start`, on `Restart=always` retries (every 10 s, each refused) and after a reboot. Live gets this via the drop-in
+`/etc/systemd/system/live_v6-live.service.d/10-ci-halt-guard.conf` (installed with daemon-reload only; effective from
+the next start). CI deploy/rollback refuse while halted (exit 13). CI never removes `CI_HALTED`. Ops recovery:
+`sudo systemctl stop <unit>` (ends the retry loop) → investigate → `sudo rm <app>/CI_HALTED` → CI rollback/deploy.
+Existing live marker on 0d82b19 predates R1 (hand deploy 10:07:55 KST); the same process (PID 12861) has since
+processed the real 13:00 KST close for all 6 coins (status 13:16 KST: last_bar_close = boundary).

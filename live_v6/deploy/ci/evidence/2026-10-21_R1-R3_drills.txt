@@ -1,0 +1,228 @@
+# Evidence — TA re-review 6882fc8: R1 (marker after first real 4h close), R2 (CI_HALTED blocks start), R3 (revoke a
+# failed rollback target). 2026-10-21, log times UTC (KST = UTC+9; 04:2x Z = 13:2x KST). Drills on the TESTNET canary
+# live_v6-citest only. LIVE live_v6-live: drop-in installed + daemon-reload only, never stopped/restarted —
+# MainPID=12861 NRestarts=0 before, during and after. Alerts in drills = DUMMY local Healthchecks listener.
+# Admin access: ops + sudo (root = CI forced commands only since F).
+
+## install 2026-10-21T04:24:35Z from ci-deploy 30e8e8f
+MainPID=12861
+NRestarts=0
+ActiveState=active
+installed; no bot unit started or restarted
+fe5e661900510fd2bff6d1418c56e4d83ba2122c30a164ce7601f36f2ff1dc64  ci_deploy.sh
+ff8940dd9b76a25ca681788c08e196bb0a3956ffd73c208ab608c180d76df434  ci_deploy_entry.sh
+e9df9ae2f217bbceaac71fb116b660eee8844d32b2bb48fb8fa84329b13ab342  ci_job.sh
+## live unit (drop-in installed, daemon-reload only)
+# /etc/systemd/system/live_v6-live.service.d/10-ci-halt-guard.conf
+# /etc/systemd/system/live_v6-live.service.d/10-ci-halt-guard.conf — TA R2.
+# After a CI halt (ci_deploy.sh stop_and_alert writes /opt/tradebot/app/CI_HALTED) the live bot must not start again
+# by itself (Restart=always, reboot) or by a casual `systemctl start`, until ops has investigated and removed
+# CI_HALTED by hand. Installed with `systemctl daemon-reload` only — it takes effect at the NEXT start of the unit; the
+# running process is not touched. "+" = runs as root outside the sandbox. Does not touch orders or exchange stops.
+[Service]
+ExecStartPre=+/bin/sh -c 'if [ -e /opt/tradebot/app/CI_HALTED ]; then echo "CI_HALTED present - start refused; ops must remove it by hand:"; cat /opt/tradebot/app/CI_HALTED; exit 1; fi'
+MainPID=12861
+NRestarts=0
+ExecStartPre={ path=/bin/sh ; argv[]=/bin/sh -c if [ -e /opt/tradebot/app/CI_HALTED ]; then echo "CI_HALTED present - start refused; ops must remove it by hand:"; cat /opt/tradebot/app/CI_HALTED; exit 1; fi ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
+ActiveState=active
+DropInPaths=/etc/systemd/system/live_v6-live.service.d/10-ci-halt-guard.conf
+## citest unit
+MainPID=27669
+ExecStartPre={ path=/bin/sh ; argv[]=/bin/sh -c if [ -e /opt/tradebot-ci-testnet/app/CI_HALTED ]; then echo "CI_HALTED present - start refused; ops must remove it by hand:"; cat /opt/tradebot-ci-testnet/app/CI_HALTED; exit 1; fi ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=
+ActiveState=active
+Wed 2026-10-21 08:05:00 UTC 3h 40min - - tradebot-ci-confirm.timer tradebot-ci-confirm.service
+
+STDERR: Created symlink /etc/systemd/system/timers.target.wants/tradebot-ci-confirm.timer → /etc/systemd/system/tradebot-ci-confirm.timer.
+
+## re-install 2026-10-21T04:32:43Z from ci-deploy ca87f85 (symlink-skip fix)
+installed; no bot unit started or restarted
+a7928f3ae36dcd415fc73da0b8fd7aaceeb272c1a7529852151f4e30326290cb  /opt/tradebot/ci/ci_deploy.sh
+MainPID=12861
+NRestarts=0
+
+
+# ── R3 + R2: deploy 30e8e8f with CI_SIMULATE_VERIFY_FAIL=1 + CI_SIMULATE_ROLLBACK_VERIFY_FAIL=1 (root, ci_job.sh start)
+## R3 drill start 2026-10-21T04:25:06Z: testnet deploy 30e8e8f6d5af1153b24e8e951c395003bc90b912 with CI_SIMULATE_VERIFY_FAIL=1 + CI_SIMULATE_ROLLBACK_VERIFY_FAIL=1 (root, ci_job.sh start)
+[2026-10-21T04:25:06Z] [testnet] action=status dry_run=0 current=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 unit=active
+[2026-10-21T04:25:06Z] [testnet] current=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 sha=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 marker=yes manual_rollback_target=0d82b19291ba9ded0d49e2511ade1964a48e8b0b failed_deploy_rollback_target=0d82b19291ba9ded0d49e2511ade1964a48e8b0b window_wait=0s intents=0
+MainPID=12861
+NRestarts=0
+
+[2026-10-21T04:25:07Z] [testnet] action=deploy dry_run=0 current=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 unit=active
+import ok, tick calls on_bar_close
+[2026-10-21T04:25:07Z] [testnet] import check OK for 30e8e8f6d5af1153b24e8e951c395003bc90b912 (user=tradebot-ci, sandbox: no network, denied: -/etc/tradebot -/var/lib/live_v6-live -/opt/tradebot/app -/var/log/tradebot -/root -/var/lib/tradebot-ci/uploads -/opt/tradebot)
+[2026-10-21T04:25:07Z] [testnet] time window OK (04:25 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T04:25:07Z] [testnet] unit live_v6-citest TimeoutStopUSec=30s (SIGTERM → runner finishes the current event; SIGKILL after this)
+  verify-stops: pass=True positions=0 []
+[2026-10-21T04:25:07Z] [testnet] verify-stops exit=0
+[2026-10-21T04:25:07Z] [testnet] state: no in-flight intents
+[2026-10-21T04:25:07Z] [testnet] state backed up
+[2026-10-21T04:25:07Z] [testnet] installed /opt/tradebot-ci-testnet/app/30e8e8f6d5af1153b24e8e951c395003bc90b912
+[2026-10-21T04:25:07Z] [testnet] symlink current → 30e8e8f6d5af1153b24e8e951c395003bc90b912
+[2026-10-21T04:25:13Z] [testnet] restarted live_v6-citest at 04:25:07Z; verifying strictly (≤240s)
+[2026-10-21T04:25:23Z] [testnet]   state: health ok, last_bar_close=1792555200000 boundary=1792555200000 models=6 all caught up, positions=0
+  verify-stops: pass=True positions=0 []
+[2026-10-21T04:25:43Z] [testnet] verify-stops exit=0
+[2026-10-21T04:25:43Z] [testnet] SIMULATED verification failure (testnet drill)
+[2026-10-21T04:25:43Z] [testnet] post-restart verification FAILED for 30e8e8f6d5af1153b24e8e951c395003bc90b912 — reacting now (no window wait)
+[2026-10-21T04:25:43Z] [testnet] marker of 30e8e8f6d5af1153b24e8e951c395003bc90b912 REVOKED (.citest_revoked: deploy verification failed)
+[2026-10-21T04:25:43Z] [testnet] rollback candidates: verified (.citest_verified) releases other than 30e8e8f6d5af1153b24e8e951c395003bc90b912 → 0d82b19291ba9ded0d49e2511ade1964a48e8b0b
+[2026-10-21T04:25:43Z] [testnet] ROLLBACK to 0d82b19291ba9ded0d49e2511ade1964a48e8b0b (0d82b19291ba9ded0d49e2511ade1964a48e8b0b) (reason: verification failed for 30e8e8f6d5af1153b24e8e951c395003bc90b912)
+  verify-stops: pass=True positions=0 []
+[2026-10-21T04:25:44Z] [testnet] verify-stops exit=0
+[2026-10-21T04:25:44Z] [testnet] automatic reaction to a failed deploy — NOT waiting for the time window (TA E)
+[2026-10-21T04:25:44Z] [testnet] symlink current → 0d82b19291ba9ded0d49e2511ade1964a48e8b0b
+[2026-10-21T04:25:48Z] [testnet] restarted live_v6-citest at 04:25:44Z; verifying strictly (≤240s)
+[2026-10-21T04:25:58Z] [testnet]   state: health ok, last_bar_close=1792555200000 boundary=1792555200000 models=6 all caught up, positions=0
+  verify-stops: pass=True positions=0 []
+[2026-10-21T04:26:19Z] [testnet] verify-stops exit=0
+[2026-10-21T04:26:19Z] [testnet] SIMULATED verification failure (testnet drill)
+[2026-10-21T04:26:19Z] [testnet] marker of 0d82b19291ba9ded0d49e2511ade1964a48e8b0b REVOKED (.citest_revoked: rollback target failed its own verification (verification failed for 30e8e8f6d5af1153b24e8e951c395003bc90b912))
+[2026-10-21T04:26:19Z] [testnet] STOPPING live_v6-citest — reason: rollback to 0d82b19291ba9ded0d49e2511ade1964a48e8b0b did NOT verify (verification failed for 30e8e8f6d5af1153b24e8e951c395003bc90b912) (exchange stops stay in place; nothing is closed or cancelled)
+  verify-stops: pass=True positions=0 []
+[2026-10-21T04:26:19Z] [testnet] verify-stops exit=0
+[2026-10-21T04:26:24Z] [testnet] unit live_v6-citest is now: inactive
+[2026-10-21T04:26:24Z] [testnet] ALERT: Healthchecks /fail sent (/etc/tradebot/ci-alert-testnet.env)
+[2026-10-21T04:26:24Z] [testnet] FAIL: rollback to 0d82b19291ba9ded0d49e2511ade1964a48e8b0b did NOT verify (verification failed for 30e8e8f6d5af1153b24e8e951c395003bc90b912) — live_v6-citest stopped
+JOB_STATE done rc=6
+## R3 result 2026-10-21T04:28:47Z: markers / revoked files
+0d82b19291ba9ded0d49e2511ade1964a48e8b0b: marker=no pending=no revoked=2026-10-21T04:26:19Z rollback target failed its own verification (verification failed for 30e8e8f6d5af1153b24e8e951c395003bc90b912) moved=2
+27dabf5: marker=no pending=no revoked=- moved=0
+30e8e8f6d5af1153b24e8e951c395003bc90b912: marker=no pending=no revoked=2026-10-21T04:25:43Z deploy verification failed moved=0
+660eea8eac39a0962ef86ff3f083939e9ddaa6a2: marker=yes pending=no revoked=- moved=0
+950438b: marker=no pending=no revoked=- moved=0
+current: marker=no pending=no revoked=2026-10-21T04:26:19Z rollback target failed its own verification (verification failed for 30e8e8f6d5af1153b24e8e951c395003bc90b912) moved=2
+current -> /opt/tradebot-ci-testnet/app/0d82b19291ba9ded0d49e2511ade1964a48e8b0b
+CI_HALTED: 2026-10-21T04:26:24Z rollback to 0d82b19291ba9ded0d49e2511ade1964a48e8b0b did NOT verify (verification failed for 30e8e8f6d5af1153b24e8e951c395003bc90b912)
+## R2 drill 2026-10-21T04:28:47Z: start attempts while CI_HALTED exists
+inactive
+systemctl start rc=1
+activating
+daemon-reload + systemctl start rc=1
+after 25 s (Restart=always, RestartSec=10): activating NRestarts=3 MainPID=0
+2026-10-21T04:29:08+00:00 vultr systemd[1]: Failed to start live_v6-citest.service - live_v6 CI canary (H7-T) — Binance Futures TESTNET.
+2026-10-21T04:29:18+00:00 vultr systemd[1]: live_v6-citest.service: Scheduled restart job, restart counter is at 3.
+2026-10-21T04:29:18+00:00 vultr systemd[1]: Starting live_v6-citest.service - live_v6 CI canary (H7-T) — Binance Futures TESTNET...
+2026-10-21T04:29:18+00:00 vultr sh[29966]: CI_HALTED present - start refused; ops must remove it by hand:
+2026-10-21T04:29:18+00:00 vultr sh[29967]: 2026-10-21T04:26:24Z rollback to 0d82b19291ba9ded0d49e2511ade1964a48e8b0b did NOT verify (verification failed for 30e8e8f6d5af1153b24e8e951c395003bc90b912)
+2026-10-21T04:29:18+00:00 vultr systemd[1]: live_v6-citest.service: Control process exited, code=exited, status=1/FAILURE
+2026-10-21T04:29:18+00:00 vultr systemd[1]: live_v6-citest.service: Failed with result 'exit-code'.
+2026-10-21T04:29:18+00:00 vultr systemd[1]: Failed to start live_v6-citest.service - live_v6 CI canary (H7-T) — Binance Futures TESTNET.
+## CI deploy / rollback while halted
+[2026-10-21T04:29:23Z] [testnet] FAIL: CI_HALTED present (2026-10-21T04:26:24Z rollback to 0d82b19291ba9ded0d49e2511ade1964a48e8b0b did NOT verify (verification failed for 30e8e8f6d5af1153b24e8e951c395003bc90b912)) — refusing; ops must investigate and remove /opt/tradebot-ci-testnet/app/CI_HALTED by hand (the unit's ExecStartPre also refuses to start)
+(rc of `| tail` — real rc below)
+MainPID=12861
+NRestarts=0
+ActiveState=active
+
+STDERR: Job for live_v6-citest.service failed because the control process exited with error code.
+See "systemctl status live_v6-citest.service" and "journalctl -xeu live_v6-citest.service" for details.
+Job for live_v6-citest.service failed because the control process exited with error code.
+See "systemctl status live_v6-citest.service" and "journalctl -xeu live_v6-citest.service" for details.
+
+## rollback while halted: rc=13 (13 = refused, CI_HALTED)
+## ops recovery 2026-10-21T04:29:38Z: (1) systemctl stop (ends the refused-restart loop) (2) rm CI_HALTED by hand
+inactive
+removed '/opt/tradebot-ci-testnet/app/CI_HALTED'
+15 s later, unit: inactive (stays down; nothing restarts it until a deploy/rollback)
+
+## manual rollback via the CI testnet key (forced command) 2026-10-21T04:29:54Z
+server job 20261021T042956Z-b53876 started (detached on the VPS)
+[2026-10-21T04:29:56Z] [testnet] action=rollback dry_run=0 current=0d82b19291ba9ded0d49e2511ade1964a48e8b0b unit=inactive
+[2026-10-21T04:29:56Z] [testnet] rollback candidates: verified (.citest_verified) releases other than 0d82b19291ba9ded0d49e2511ade1964a48e8b0b → 660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+[2026-10-21T04:29:56Z] [testnet] ROLLBACK to 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 (660eea8eac39a0962ef86ff3f083939e9ddaa6a2) (reason: manual request)
+  verify-stops: pass=True positions=0 []
+[2026-10-21T04:29:56Z] [testnet] verify-stops exit=0
+[2026-10-21T04:29:56Z] [testnet] time window OK (04:29 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T04:29:56Z] [testnet] state: no in-flight intents
+[2026-10-21T04:29:56Z] [testnet] symlink current → 660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+[2026-10-21T04:29:56Z] [testnet] restarted live_v6-citest at 04:29:56Z; verifying strictly (≤240s)
+[2026-10-21T04:30:06Z] [testnet]   state: health ok, last_bar_close=1792555200000 boundary=1792555200000 models=6 all caught up, positions=0
+  verify-stops: pass=True positions=0 []
+[2026-10-21T04:30:52Z] [testnet] verify-stops exit=0
+[2026-10-21T04:30:52Z] [testnet] verification PASSED
+[2026-10-21T04:30:52Z] [testnet] rollback to 660eea8eac39a0962ef86ff3f083939e9ddaa6a2 verified (strict: health, bars caught up, stable, journal clean, stops)
+job 20261021T042956Z-b53876 finished OK
+
+# ── R1
+## R1 drill 2026-10-21T04:31:06Z: fresh CI deploy of 30e8e8f (previously revoked on testnet) via the CI testnet key
+server job 20261021T043109Z-e07e4e started (detached on the VPS)
+[2026-10-21T04:31:09Z] [testnet] action=deploy dry_run=0 current=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 unit=active
+import ok, tick calls on_bar_close
+[2026-10-21T04:31:09Z] [testnet] import check OK for 30e8e8f6d5af1153b24e8e951c395003bc90b912 (user=tradebot-ci, sandbox: no network, denied: -/etc/tradebot -/var/lib/live_v6-live -/opt/tradebot/app -/var/log/tradebot -/root -/var/lib/tradebot-ci/uploads -/opt/tradebot)
+[2026-10-21T04:31:09Z] [testnet] time window OK (04:31 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T04:31:09Z] [testnet] unit live_v6-citest TimeoutStopUSec=30s (SIGTERM → runner finishes the current event; SIGKILL after this)
+  verify-stops: pass=True positions=0 []
+[2026-10-21T04:31:10Z] [testnet] verify-stops exit=0
+[2026-10-21T04:31:10Z] [testnet] state: no in-flight intents
+[2026-10-21T04:31:10Z] [testnet] state backed up
+[2026-10-21T04:31:10Z] [testnet] /opt/tradebot-ci-testnet/app/30e8e8f6d5af1153b24e8e951c395003bc90b912 already installed (reusing; marker absent)
+[2026-10-21T04:31:10Z] [testnet] symlink current → 30e8e8f6d5af1153b24e8e951c395003bc90b912
+[2026-10-21T04:31:15Z] [testnet] restarted live_v6-citest at 04:31:10Z; verifying strictly (≤240s)
+[2026-10-21T04:31:25Z] [testnet]   state: health ok, last_bar_close=1792555200000 boundary=1792555200000 models=6 all caught up, positions=0
+  verify-stops: pass=True positions=0 []
+[2026-10-21T04:32:10Z] [testnet] verify-stops exit=0
+[2026-10-21T04:32:10Z] [testnet] verification PASSED
+[2026-10-21T04:32:10Z] [testnet] marker PENDING for 30e8e8f6d5af1153b24e8e951c395003bc90b912: .citest_verified is granted only after the first real 4h close after this restart is processed for all 6 coins (confirm timer, close + 5 min); rollback target meanwhile: 660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+[2026-10-21T04:32:10Z] [testnet] DEPLOYED 30e8e8f6d5af1153b24e8e951c395003bc90b912 (previous: 660eea8eac39a0962ef86ff3f083939e9ddaa6a2). Heartbeat script NOT changed (manual step, runbook §5).
+job 20261021T043109Z-e07e4e finished OK
+## status + manual confirm before the next real close 2026-10-21T04:32:14Z
+[2026-10-21T04:32:14Z] [testnet] current=30e8e8f6d5af1153b24e8e951c395003bc90b912 sha=30e8e8f6d5af1153b24e8e951c395003bc90b912 marker=pending-first-real-close manual_rollback_target=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 failed_deploy_rollback_target=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 window_wait=0s intents=0
+[2026-10-21T04:32:14Z] [testnet] revoked: 0d82b19291ba9ded0d49e2511ade1964a48e8b0b — 2026-10-21T04:26:19Z rollback target failed its own verification (verification failed for 30e8e8f6d5af1153b24e8e951c395003bc90b912)
+[2026-10-21T04:32:14Z] [testnet] revoked: 30e8e8f6d5af1153b24e8e951c395003bc90b912 — 2026-10-21T04:25:43Z deploy verification failed
+[2026-10-21T04:32:14Z] [testnet] revoked: current — 2026-10-21T04:25:43Z deploy verification failed
+sha=30e8e8f6d5af1153b24e8e951c395003bc90b912
+target=testnet
+verified_at_utc=2026-10-21T04:32:10Z
+restart_boundary_ms=1792555200000
+pid=30860
+nrestarts=0
+restart_epoch=1792557070
+[2026-10-21T04:32:14Z] [testnet] stale pending marker of current removed (not current)
+[2026-10-21T04:32:14Z] [testnet] confirm: nothing pending (current=30e8e8f6d5af1153b24e8e951c395003bc90b912 marker=no)
+confirm rc=0
+[2026-10-21T04:32:14Z] [live] confirm: nothing pending (current=0d82b19 marker=yes)
+MainPID=12861
+NRestarts=0
+
+## R1 drill (2nd, after the fix) 2026-10-21T04:32:44Z: CI deploy of ca87f85 via the CI testnet key
+server job 20261021T043247Z-1b5e14 started (detached on the VPS)
+[2026-10-21T04:32:48Z] [testnet] action=deploy dry_run=0 current=30e8e8f6d5af1153b24e8e951c395003bc90b912 unit=active
+import ok, tick calls on_bar_close
+[2026-10-21T04:32:48Z] [testnet] import check OK for ca87f853d7cb9c3d3d1bd62246e08a06b72fc5cb (user=tradebot-ci, sandbox: no network, denied: -/etc/tradebot -/var/lib/live_v6-live -/opt/tradebot/app -/var/log/tradebot -/root -/var/lib/tradebot-ci/uploads -/opt/tradebot)
+[2026-10-21T04:32:48Z] [testnet] time window OK (04:32 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T04:32:48Z] [testnet] unit live_v6-citest TimeoutStopUSec=30s (SIGTERM → runner finishes the current event; SIGKILL after this)
+  verify-stops: pass=True positions=0 []
+[2026-10-21T04:32:48Z] [testnet] verify-stops exit=0
+[2026-10-21T04:32:48Z] [testnet] state: no in-flight intents
+[2026-10-21T04:32:48Z] [testnet] state backed up
+[2026-10-21T04:32:48Z] [testnet] installed /opt/tradebot-ci-testnet/app/ca87f853d7cb9c3d3d1bd62246e08a06b72fc5cb
+[2026-10-21T04:32:48Z] [testnet] symlink current → ca87f853d7cb9c3d3d1bd62246e08a06b72fc5cb
+[2026-10-21T04:32:53Z] [testnet] restarted live_v6-citest at 04:32:48Z; verifying strictly (≤240s)
+[2026-10-21T04:33:04Z] [testnet]   state: health ok, last_bar_close=1792555200000 boundary=1792555200000 models=6 all caught up, positions=0
+  verify-stops: pass=True positions=0 []
+[2026-10-21T04:33:49Z] [testnet] verify-stops exit=0
+[2026-10-21T04:33:49Z] [testnet] verification PASSED
+[2026-10-21T04:33:49Z] [testnet] marker PENDING for ca87f853d7cb9c3d3d1bd62246e08a06b72fc5cb: .citest_verified is granted only after the first real 4h close after this restart is processed for all 6 coins (confirm timer, close + 5 min); rollback target meanwhile: 660eea8eac39a0962ef86ff3f083939e9ddaa6a2
+[2026-10-21T04:33:49Z] [testnet] DEPLOYED ca87f853d7cb9c3d3d1bd62246e08a06b72fc5cb (previous: 30e8e8f6d5af1153b24e8e951c395003bc90b912). Heartbeat script NOT changed (manual step, runbook §5).
+job 20261021T043247Z-1b5e14 finished OK
+## status + manual confirm before the next real close 2026-10-21T04:33:52Z
+[2026-10-21T04:33:52Z] [testnet] current=ca87f853d7cb9c3d3d1bd62246e08a06b72fc5cb sha=ca87f853d7cb9c3d3d1bd62246e08a06b72fc5cb marker=pending-first-real-close manual_rollback_target=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 failed_deploy_rollback_target=660eea8eac39a0962ef86ff3f083939e9ddaa6a2 window_wait=0s intents=0
+[2026-10-21T04:33:53Z] [testnet] confirm: ca87f853d7cb9c3d3d1bd62246e08a06b72fc5cb pending — no real 4h close since the restart yet (boundary 1792555200000)
+confirm rc=0
+.citest_verified.pending
+[2026-10-21T04:33:53Z] [live] confirm: nothing pending (current=0d82b19 marker=yes)
+MainPID=12861
+NRestarts=0
+
+
+# NOTE (bug found by this drill, fixed in ca87f85): the first confirm (04:32:14Z) iterated "$APP"/*/ which includes
+# the `current` symlink, treated it as "not current" and deleted the current release's .pending through it (fail-safe
+# direction: no marker granted). All release loops now skip the symlink; the second drill above shows the pending
+# marker kept and confirm answering "no real 4h close since the restart yet".
+# OPEN: the positive confirm runs automatically at 08:05:00Z = 17:05 KST (tradebot-ci-confirm.timer) for ca87f85 on
+# testnet; result in /var/log/tradebot/ci-confirm.log — to be appended here.
+# NOTE R2: while CI_HALTED exists, Restart=always keeps re-trying every 10 s and each attempt is refused (logged).
+# Ops recovery order: `sudo systemctl stop <unit>` (ends the retry loop) → investigate → `sudo rm <app>/CI_HALTED` →
+# CI rollback/deploy (or a deliberate start). Not drilled: a real VPS reboot (live runs on the same host); the
+# guard is in the unit/drop-in and CI_HALTED is on disk, so a reboot hits the same refused ExecStartPre.
