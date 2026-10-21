@@ -315,7 +315,8 @@ stop_and_alert() {   # $1 = reason, $2 = exit code. Never touches exchange stops
   verify_stops || log "NOTE: verify-stops ≠ 0 while stopping — check exchange stops by hand"
   systemctl stop "$UNIT" || true
   log "unit $UNIT is now: $(systemctl is-active "$UNIT" || true)"
-  echo "$(ts) $1" > "$APP/CI_HALTED"
+  echo "$(ts) $1" > "$APP/CI_HALTED"   # TA R2: ExecStartPre of the unit refuses to start while this exists (also after a
+  # reboot); only ops removes it, by hand. CI never deletes it.
   alert_fail "$1 — $UNIT STOPPED, manual action required" || true
   die "$1 — $UNIT stopped" "$2"
 }
@@ -346,6 +347,11 @@ do_rollback() {    # $1 = reason, $2 = auto(1: failure path, no window wait) / m
   fi
 }
 
+halted_guard() {   # TA R2: after stop_and_alert the unit must stay down until ops clears CI_HALTED by hand
+  [ -e "$APP/CI_HALTED" ] || return 0
+  die "CI_HALTED present ($(cat "$APP/CI_HALTED")) — refusing; ops must investigate and remove $APP/CI_HALTED by hand (the unit's ExecStartPre also refuses to start)" 13
+}
+
 mkdir -p /run/lock
 exec 9>/run/tradebot-ci.lock
 if [ "$ACTION" = confirm ]; then flock -w 1200 9 || die "confirm: lock busy for 20 min" 7; else flock -n 9 || die "another CI deploy is running" 7; fi
@@ -361,11 +367,13 @@ case "$ACTION" in
   confirm)
     do_confirm ;;
   rollback)
+    halted_guard
     do_rollback "manual request" 0 "$(current_dir)" ;;
   deploy)
     SHA=${3:-}; TAR=${4:-}
     [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || die "bad sha" 2
     [ -f "$TAR" ] || die "tar missing" 2
+    halted_guard
     CUR=$(current_dir)
     if [ "$(release_sha "$CUR")" = "$SHA" ] && [ "$(systemctl is-active "$UNIT")" = active ]; then
       log "$SHA already current ($CUR) and $UNIT active — no-op (marker: $(marker_ok "$CUR" && echo present || echo MISSING))"; exit 0
@@ -417,7 +425,6 @@ case "$ACTION" in
     swap_to "$SHA"
     if restart_and_verify "$SIM_FAIL"; then
       write_pending "$SHA" "$SHA" "$VERIFIED_MSG"   # TA R1: the marker itself only after the first real 4h close
-      rm -f "$APP/CI_HALTED"
       log "DEPLOYED $SHA (previous: $CUR). Heartbeat script NOT changed (manual step, runbook §5)."
       exit 0
     fi

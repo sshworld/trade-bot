@@ -24,6 +24,9 @@ Environment=LIVE_V6_STATE=/var/lib/live_v6-citest/testnet.json
 Environment=LIVE_V6_ALERT_LOG=/var/lib/live_v6-citest/alerts.jsonl
 Environment=LIVE_V6_CMD_LOG=/var/lib/live_v6-citest/commands.jsonl
 Environment=PYTHONUNBUFFERED=1
+# TA R2: after a CI halt (stop_and_alert) the unit must not come back by itself (Restart=, reboot, manual start) until
+# ops has removed CI_HALTED by hand. "+" = runs as root outside the sandbox so the check cannot be hidden.
+ExecStartPre=+/bin/sh -c 'if [ -e /opt/tradebot-ci-testnet/app/CI_HALTED ]; then echo "CI_HALTED present - start refused; ops must remove it by hand:"; cat /opt/tradebot-ci-testnet/app/CI_HALTED; exit 1; fi'
 ExecStart=/opt/tradebot-ci-testnet/.venv/bin/python -m live_v6 run
 Restart=always
 RestartSec=10

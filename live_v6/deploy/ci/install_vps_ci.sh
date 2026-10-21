@@ -17,6 +17,8 @@ install -m 755 -o root -g root "$SRC/live_v6/tools/verify_stops.py" /opt/tradebo
 [ -f /opt/tradebot/verify_stops_live.py ] && cp -p /opt/tradebot/verify_stops_live.py /opt/tradebot/verify_stops_live.py.bak-$TS
 install -m 750 -o root -g tradebot "$SRC/live_v6/tools/verify_stops_live.py" /opt/tradebot/verify_stops_live.py
 install -m 644 -o root -g root "$SRC/live_v6/deploy/ci/live_v6-citest.service" /etc/systemd/system/live_v6-citest.service
+install -d -m 755 -o root -g root /etc/systemd/system/live_v6-live.service.d   # TA R2 drop-in (applies at the next start only)
+install -m 644 -o root -g root "$SRC/live_v6/deploy/ci/live_v6-live.ci-halt-guard.conf" /etc/systemd/system/live_v6-live.service.d/10-ci-halt-guard.conf
 for f in tradebot-ci-confirm.service tradebot-ci-confirm.timer; do install -m 644 -o root -g root "$SRC/live_v6/deploy/ci/$f" /etc/systemd/system/$f; done   # TA R1
 # canary tree: root-owned code, readable by tradebot-ci only; own venv (the live venv under /opt/tradebot is hidden)
 install -d -m 750 -o root -g tradebot-ci /opt/tradebot-ci-testnet /opt/tradebot-ci-testnet/app
