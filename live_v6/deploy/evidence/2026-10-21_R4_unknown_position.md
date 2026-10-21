@@ -166,3 +166,33 @@ job 20261021T044818Z-611c6c finished OK
 MainPID=12861
 NRestarts=0
 
+
+## TA item 3 — 51 testnet-marked tests on the VPS, commit 7dda201 (2026-10-21 17:20–17:30 KST)
+Run: `/workspace/run_testnet51.sh` from the box → VPS as `ops`, archive of 7dda201 `live_v6/` in `~/tb-7dda201…`, venv
+`~/.venv-tbtest`, testnet keys from `/etc/tradebot/citest.env` (env only), `pytest live_v6/tests -m testnet`.
+live_v6-citest stopped for the run and restarted by the trap; live_v6-live not touched.
+
+Script fixes (script reason, not test failures): attempt 1 (17:19) and attempt 2 (17:20) stopped at collection —
+`tests/test_units.py` imports numpy and pandas, which are not in `live_v6/requirements-dev.txt`. Added
+`pip install numpy==2.5.4 pandas==3.0.6` to the test venv (same versions as the box venv); ssh calls now use
+`BatchMode=yes -o UserKnownHostsFile=/workspace/.vps_known_hosts`. Follow-up: add numpy/pandas to requirements-dev.txt.
+
+**Result (attempt 3, 17:20:55–17:30:21 KST): 6 failed, 39 passed, 6 skipped (51 total), 157 deselected, 544 s.**
+
+Failed:
+```
+test_faults.py::test_no_averaging[testnet]                          assert 2 == 1  (entry_orders DOGEUSDT since t0)
+test_faults.py::test_kill_after_fill_then_restart[testnet]          assert 2 == 1  (entry_orders DOGEUSDT)
+test_faults.py::test_restart_multiple_positions_rearms_all[testnet] assert 3 == 1  (entry_orders DOGEUSDT)
+test_faults.py::test_http_faults_map_to_unavailable[testnet-http429] RateLimited: bookTicker backoff 10s (not sent) at line 307 "next call fine"
+test_faults.py::test_http_faults_map_to_unavailable[testnet-http418] RateLimited: bookTicker backoff 120s (not sent) at line 307
+test_faults.py::test_overreaction_429_once[testnet]                  RateLimited: /fapi/v2/account backoff 10s (not sent) in eng.reconcile()
+```
+Skipped (6, all "testnet only"): test_gate_sigkill.py:54, :69; test_streams.py:305, :333, :362, :404.
+Not yet root-caused. Hunches to verify: the entry_orders counts read `user_trades(DOGEUSDT, t0)` on a shared testnet
+account (fills from the cleanup/other tests within the same ms window may be counted); the three 429/418 failures
+look like the tests expect the very next call to go through while the client keeps its backoff window.
+
+After the run: live_v6-citest active, MainPID 45343, current → ca87f853d7cb9c3d3d1bd62246e08a06b72fc5cb.
+Testnet account checked read-only at ~17:31 KST: no non-zero positions, no open std/algo orders on the 6 symbols
+(citest state positions=0) — nothing to clean up.
