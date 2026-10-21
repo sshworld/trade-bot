@@ -88,13 +88,20 @@ def test_incident_alert_format():
     assert post.calls[-1][1]["text"] == "🚨 손절 등록 실패 — 이 포지션만 정리\nDOGEUSDT 1000"
 
 
-def test_daily_settlement_and_heartbeat():
+def test_daily_settlement_and_heartbeat(monkeypatch):
     from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from . import fakes
     kst = timezone(timedelta(hours=9))
-    t0 = time.time()                   # fake exchange stamps fills with the wall clock
+    # Pinned clock (deterministic regardless of wall time): 12:00 KST, i.e. 12 h before the next KST midnight, so the
+    # 4 h heartbeat cadence and the midnight settlement never overlap the way they did when t0 = wall clock < 4 h
+    # before midnight. The fake exchange stamps fills with time.time() -> point it at the same pinned clock.
+    t0 = datetime(2026, 10, 21, 12, 0, tzinfo=kst).timestamp()
     today = datetime.fromtimestamp(t0, kst)
     midnight = datetime(today.year, today.month, today.day, tzinfo=kst) + timedelta(days=1)
     clk = Clock(t0)
+    monkeypatch.setattr(fakes, "time", SimpleNamespace(time=lambda: clk.t))
     post = MockPost()
     eng, tg = eng_with(post, clk)
     eng.tick()
