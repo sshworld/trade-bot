@@ -1,8 +1,11 @@
 # /etc/systemd/system/live_v6-citest.service — TESTNET canary for CI deploys (Binance Futures TESTNET only).
-# Separate from live_v6-live in every path: own app root (/opt/tradebot-ci-testnet/app/current), own state dir
-# (/var/lib/live_v6-citest), own env (/etc/tradebot/citest.env = testnet keys only), own alert/command logs.
+# Separate from live_v6-live in every path: own app root (/opt/tradebot-ci-testnet/app/current), own venv, own state
+# dir (/var/lib/live_v6-citest), own env (/etc/tradebot/citest.env = testnet keys only, 0640 root:tradebot-ci).
 # NOT named live_v6-testnet on purpose: live_v6-live.service has Conflicts=live_v6-testnet.service, so starting that
 # unit would STOP the live bot. No Telegram (no telegram.env; notifier is disabled outside mainnet), no heartbeat.
+# TA K: runs as its own user `tradebot-ci` (NOT the live user `tradebot`), and the live env files, live state, live
+# code / venv / tools and the live logs are made inaccessible inside the unit's namespace, so untagged main code
+# running here cannot read the Binance live keys or read/write the live state.
 # Resource-capped below the live bot so it can never starve it (1 vCPU / 1 GB host).
 [Unit]
 Description=live_v6 CI canary (H7-T) — Binance Futures TESTNET
@@ -10,8 +13,8 @@ After=network-online.target time-sync.target
 Wants=network-online.target
 
 [Service]
-User=tradebot
-Group=tradebot
+User=tradebot-ci
+Group=tradebot-ci
 WorkingDirectory=/opt/tradebot-ci-testnet/app/current
 EnvironmentFile=/etc/tradebot/citest.env
 Environment=LIVE_V6_NETWORK=testnet
@@ -21,7 +24,7 @@ Environment=LIVE_V6_STATE=/var/lib/live_v6-citest/testnet.json
 Environment=LIVE_V6_ALERT_LOG=/var/lib/live_v6-citest/alerts.jsonl
 Environment=LIVE_V6_CMD_LOG=/var/lib/live_v6-citest/commands.jsonl
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/tradebot/.venv/bin/python -m live_v6 run
+ExecStart=/opt/tradebot-ci-testnet/.venv/bin/python -m live_v6 run
 Restart=always
 RestartSec=10
 Nice=10
@@ -38,6 +41,13 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# EnvironmentFile= is read by PID 1 before the namespace is set up, so citest.env still loads; everything else in
+# /etc/tradebot (live.env, telegram.env, heartbeat.env, testnet.env, ci-alert-testnet.env) is hidden from the process.
+InaccessiblePaths=-/etc/tradebot -/var/lib/live_v6-live -/opt/tradebot -/var/log/tradebot -/root -/var/lib/tradebot-ci
 
 [Install]
 WantedBy=multi-user.target

@@ -1,8 +1,11 @@
-# CI/CD for live_v6. PROPOSED — pending TA safety review; must not be on main until TA approves.
+# CI/CD for live_v6. PROPOSED — pending TA re-review; must not be on main until TA approves.
 # test (no secrets, offline) → deploy-testnet (canary: live_v6-citest on the VPS) → gate (commit must carry a
 # ta-pass-* tag and be on main) → deploy-live (GitHub Environment `live`: required reviewer sshworld).
 # The VPS side is ci_deploy_entry.sh behind an SSH forced command (one key per target, environment secrets).
-# Binance / Telegram keys are never in GitHub.
+# Binance / Telegram keys are never in GitHub. Environments `testnet` and `live` only accept refs main + ta-pass-* tags
+# (deployment branch/tag policy, TA B); `live` has required reviewer sshworld and admin bypass OFF. Approval is given
+# by 성헌 in the GitHub UI only — no bot ever calls the pending_deployments API (TA C, README_CI).
+# The server runs each deploy detached (systemd-run); gh_ssh_deploy.sh polls the job (TA J).
 name: ci-deploy
 on:
   push:
@@ -26,9 +29,9 @@ jobs:
     env:
       LIVE_V6_FORBID_MAINNET: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4 (pinned to commit, TA I)
         with: { persist-credentials: false }
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5 (pinned to commit, TA I)
         with: { python-version: '3.12' }
       - run: pip install 'httpx==0.28.1' 'websockets==17.3' 'pytest==9.1.1' 'pylint==4.1.3'
       - name: offline test suite (no testnet, no slow replay; FakeExchange only)
@@ -42,6 +45,8 @@ jobs:
     outputs:
       sha: ${{ steps.r.outputs.sha }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4 (pinned to commit, TA I)
+        with: { fetch-depth: 0, persist-credentials: false }
       - id: r
         env:
           IN_SHA: ${{ github.event.inputs.sha }}
@@ -49,15 +54,20 @@ jobs:
         run: |
           SHA="${IN_SHA:-$REF_SHA}"
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "bad sha"; exit 1; }
+          # TA B: only refs main / ta-pass-* may run deploy jobs (also enforced by the environments' ref policy),
+          # and a dispatched sha must already be on main (no deploying side-branch commits through a main run).
+          case "$GITHUB_REF" in refs/heads/main|refs/tags/ta-pass-*) ;; *) echo "::error::ref $GITHUB_REF may not deploy"; exit 1 ;; esac
+          git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$SHA is not on main"; exit 1; }
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
   deploy-testnet:
     needs: resolve
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/ta-pass-')
     environment: testnet
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4 (pinned to commit, TA I)
         with: { fetch-depth: 0, persist-credentials: false }
       - name: deploy to the testnet canary
         env:
@@ -71,7 +81,7 @@ jobs:
     needs: [resolve, deploy-testnet]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4 (pinned to commit, TA I)
         with: { fetch-depth: 0, persist-credentials: false }
       - name: commit must carry a ta-pass-* tag (TA verdict) and be on main
         env:
@@ -86,12 +96,13 @@ jobs:
   deploy-live:
     needs: [resolve, gate]
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    environment: live          # required reviewer: sshworld (approval before this job starts)
+    timeout-minutes: 90
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/ta-pass-')
+    environment: live          # required reviewer: sshworld, in the GitHub UI only (approval before this job starts)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4 (pinned to commit, TA I)
         with: { fetch-depth: 0, persist-credentials: false }
-      - name: deploy to LIVE (restart only; never orders, never flatten)
+      - name: deploy to LIVE (restart only; never orders, never flatten; detached on the VPS, polled here)
         env:
           SHA: ${{ needs.resolve.outputs.sha }}
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
