@@ -350,7 +350,7 @@ def test_preflight_refuses_root_and_any_secret():
 
 
 def test_ws_url_is_six_forceorder_streams_only():
-    assert L.WS_URL.startswith("wss://fstream.binance.com/stream?streams=")
+    assert L.WS_URL.startswith("wss://fstream.binance.com/market/stream?streams=")  # routed path; legacy /stream is silent
     streams = L.WS_URL.split("=", 1)[1].split("/")
     assert streams == [f"{s.lower()}@forceOrder" for s in L.SYMBOLS] and len(streams) == 6
 

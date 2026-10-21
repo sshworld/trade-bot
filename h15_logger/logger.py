@@ -33,7 +33,9 @@ from pathlib import Path
 log = logging.getLogger("h15_logger")
 
 SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT")
-WS_URL = "wss://fstream.binance.com/stream?streams=" + "/".join(f"{s.lower()}@forceOrder" for s in SYMBOLS)
+# Mainnet legacy /ws and /stream paths were retired 2026-04-23: they still accept the connection but push NO
+# "market"-category data (forceOrder is "market"). Must use the routed /market path (live_v6/stream.py does the same).
+WS_URL = "wss://fstream.binance.com/market/stream?streams=" + "/".join(f"{s.lower()}@forceOrder" for s in SYMBOLS)
 REST_BASE = "https://fapi.binance.com"
 EXIT_STOPPED = 75          # "stay stopped": systemd RestartPreventExitStatus=75
 EXIT_RESTARTABLE = 1       # e.g. own RSS cap hit → just a gap, systemd restarts with backoff
