@@ -43,6 +43,8 @@ LIQ_HEADER = "minute_ts_ms,symbol,ll_usd,sl_usd,n_ll,n_sl,max_single_usd,late"
 OI_HEADER = "poll_ts_ms,symbol,open_interest,exch_time_ms"
 GAP_HEADER = "kind,connect_ts_ms,disconnect_ts_ms,reason"
 MIN = 60_000
+HOUR = 3_600_000
+QUALITY_HEADER = "hour_start_ms,hour_end_ms,events," + ",".join(SYMBOLS) + ",valid_minutes,silence_warning,partial"
 
 
 @dataclass
@@ -63,6 +65,7 @@ class Caps:
     ip_weight_frac: float = 0.10         # TA: OI polling only while the IP is < 10 % of its weight
     ws_backoff_max_s: float = 300.0
     max_open_minutes: int = 10           # accumulator bound (memory cap)
+    silence_warn_ms: int = HOUR          # TA quality rule: 0 received events for 60 min → WARNING in the log
 
 
 class Stop(Exception):
@@ -139,6 +142,8 @@ class Minutes:
         self.sessions: list[list] = []          # [connect_ms, disconnect_ms | None]
         self.next_minute: int | None = None
         self.msgs = self.bad = 0
+        self.received: dict[int, dict[str, int]] = {}    # receive-hour → symbol → valid events (quality record)
+        self.last_event_ms: int | None = None
 
     def connected(self, ts: int) -> None:
         self.sessions.append([ts, None])
@@ -166,6 +171,9 @@ class Minutes:
             self.bad += 1
             return
         self.msgs += 1
+        h = self.received.setdefault(now_ms // HOUR * HOUR, {})
+        h[sym] = h.get(sym, 0) + 1
+        self.last_event_ms = now_ms
         m = t // MIN * MIN
         if self.next_minute is None or m < self.next_minute or m > now_ms + 2 * MIN:
             self.late[sym] += 1                              # already finalised (or absurd clock) → counted only
@@ -199,6 +207,79 @@ class Minutes:
         if self.next_minute is not None:
             self.sessions = [s for s in self.sessions if s[1] is None or s[1] >= self.next_minute]
         return rows
+
+
+# ───────── collection quality (TA rule 2026-10-22) ─────────
+class Quality:
+    """Hourly record of received liquidation events (UTC hours; first/last hour of a process partial) → quality.csv,
+    and a log WARNING (journal only, no Telegram) whenever 0 events were received for silence_warn_ms (repeated every
+    silence_warn_ms while the silence lasts). Rows are later used as data-gap intervals for the H15 judgment."""
+
+    def __init__(self, path: Path, minutes: Minutes, caps: Caps):
+        self.path, self.minutes, self.caps = Path(path), minutes, caps
+        if not self.path.exists() or self.path.stat().st_size == 0:
+            self.path.write_text(QUALITY_HEADER + "\n", encoding="ascii")
+        self.hour_start: int | None = None
+        self.valid: dict[int, int] = {}                  # hour → finalised fully-connected minutes written
+        self.warned: set[int] = set()                    # hours in which a silence WARNING fired
+        self.silence_ref = self.last_warn = None
+        self.warnings = 0
+
+    def start(self, now_ms: int) -> None:
+        self.hour_start = now_ms
+        self.silence_ref = now_ms                        # silence measured from process start until the first event
+
+    def valid_minute(self, minute_ts: int) -> None:
+        h = minute_ts // HOUR * HOUR
+        self.valid[h] = self.valid.get(h, 0) + 1
+
+    def _row(self, start: int, end: int, partial: bool) -> str:
+        h = start // HOUR * HOUR
+        per = self.minutes.received.pop(h, {})
+        cells = [str(per.get(s, 0)) for s in self.minutes.symbols]
+        return (f"{start},{end},{sum(per.values())}," + ",".join(cells) +
+                f",{self.valid.pop(h, 0)},{int(h in self.warned)},{int(partial)}")
+
+    def _write(self, rows: list[str]) -> None:
+        with open(self.path, "a", encoding="ascii") as f:
+            f.write("".join(r + "\n" for r in rows))
+            f.flush()
+            os.fsync(f.fileno())
+        for r in rows:
+            log.info("quality hour %s", r)
+
+    def tick(self, now_ms: int) -> list[str]:
+        """Writes every completed hour (after the last minute of it can have been finalised) and checks silence."""
+        if self.hour_start is None:
+            return []
+        rows = []
+        while True:
+            end = self.hour_start // HOUR * HOUR + HOUR
+            if now_ms < end + self.caps.late_ms + 1_000:
+                break
+            rows.append(self._row(self.hour_start, end, partial=self.hour_start != end - HOUR))
+            self.warned.discard(end - HOUR)
+            self.hour_start = end
+        if rows:
+            self._write(rows)
+        for h in [h for h in self.valid if h < self.hour_start // HOUR * HOUR]:
+            del self.valid[h]                            # a minute finalised after its hour row (tick lag): bounded
+        last = max(self.minutes.last_event_ms or 0, self.silence_ref)
+        if now_ms - last >= self.caps.silence_warn_ms and \
+                (self.last_warn is None or self.last_warn < last or now_ms - self.last_warn >= self.caps.silence_warn_ms):
+            self.last_warn = now_ms
+            self.warnings += 1
+            self.warned.add(now_ms // HOUR * HOUR)
+            log.warning("quality: 0 liquidation events received for %.0f min (since %d) - collection may be broken",
+                        (now_ms - last) / MIN, last)
+        return rows
+
+    def close(self, now_ms: int) -> None:
+        """Process end: the current (partial) hour is recorded so the gap boundaries are exact."""
+        if self.hour_start is None or now_ms <= self.hour_start:
+            return
+        self._write([self._row(self.hour_start, now_ms, partial=True)])
+        self.hour_start = None
 
 
 # ───────── REST (open interest) ─────────
@@ -360,6 +441,7 @@ class Logger:
         self.liq = DailyCsv(self.dir / "liq", LIQ_HEADER)
         self.oi = OiPoller(DailyCsv(self.dir / "oi", OI_HEADER), self.caps, get) if oi else None
         self.watchdog = Watchdog(probe or Probe("live_v6-live", self.dir), self.caps)
+        self.quality = Quality(self.dir / "quality.csv", self.minutes, self.caps)
         self.rows = 0
 
     async def ws_loop(self) -> None:
@@ -400,7 +482,9 @@ class Logger:
             for i in range(0, len(rows), len(SYMBOLS)):            # one minute at a time (day rollover)
                 chunk = rows[i:i + len(SYMBOLS)]
                 self.liq.write(int(chunk[0].split(",", 1)[0]), chunk)
+                self.quality.valid_minute(int(chunk[0].split(",", 1)[0]))
                 self.rows += len(chunk)
+            self.quality.tick(now)
             if now - last_report >= 600_000:
                 last_report = now
                 log.info("rows %d msgs %d bad %d oi rounds %s skipped %s", self.rows, self.minutes.msgs,
@@ -424,6 +508,7 @@ class Logger:
         tasks = []
         try:
             self.watchdog.start()
+            self.quality.start(self.now_ms())
             coros = [self.ws_loop(), self.tick_loop(), self.watchdog_loop()] + ([self.oi_loop()] if self.oi else [])
             tasks = [asyncio.ensure_future(c) for c in coros]
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
@@ -436,6 +521,7 @@ class Logger:
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            self.quality.close(self.now_ms())
             self.liq.close()
             if self.oi:
                 self.oi.w.close()

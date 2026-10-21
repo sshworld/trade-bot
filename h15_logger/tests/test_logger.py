@@ -376,3 +376,97 @@ def test_pylint_errors_and_unreachable():
     r = subprocess.run([sys.executable, "-m", "pylint", "--disable=all", "--enable=E,W0101,W0102", "--score=n",
                         str(PKG / "logger.py")], capture_output=True, text=True, check=False)
     assert r.returncode == 0, r.stdout
+
+
+# ───────── collection quality (TA rule 2026-10-22): hourly event counts + 60-min silence WARNING ─────────
+H0 = (T0 // L.HOUR + 1) * L.HOUR                 # an hour boundary (UTC)
+
+
+def qrows(path):
+    lines = (path / "quality.csv").read_text().splitlines()
+    assert lines[0] == L.QUALITY_HEADER
+    return [dict(zip(L.QUALITY_HEADER.split(","), l.split(","))) for l in lines[1:]]
+
+
+def test_quality_hourly_rows_per_coin_counts_valid_minutes_partial_first_hour(tmp_path):
+    m = L.Minutes()
+    q = L.Quality(tmp_path / "quality.csv", m, L.Caps())
+    start = H0 - 30 * L.MIN
+    q.start(start)
+    m.connected(start)
+    m.add_raw(msg("BTCUSDT", "SELL", 1, 60000, H0 - 10 * L.MIN), H0 - 10 * L.MIN + 100)
+    m.add_raw(msg("BTCUSDT", "BUY", 1, 60000, H0 - 9 * L.MIN), H0 - 9 * L.MIN + 100)
+    m.add_raw(msg("DOGEUSDT", "BUY", 100, 0.2, H0 - 5 * L.MIN), H0 - 5 * L.MIN + 100)
+    m.add_raw(msg("ETHUSDT", "SELL", 1, 3000, H0 + 5 * L.MIN), H0 + 5 * L.MIN + 100)     # next hour
+    m.add_raw("garbage", H0 - 1)                                                       # not an event
+    for k in range(30):
+        q.valid_minute(start + k * L.MIN)
+    assert q.tick(H0 + 2_999) == []                    # waits until the hour's last minute can be finalised
+    (r,) = [dict(zip(L.QUALITY_HEADER.split(","), x.split(","))) for x in q.tick(H0 + 3_000)]
+    assert (r["hour_start_ms"], r["hour_end_ms"], r["events"], r["BTCUSDT"], r["DOGEUSDT"], r["ETHUSDT"]) == \
+        (str(start), str(H0), "3", "2", "1", "0")
+    assert (r["valid_minutes"], r["silence_warning"], r["partial"]) == ("30", "0", "1")
+    q.tick(H0 + L.HOUR + 3_000)
+    rows = qrows(tmp_path)
+    assert len(rows) == 2 and rows[1]["events"] == "1" and rows[1]["ETHUSDT"] == "1" and rows[1]["partial"] == "0"
+    assert rows[1]["valid_minutes"] == "0" and m.received == {}                       # nothing kept in RAM
+
+
+def test_quality_zero_events_60_min_warns_once_per_hour_and_flags_row(tmp_path, caplog):
+    m = L.Minutes()
+    q = L.Quality(tmp_path / "quality.csv", m, L.Caps())
+    q.start(H0)
+    caplog.set_level("WARNING", logger="h15_logger")
+    q.tick(H0 + L.HOUR - 1)
+    assert q.warnings == 0                              # 59:59.999 silent → not yet
+    q.tick(H0 + L.HOUR)
+    q.tick(H0 + L.HOUR + 30_000)
+    assert q.warnings == 1 and sum("0 liquidation events received for 60 min" in r.message for r in caplog.records) == 1
+    q.tick(H0 + 2 * L.HOUR + 3_000)                    # still silent 60 min after the first warning → again
+    assert q.warnings == 2
+    rows = qrows(tmp_path)
+    assert [(r["events"], r["silence_warning"]) for r in rows] == [("0", "0"), ("0", "1")]
+
+
+def test_quality_event_resets_silence_clock(tmp_path):
+    m = L.Minutes()
+    q = L.Quality(tmp_path / "quality.csv", m, L.Caps())
+    q.start(H0)
+    m.connected(H0)
+    m.add_raw(msg("XRPUSDT", "SELL", 100, 0.5, H0 + 50 * L.MIN), H0 + 50 * L.MIN)
+    q.tick(H0 + 109 * L.MIN)
+    assert q.warnings == 0
+    q.tick(H0 + 110 * L.MIN)
+    assert q.warnings == 1
+
+
+def test_quality_late_message_counts_as_received(tmp_path):
+    m = L.Minutes()
+    q = L.Quality(tmp_path / "quality.csv", m, L.Caps())
+    q.start(H0)
+    m.connected(H0)
+    m.due(H0 + 10 * L.MIN)                              # minutes finalised
+    m.add_raw(msg("BNBUSDT", "BUY", 1, 600, H0 + 1 * L.MIN), H0 + 10 * L.MIN)  # late for its row, still received
+    q.tick(H0 + L.HOUR + 3_000)
+    assert qrows(tmp_path)[0]["BNBUSDT"] == "1"
+
+
+def test_quality_close_writes_partial_hour_and_logger_wires_it(tmp_path):
+    clock = {"t": H0 - 2 * L.MIN - 1_000}
+
+    async def sleep(d):
+        clock["t"] += int(d * 1000)
+        if clock["t"] > H0 + 4 * L.MIN:
+            raise L.Stop("test end", 0)
+
+    lg = L.Logger(tmp_path, probe=FakeProbe(), oi=False, now_ms=lambda: clock["t"], sleep=sleep)
+    lg.quality.start(clock["t"])
+    lg.minutes.connected(clock["t"])
+    lg.minutes.add_raw(msg("SOLUSDT", "SELL", 10, 150, H0 - 30_000), H0 - 29_000)
+    with pytest.raises(L.Stop):
+        asyncio.run(lg.tick_loop())
+    lg.quality.close(clock["t"])
+    rows = qrows(tmp_path)
+    assert [(r["events"], r["SOLUSDT"], r["valid_minutes"], r["partial"]) for r in rows] == \
+        [("1", "1", "2", "1"), ("0", "0", "3", "1")]     # connected 1 s before H0-2min → H0-2min, H0-1min valid
+    assert rows[0]["hour_end_ms"] == str(H0) and rows[1]["hour_start_ms"] == str(H0)
