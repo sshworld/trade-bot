@@ -1140,8 +1140,10 @@ class V6Engine:
         except Exception:  # noqa: BLE001  never skip the guards / dead-man below; bar_guard alerts if it persists
             log.exception("bar decision failed (retry next tick)")
         self.bar_guard()
-        if self.deadman is not None:
-            self.deadman.maybe_ping(self.healthy())
+        ok = self.healthy()
+        self.meta["health"] = {"t": self.now_ms(), "ok": ok, "blocks": sorted(self.blocks)}   # read by the external
+        if self.deadman is not None:                                                     # pinger (heartbeat_ping.sh)
+            self.deadman.maybe_ping(ok)
 
     def rate_backoff(self) -> float:
         """Seconds left of the REST client's 429/418 backoff (0 if none / fake exchange)."""
