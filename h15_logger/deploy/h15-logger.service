@@ -1,0 +1,65 @@
+# /etc/systemd/system/h15-logger.service — H15 liquidation logger (public data, no keys). Separate unit + user.
+# Lower priority than the live bot in every dimension; killed first under memory pressure; stays stopped after a
+# 429/418 or a watchdog stop (exit 75 + /var/lib/h15-logger/STOPPED) until ops remove the marker.
+[Unit]
+Description=H15 liquidation logger (forceOrder ws + OI poll, public data only)
+After=network-online.target chrony.service live_v6-live.service
+Wants=network-online.target
+StartLimitIntervalSec=3600
+StartLimitBurst=6
+
+[Service]
+Type=simple
+User=h15log
+Group=h15log
+WorkingDirectory=/opt/h15-logger/app
+ExecStart=/opt/h15-logger/.venv/bin/python -m h15_logger run --data /var/lib/h15-logger
+Restart=on-failure
+RestartSec=60
+RestartPreventExitStatus=75
+KillSignal=SIGTERM
+TimeoutStopSec=10
+# priority: below the bot (bot runs Nice=0, default CPUWeight=100, IOWeight=100)
+Nice=19
+CPUSchedulingPolicy=idle
+CPUWeight=10
+CPUQuota=25%
+IOWeight=10
+IOSchedulingClass=idle
+OOMScoreAdjust=1000
+# memory: spec hard cap 100 MB; in-process soft cap 60 MB RSS → exit 1 (a gap)
+MemoryHigh=80M
+MemoryMax=100M
+MemorySwapMax=0
+TasksMax=16
+LimitNOFILE=256
+# disk: in-process cap 256 MB data dir + ≥2 GB free on / ; journal output is a few lines / 10 min
+StateDirectory=h15-logger
+StateDirectoryMode=0750
+LogRateLimitIntervalSec=60
+LogRateLimitBurst=30
+# hardening — no secrets, no env file
+Environment=PYTHONDONTWRITEBYTECODE=1
+UnsetEnvironment=BINANCE_API_KEY BINANCE_API_SECRET TELEGRAM_BOT_TOKEN HEARTBEAT_URL
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

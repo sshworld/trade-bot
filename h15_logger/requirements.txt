@@ -1,0 +1,2 @@
+# h15_logger runtime — own venv (/opt/h15-logger/.venv), never the bot's
+websockets==17.3
