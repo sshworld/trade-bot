@@ -26,9 +26,20 @@ Files: `engine.py` execution + safety · `strategy.py` pure v6 model (ATR/M20/H7
   filled qty; a remainder is closed in ONE reduceOnly order (no dust); a failed final exit is retried until flat + 🚨.
 - §8c tiered response: L0 transient (ws drop, timeout, 5xx, 429/418) → never close; pause NEW entries, reconnect,
   reconcile, alert only after 60 s. L1 stop missing/rejected → re-place 3× within 10 s, else close ONLY that position.
-  L2 mismatch → exchange is truth; protected positions are left alone; unknown position → stop + alert.
+  L2 mismatch → exchange is truth; protected positions are left alone; unknown position → see below (never closed).
   L3 flatten ALL + halt only on strategy equity ≤ `halt_fraction` (0.75) × S0 (−25 %, §8e-2), a position still unprotected after L1, or API dead > 5 min with an
-  unprotected position.
+  unprotected position. Flatten-all closes only positions in the state file.
+- **Unknown positions (TA R4, 2026-10-21):** an exchange position that is NOT in the state file (opened by hand, or
+  the state file was lost / corrupted) is NEVER market-closed by the bot — not by the strategy (`model_sync`), not by
+  a breach / stop-failure close, not by flatten-all (`close()` refuses any symbol not in the state file). It is kept
+  in `st["unknown"]`: 🚨 once on detection (Telegram on mainnet only; testnet/tests log only), new entries blocked for
+  THAT coin only (`unknown_position` skip), its risk counted in the portfolio-risk sum and max positions. No exchange
+  stop → a closePosition STOP_MARKET (MARK_PRICE) at the model's exit line (20-bar channel low for a long, high for a
+  short), or 1×ATR(14, 4h) from the current mark if price is already beyond the line. Existing stops are never moved
+  or cancelled. Resolution is manual: close it by hand (the bot then clears it, ✅), or ops adopts it into the state
+  file with `python -m live_v6.tools.adopt_position --state … --sym … --unit …` (dry run by default; `--apply` only
+  with the bot unit stopped; long only; see the tool's docstring — without a matching model trade the strategy will
+  close an adopted position at the next 4h close).
 - Idempotent orders by clientOrderId (journal before send; unknown outcome → query, never double-send); restart
   resolves intents and re-arms every stop; ISOLATED set + read-back (failure blocks entries); 2.5 % total-risk cap
   and max positions re-checked on a fresh exchange read at the placement step; ledger vs income check.
@@ -54,7 +65,7 @@ $VENV -m live_v6.replay.replay --order research --stop-fill research --out live_
 3. Skip label `liq_guard` (spec) vs `leverage` (old code); BTC min notional floor 100 (v6) vs exchange 50.
 4. Funding stamp not yet published at T: wait ≤ 600 s then skip `funding_data` — OK?
 5. Stop rounded from the FILL (same distance) vs the bar open; pre-arm uses the book ask.
-6. −25 % halt (halt_fraction 0.75, §8e-2), 15-min act window, max_positions=6, unknown position counted as 1 % risk: not in the backtest.
+6. −25 % halt (halt_fraction 0.75, §8e-2), 15-min act window, max_positions=6, unknown position counted in the portfolio risk (|mark − stop| × qty / capital, floor 1 %): not in the backtest.
 7. Mark-stream breach (mark ≤ stop, exchange stop not fired after 2 s) → close that position only (L1).
 8. Notion daily settlement not implemented (Telegram 📊 only).
 9. §8e-2 sizing base: C0 + REALISED PnL (= full wallet, as the backtest's realised-only W); the halt uses equity incl.

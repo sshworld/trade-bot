@@ -199,3 +199,52 @@ def test_unknown_without_model_data_stays_open_unprotected_flag(offline):
     eng.tick()
     assert eng.st["unknown"][DOGE].get("unprotected") and not eng.healthy()
     assert offline.amt(DOGE) == 1000 and not close_calls(offline)
+
+
+# ───────── ops tool: adopt_position (dry-run by default) ─────────
+def _unknown_state(offline, side_amt=1000):
+    offline.inner.open_position_raw(DOGE, side_amt)
+    clk = Clock(START)
+    eng, _ = started(offline, clk)
+    return eng, clk
+
+
+def test_adopt_tool_dry_run_writes_nothing(offline, capsys):
+    from live_v6.tools import adopt_position as A
+    _unknown_state(offline)
+    before = offline.store_path.read_text()
+    assert A.main(["--state", str(offline.store_path), "--sym", DOGE]) == 0
+    out = capsys.readouterr().out
+    assert "DRY RUN" in out and "model_sync" in out              # warns: model does not hold it
+    assert offline.store_path.read_text() == before
+
+
+def test_adopt_tool_apply_requires_stopped_unit_then_bot_manages_it(offline, monkeypatch):
+    import pytest
+    from live_v6.tools import adopt_position as A
+    eng, clk = _unknown_state(offline)
+    args = ["--state", str(offline.store_path), "--sym", DOGE, "--apply"]
+    with pytest.raises(SystemExit):
+        A.main(args)                                             # no --unit
+    monkeypatch.setattr(A, "unit_active", lambda u: True)
+    with pytest.raises(SystemExit):
+        A.main(args + ["--unit", "live_v6-citest"])              # unit running → refused
+    monkeypatch.setattr(A, "unit_active", lambda u: False)
+    assert A.main(args + ["--unit", "live_v6-citest", "--cid-prefix", "v6t"]) == 0
+    saved = json.loads(offline.store_path.read_text())
+    assert DOGE in saved["pos"] and DOGE not in saved["unknown"] and saved["pos"][DOGE]["adopted"]
+    assert list(offline.store_path.parent.glob("state.json.bak-adopt-*"))
+    eng2, _ = make(offline, Clock(clk.ms + 60_000))              # restarted bot: journaled, no longer unknown
+    eng2.tick()
+    assert DOGE in eng2.st["pos"] and DOGE not in eng2.st["unknown"] and stops(offline, DOGE)
+
+
+def test_adopt_tool_refuses_short_and_unknown_symbol(offline):
+    import pytest
+    from live_v6.tools import adopt_position as A
+    offline.inner.open_position_raw(SOL, -1)
+    _unknown_state(offline)
+    with pytest.raises(SystemExit, match="SHORT"):
+        A.main(["--state", str(offline.store_path), "--sym", SOL])
+    with pytest.raises(SystemExit, match="not an unknown position"):
+        A.main(["--state", str(offline.store_path), "--sym", XRP])
