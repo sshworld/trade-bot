@@ -249,3 +249,16 @@ NRestarts=0
 # of ca87f85 (or successor) and the next real close without an intervening restart.
 # Note: at 08:19–08:30Z the citest unit was stopped/started 3 times by the testnet test runs for fix-unknown-position
 # (7dda201) — current MainPID 45343 on ca87f85.
+
+== R1 re-check, 21:05 KST confirm (2026-10-21 12:05:01Z), read-only from VPS by Developer ==
+Redeploy of testnet canary on ca87f85 via normal CI job 20261021T090127Z-4ed5d3 (from 52.71.118.136):
+  [09:01:28Z] restarted live_v6-citest; [09:02:23Z] verification PASSED; marker PENDING for ca87f853 (rollback target 660eea8e)
+Confirm log (/var/log/tradebot/ci-confirm.log):
+  [12:05:01Z] [testnet] action=confirm current=ca87f853 unit=active
+  verify-stops: pass=True positions=0 []
+  [12:05:01Z] [testnet] marker .citest_verified written for ca87f853 (first real 4h close 1792584000000 = 12:00Z processed by PID 46609: health ok, models=6 all caught up, positions=0)
+  [12:05:01Z] [live] confirm: nothing pending (current=0d82b19 marker=yes)
+.citest_verified: sha=ca87f853..., target=testnet, verified_at_utc=2026-10-21T12:05:01Z, verified_by=ci_deploy.sh strict, last_bar_close=1792584000000
+live_v6-citest: MainPID=46609 NRestarts=0 ActiveEnter=09:01:28Z (journal: no stop/start after 09:01:28Z; unchanged through 12:15Z)
+live_v6-live:   MainPID=36258 NRestarts=0 ActiveEnter=06:23:14Z (unchanged)
+Result: R1 GRANTED for ca87f85.
