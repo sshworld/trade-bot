@@ -35,8 +35,13 @@ Files: `engine.py` execution + safety · `strategy.py` pure v6 model (ATR/M20/H7
   in `st["unknown"]`: 🚨 once on detection (Telegram on mainnet only; testnet/tests log only), new entries blocked for
   THAT coin only (`unknown_position` skip), its risk counted in the portfolio-risk sum and max positions. No exchange
   stop → a closePosition STOP_MARKET (MARK_PRICE) at the model's exit line (20-bar channel low for a long, high for a
-  short), or 1×ATR(14, 4h) from the current mark if price is already beyond the line. Existing stops are never moved
-  or cancelled. Resolution is manual: close it by hand (the bot then clears it, ✅), or ops adopts it into the state
+  short), or 1×ATR(14, 4h) from the current mark if price is already beyond the line; channel/ATR data missing (e.g.
+  at start-up, before the model bootstrap) → at once 3 % from the mark (`fallback_stop_pct`). A placed stop is never
+  moved when data appears; existing stops are never moved or cancelled. **Last resort (protection beats ownership):**
+  the exchange keeps REJECTING the stop and none is confirmed within 5 min of detection (`unknown_stop_deadline_s`)
+  → reduceOnly MARKET close of that position + 🚨. Transient errors (timeouts / 5xx / no mark) are not rejections and
+  never close. The detection time is persisted in the state file, so a restart keeps the original deadline; if the
+  state file itself is lost, the position is detected anew and the 5-min window restarts (later, never earlier). Resolution is manual: close it by hand (the bot then clears it, ✅), or ops adopts it into the state
   file with `python -m live_v6.tools.adopt_position --state … --sym … --unit …` (dry run by default; `--apply` only
   with the bot unit stopped; long only; see the tool's docstring — without a matching model trade the strategy will
   close an adopted position at the next 4h close).

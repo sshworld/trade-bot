@@ -62,9 +62,10 @@ def started(offline, clk):
 
 # ───────── long / short, without / with an existing stop ─────────
 def test_unknown_long_without_stop_never_closed_stop_at_channel_low(offline):
-    offline.inner.open_position_raw(DOGE, 1000)
     clk = Clock(START)
-    eng, strat = started(offline, clk)
+    eng, strat = started(offline, clk)                       # models ready (channel + ATR)
+    offline.inner.open_position_raw(DOGE, 1000)
+    eng.reconcile()
     u = eng.st["unknown"][DOGE]
     st = stops(offline, DOGE)
     line, _ = expected_line(eng, strat, DOGE, 1)
@@ -93,9 +94,10 @@ def test_unknown_long_with_existing_stop_untouched(offline):
 
 
 def test_unknown_short_without_stop_stop_at_channel_high(offline):
-    offline.inner.open_position_raw(SOL, -1)
     clk = Clock(START)
     eng, strat = started(offline, clk)
+    offline.inner.open_position_raw(SOL, -1)
+    eng.reconcile()
     st = stops(offline, SOL)
     line, _ = expected_line(eng, strat, SOL, -1)
     assert len(st) == 1 and st[0]["close_position"] and st[0]["side"] == "BUY" and st[0]["stop_price"] == line
@@ -190,15 +192,161 @@ def test_resolved_by_hand_clears_block(offline):
     assert any("기록 없는 포지션 해소" in m for m in eng.tg.sent)
 
 
-def test_unknown_without_model_data_stays_open_unprotected_flag(offline):
-    """No channel/ATR yet → no stop can be computed: still never closed; flagged unprotected (dead-man stops pinging)."""
+# ───────── TA R4 add-on 1: fallback stop 3 % from the mark when channel/ATR data is missing ─────────
+def test_fallback_stop_3pct_long_when_no_model_data_then_never_moved(offline):
+    """Present at start-up: the first reconcile runs BEFORE the model bootstrap → no channel/ATR → closePosition
+    MARK_PRICE stop 3 % below the mark at once. When the model data appears the stop is NOT moved."""
     offline.inner.open_position_raw(DOGE, 1000)
     clk = Clock(START)
-    eng, strat = make(offline, clk)
-    strat.exit_line = lambda sym, side: None
-    eng.tick()
-    assert eng.st["unknown"][DOGE].get("unprotected") and not eng.healthy()
+    eng, strat = started(offline, clk)
+    st = stops(offline, DOGE)
+    want = eng.rules[DOGE].price(Decimal("0.15") * Decimal("0.97"), "down")
+    assert len(st) == 1 and st[0]["close_position"] and st[0]["side"] == "SELL" and st[0]["stop_price"] == want
+    assert eng.st["unknown"][DOGE]["stop_src"].startswith("fallback 3% from mark")
+    assert strat.exit_line(DOGE, 1) is not None                # data is there now …
+    next_close(clk, eng)
+    assert [(o["id"], o["stop_price"]) for o in stops(offline, DOGE)] == [(st[0]["id"], want)]   # … stop not moved
+    assert sum(1 for c in offline.fx.calls if c[0] == "stop" and c[1][0] == DOGE) == 1
+    assert not any(c[0] == "cancel" and c[1][0] == DOGE for c in offline.fx.calls)
     assert offline.amt(DOGE) == 1000 and not close_calls(offline)
+
+
+def test_fallback_stop_3pct_short_when_no_model_data(offline):
+    offline.inner.open_position_raw(SOL, -1)
+    clk = Clock(START)
+    eng, strat = make(offline, clk)
+    strat.exit_line = lambda sym, side: None                 # data missing for the whole test
+    eng.tick()
+    st = stops(offline, SOL)
+    want = eng.rules[SOL].price(Decimal("150") * Decimal("1.03"), "up")
+    assert len(st) == 1 and st[0]["close_position"] and st[0]["side"] == "BUY" and st[0]["stop_price"] == want
+    next_close(clk, eng)
+    assert [o["id"] for o in stops(offline, SOL)] == [st[0]["id"]] and offline.amt(SOL) == -1 and not close_calls(offline)
+
+
+def test_no_mark_price_unprotected_flag_never_closed(offline):
+    """No mark price at all (transient) → no stop can be computed: flagged unprotected (dead-man stops pinging),
+    never closed — transient errors are not rejections, so the 5-min last resort does not apply."""
+    clk = Clock(START)
+    eng, _ = started(offline, clk)
+    offline.inner.open_position_raw(DOGE, 1000)
+    offline.fx.inject("mark_prices", "unavailable", times=99)
+    eng.reconcile()
+    assert eng.st["unknown"][DOGE].get("unprotected") and not eng.healthy()
+    clk.ms += 600_000
+    eng.reconcile()
+    assert offline.amt(DOGE) == 1000 and not close_calls(offline)
+
+
+# ───────── TA R4 add-on 2: last resort after 5 min of REJECTED stops ─────────
+def _rejecting(offline, sym):
+    offline.fx.inject("stop", "reject", times=10 ** 6, match=lambda s, *a, **k: s == sym)
+
+
+def test_stop_rejected_for_5_min_then_reduce_only_close_and_alert(offline):
+    clk = Clock(START)
+    eng, _ = started(offline, clk)
+    offline.inner.open_position_raw(DOGE, 1000)
+    _rejecting(offline, DOGE)
+    eng.reconcile()                                          # detection (t0); stop rejected
+    t0 = int(eng.st["unknown"][DOGE]["detected_ms"])
+    for dt in (60_000, 180_000, 299_000):
+        clk.ms = t0 + dt
+        eng.reconcile()
+        assert offline.amt(DOGE) == 1000 and not close_calls(offline), dt
+    clk.ms = t0 + 300_000
+    eng.reconcile()
+    assert offline.amt(DOGE) == 0
+    cc = close_calls(offline)
+    assert len(cc) == 1 and cc[0][1][0] == DOGE and cc[0][1][1] == "SELL" and cc[0][1][4] is True   # reduceOnly MARKET
+    assert DOGE not in eng.st["unknown"]
+    assert any("최후 수단" in a for a in alerts(eng))
+    assert eng.st["unknown"] == {} and offline.amt(SOL) == 0
+
+
+def test_short_stop_rejected_for_5_min_then_close(offline):
+    clk = Clock(START)
+    eng, _ = started(offline, clk)
+    offline.inner.open_position_raw(SOL, -1)
+    _rejecting(offline, SOL)
+    eng.reconcile()
+    clk.ms = int(eng.st["unknown"][SOL]["detected_ms"]) + 300_000
+    eng.reconcile()
+    cc = close_calls(offline)
+    assert offline.amt(SOL) == 0 and len(cc) == 1 and cc[0][1][1] == "BUY"
+
+
+def test_stop_confirmed_at_4m59_no_close(offline):
+    clk = Clock(START)
+    eng, _ = started(offline, clk)
+    offline.inner.open_position_raw(DOGE, 1000)
+    _rejecting(offline, DOGE)
+    eng.reconcile()
+    t0 = int(eng.st["unknown"][DOGE]["detected_ms"])
+    clk.ms = t0 + 120_000
+    eng.reconcile()
+    offline.fx.clear()                                       # exchange accepts the stop again
+    clk.ms = t0 + 299_000
+    eng.reconcile()                                          # stop placed at 4m59
+    assert stops(offline, DOGE)
+    for dt in (300_000, 600_000, 3_600_000):
+        clk.ms = t0 + dt
+        eng.reconcile()
+    assert offline.amt(DOGE) == 1000 and not close_calls(offline)
+    assert not eng.st["unknown"][DOGE].get("unprotected")
+
+
+def test_transient_errors_only_never_trigger_last_resort(offline):
+    clk = Clock(START)
+    eng, _ = started(offline, clk)
+    offline.inner.open_position_raw(DOGE, 1000)
+    offline.fx.inject("stop", "unavailable", times=10 ** 6, match=lambda s, *a, **k: s == DOGE)
+    eng.reconcile()
+    clk.ms = int(eng.st["unknown"][DOGE]["detected_ms"]) + 900_000
+    eng.reconcile()
+    assert offline.amt(DOGE) == 1000 and not close_calls(offline)
+
+
+def test_restart_mid_window_keeps_original_detection_time(offline):
+    """Documented choice: the detection time is persisted in the state file (st["unknown"][sym]["detected_ms"]), so a
+    restart mid-window KEEPS it — the 5-min deadline is not extended by a restart. If the state file itself is lost,
+    the position is detected anew and the window restarts from that detection (later close, never earlier)."""
+    clk = Clock(START)
+    eng, _ = started(offline, clk)
+    offline.inner.open_position_raw(DOGE, 1000)
+    _rejecting(offline, DOGE)
+    eng.reconcile()
+    t0 = int(eng.st["unknown"][DOGE]["detected_ms"])
+    clk.ms = t0 + 200_000
+    eng.reconcile()
+    clk2 = Clock(t0 + 250_000)                              # restart at 4m10
+    eng2, _ = make(offline, clk2)
+    eng2.tick()
+    assert int(eng2.st["unknown"][DOGE]["detected_ms"]) == t0 and offline.amt(DOGE) == 1000
+    clk2.ms = t0 + 300_000
+    eng2.reconcile()
+    assert offline.amt(DOGE) == 0 and len(close_calls(offline)) == 1
+
+
+def test_state_lost_mid_window_restarts_window(offline):
+    clk = Clock(START)
+    eng, _ = started(offline, clk)
+    offline.inner.open_position_raw(DOGE, 1000)
+    _rejecting(offline, DOGE)
+    eng.reconcile()
+    t0 = int(eng.st["unknown"][DOGE]["detected_ms"])
+    offline.store_path.unlink()
+    clk2 = Clock(t0 + 250_000)
+    eng2, _ = make(offline, clk2)
+    eng2.tick()
+    t1 = int(eng2.st["unknown"][DOGE]["detected_ms"])
+    assert t1 >= t0 + 250_000
+    clk2.ms = t0 + 300_000
+    eng2.reconcile()
+    assert offline.amt(DOGE) == 1000 and not close_calls(offline)   # new window from t1
+    clk2.ms = t1 + 300_000
+    eng2.reconcile()
+    assert offline.amt(DOGE) == 0
 
 
 # ───────── ops tool: adopt_position (dry-run by default) ─────────

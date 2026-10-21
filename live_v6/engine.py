@@ -17,8 +17,10 @@ Invariants (ported from the verified live_v1 safety layer, spec v1 §8-10 / v2 �
     st["unknown"]: 🚨 once (Telegram on mainnet only), new entries blocked for THAT coin, its risk counted in the
     portfolio risk, and if it has no exchange stop a closePosition MARK_PRICE stop is placed at the model's exit
     line (20-bar channel low for a long / high for a short; 1×ATR(14, 4h) from the mark if price is already beyond
-    the line). Existing stops are never moved or cancelled. Resolution is manual (close by hand, or
-    `python -m live_v6.tools.adopt_position`).
+    the line; 3 % from the mark if channel/ATR data is missing). Existing stops are never moved or cancelled.
+    Resolution is manual (close by hand, or `python -m live_v6.tools.adopt_position`). Only exception (protection
+    beats ownership): the exchange keeps REJECTING the stop and none is confirmed within 5 min of detection →
+    reduceOnly MARKET close of that position + 🚨.
 """
 from __future__ import annotations
 
@@ -92,7 +94,9 @@ class Settings:
     pf_review_after: int = 30
     ledger_tol_pct: float = 0.5
     income_interval_s: float = 60
-    fallback_stop_pct: float = 3.0      # unused since TA R4 (unknown positions are no longer auto-adopted); kept for config output
+    fallback_stop_pct: float = 3.0      # TA R4: unknown position, no channel/ATR data → stop this % from the mark
+    unknown_stop_deadline_s: float = 300.0   # TA R4 last resort: stop REJECTED and none confirmed this long after
+                                             # detection → reduceOnly MARKET close of that position + 🚨
     use_streams: bool = False           # runner sets True; then stale/down streams block entries
     pace_weight: int = 1000             # startup pacing: used weight ≥ this (≈42 % of 2400) → wait for the next minute
     bar_stale_s: float = 300.0          # TA: bar decision (meta.last_bar_close + every model's last_open) not advanced
@@ -1020,14 +1024,31 @@ class V6Engine:
             u = {"side": side, "detected_ms": self.now_ms(), "stop_seq": 0}
             self.st["unknown"][sym] = u
         u.update(amt=str(amt), qty=str(abs(amt)), entry_px=str(p["entry"]))
+        if u.get("closing"):                                # last-resort close already decided → retry until flat
+            self._unknown_last_resort(sym, u, amt)
+            return
+        if mark is None:
+            try:
+                mark = self.x("mark_prices").get(sym)
+            except ExchangeError:
+                mark = None
         prot = self.find_stop(amt, orders)
         if prot is not None:
             if u.get("stop_cid") != prot.get("client_id"):
                 u["stop_src"] = "exchange (existing, untouched)"
             u.update(stop_px=str(prot["stop_price"]), stop_cid=prot.get("client_id"))
             u.pop("unprotected", None)
-        else:
-            self._unknown_stop(sym, u, amt, mark)
+            u.pop("stop_rejects", None)
+        elif not self._unknown_stop(sym, u, amt, mark):
+            age = self.now_ms() - int(u["detected_ms"])
+            if int(u.get("stop_rejects", 0)) > 0 and age >= self.cfg.unknown_stop_deadline_s * 1000:
+                u["closing"] = True                         # TA R4 last resort: protection beats ownership
+                self.save()
+                self.alert(f"기록 없는 포지션 손절이 {self.cfg.unknown_stop_deadline_s / 60:.0f}분 넘게 거부됨 — 최후 수단으로 {sym} 시장가 정리",
+                           f"{sym} {amt} · 발견 {age / 1000:.0f}초 전 · 손절 거부 {u.get('stop_rejects')}회 · "
+                           f"마지막 사유 {u.get('last_reject', '-')} · reduceOnly MARKET")
+                self._unknown_last_resort(sym, u, amt)
+                return
         self._unknown_risk(u, mark if mark is not None else p["entry"])
         self.save()
         if first:
@@ -1036,17 +1057,24 @@ class V6Engine:
                        f"손절 {u.get('stop_px') or '없음 (등록 재시도 중)'} ({u.get('stop_src', '-')}) · "
                        f"포트폴리오 위험에 포함 {u.get('risk_frac', 0):.2%} · 해결: 직접 청산 또는 ops가 adopt_position 으로 등록")
 
-    def _unknown_stop(self, sym, u, amt, mark):
+    def _unknown_stop(self, sym, u, amt, mark) -> bool:
+        """Place the protective stop for an unknown position. True = placed (exchange accepted it). Rejections
+        (OrderRejected / WouldTrigger) are counted for the 5-min last resort; transient errors are not."""
         side = 1 if amt > 0 else -1
-        ref = self.strategy.exit_line(sym, side)            # (20-bar channel line, ATR14 4h) or None
-        if ref is None or mark is None:
-            self._unknown_unprotected(sym, u, "모델 채널/ATR 또는 mark 가격 없음")
-            return
-        line, atr = D(ref[0]), D(ref[1])
+        if mark is None:
+            self._unknown_unprotected(sym, u, "mark 가격 없음 — 손절 계산 불가, 재시도")
+            return False
         r = self.rules[sym]
-        beyond = (mark <= line) if side > 0 else (mark >= line)
-        px, src = (mark - side * atr, "1×ATR14 from mark (price beyond the 20-bar line)") if beyond else (line, "20-bar channel exit line")
-        px = r.price(px, "down" if side > 0 else "up")
+        rnd = "down" if side > 0 else "up"                  # away from the price
+        ref = self.strategy.exit_line(sym, side)            # (20-bar channel line, ATR14 4h) or None
+        line = atr = None
+        if ref is None:                                     # TA R4: no channel / ATR data yet → 3 % from the mark
+            px, src = mark * (1 - side * D(self.cfg.fallback_stop_pct) / 100), f"fallback {self.cfg.fallback_stop_pct:g}% from mark (no channel/ATR data)"
+        else:
+            line, atr = D(ref[0]), D(ref[1])
+            beyond = (mark <= line) if side > 0 else (mark >= line)
+            px, src = (mark - side * atr, "1×ATR14 from mark (price beyond the 20-bar line)") if beyond else (line, "20-bar channel exit line")
+        px = r.price(px, rnd)
         seq = int(u.get("stop_seq", 0))
         u["stop_seq"] = seq + 1
         self.save()
@@ -1056,18 +1084,46 @@ class V6Engine:
             try:
                 o = self.x("stop", sym, cs, px, cid)          # closePosition=true, MARK_PRICE (reduce-only by nature)
             except WouldTrigger:
-                if beyond:
+                if atr is None or src.startswith("1×ATR"):
                     raise
-                px = r.price(mark - side * atr, "down" if side > 0 else "up")
+                px = r.price(mark - side * atr, rnd)
                 src = "1×ATR14 from mark (line would trigger)"
                 o = self.x("stop", sym, cs, px, f"{cid}b")
+        except (OrderRejected, WouldTrigger) as e:
+            u["stop_rejects"] = int(u.get("stop_rejects", 0)) + 1
+            u["last_reject"] = str(e)[:80]
+            self._unknown_unprotected(sym, u, f"손절 거부 {px}: {str(e)[:80]}")
+            return False
         except ExchangeError as e:
-            self._unknown_unprotected(sym, u, f"손절 등록 실패 {px}: {str(e)[:80]}")
-            return
-        u.update(stop_px=str(o.get("stop_price") or px), stop_cid=o.get("client_id", cid), stop_src=src,
-                 stop_line=str(line), stop_atr=str(atr))
+            self._unknown_unprotected(sym, u, f"손절 등록 결과 불명 {px}: {str(e)[:80]} (재조회 후 재시도)")
+            return False
+        u.update(stop_px=str(o.get("stop_price") or px), stop_cid=o.get("client_id", cid), stop_src=src)
+        if line is not None:
+            u.update(stop_line=str(line), stop_atr=str(atr))
         u.pop("unprotected", None)
+        u.pop("stop_rejects", None)
         log.warning("%s unknown position %s: stop %s placed (%s)", sym, amt, u["stop_px"], src)
+        return True
+
+    def _unknown_last_resort(self, sym, u, amt):
+        """TA R4 last resort (only after 5 min of REJECTED stops): reduceOnly MARKET for the whole position, retried
+        every reconcile until the exchange shows flat; then the unknown entry is cleared (reconcile flat branch)."""
+        seq = int(u.get("exit_seq", 0))
+        u["exit_seq"] = seq + 1
+        self.save()
+        cid = f"{self.cfg.cid_prefix}{sym.removesuffix('USDT')}u{int(u['detected_ms']) // 1000}x{seq}"
+        try:
+            self.submit_market(sym, "SELL" if amt > 0 else "BUY", abs(amt), cid, reduce_only=True)
+            left = self.x("positions", self.cfg.symbols)[sym]["amt"]
+        except ExchangeError as e:
+            log.error("%s unknown position last-resort close failed (retry next reconcile): %s", sym, e)
+            return
+        if left == 0:
+            self.st["unknown"].pop(sym, None)
+            self.save()
+            self.alert(f"기록 없는 포지션 최후 수단 정리 완료 — {sym}", f"{amt} → 0 · 손절이 계속 거부되어 시장가로 정리함")
+        else:
+            log.warning("%s unknown position last-resort close left %s → retry next reconcile", sym, left)
 
     def _unknown_unprotected(self, sym, u, why):
         n = int(u.get("unprot_n", 0)) + 1

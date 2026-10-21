@@ -21,6 +21,16 @@ state file: the bot's OWN positions would be dumped at the next 4h close.
 4. Resolution manual: closed by hand → cleared + ✅; or ops adopts it: `python -m live_v6.tools.adopt_position`
    (dry run by default; `--apply` only with `--unit` stopped; long only; backup first).
 
+## Add-on (TA on 0246507)
+* Flatten-all change APPROVED; −25 % halt counting unknown losses accepted.
+* Fallback stop: no channel/ATR data → closePosition MARK_PRICE stop 3 % from the mark at once (below for a long,
+  above for a short); not moved when the data appears.
+* Last resort: stop REJECTED (OrderRejected / would-trigger) and none confirmed within 5 min of detection →
+  reduceOnly MARKET close of that position + 🚨 (Telegram mainnet only), retried until flat. Transient errors never
+  count. Restart mid-window: the persisted detection time is KEPT (deadline not extended); state file lost →
+  new detection, window restarts (documented in test_restart_mid_window_keeps_original_detection_time /
+  test_state_lost_mid_window_restarts_window).
+
 ## Other close paths reviewed
 | path | closes unknown positions? | now |
 |---|---|---|
