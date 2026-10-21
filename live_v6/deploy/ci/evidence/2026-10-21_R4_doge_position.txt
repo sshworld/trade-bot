@@ -1,0 +1,37 @@
+# Evidence — TA R4: why the testnet DOGEUSDT drill position (9628 @ 0.08194, stop 0.07948) disappeared. 2026-10-21.
+# Read-only signed GETs on the TESTNET (testnet.binancefuture.com) from the VPS with the canary's testnet key (never
+# printed): /fapi/v1/allOrders, /fapi/v1/userTrades, /fapi/v1/allAlgoOrders, /fapi/v2/positionRisk, /fapi/v1/openOrders.
+# Times converted to KST.
+#
+# VERDICT: closed by BOT CODE, not by the exchange stop and not by CI → per TA rule this is a FAIL to report.
+#  * The exchange stop never fired: algo STOP_MARKET v6DOGE1792545935s0 (algoId 1000000249196526) went EXPIRED at
+#    13:00:03.831 KST with no actualOrderId (closePosition stop expires when the position is gone).
+#  * The position was closed at 13:00:03.812 KST by MARKET SELL reduceOnly orderId 2369898332, clientOrderId
+#    v6DOGE1792545935x0 (the bot's own exit-order id scheme: <journal id>x0), 9628 @ 0.081460, realized −4.62144 USDT.
+#  * Who: the canary bot live_v6-citest (PID 22824, code 660eea8 = runtime code of 0d82b19), at the 13:00 KST 4h close,
+#    exit reason `model_sync` ("모델 동기화 청산"): strategies/h7t.py on_bar_close — a live position whose H7-T model
+#    is flat (or has a different entry bar) is closed. The drill position was opened directly through V6Engine.enter
+#    (drill_testnet_position.py), so the DOGE model never had it → reconciled away at the first real bar close.
+#  * CI did nothing at that time: no ci-deploy.log lines and no ci-jobs between 01:42Z (10:42 KST) and the F work
+#    (13:16 KST); the citest stop/start of F was at 13:16:09 KST, after the close.
+#  * Consequence for G: D3/D4 (deploy and SSH-cut drill with the position open, 10:25–10:44 KST) are valid; the
+#    position simply did not survive the next 4h close because it was not a model position.
+#  * Same behaviour on live: any position the H7-T model did not open (e.g. a manual one) is market-closed by the bot
+#    at the next 4h close. Design of the strategy, not of CI — flagged for TA.
+
+## allOrders DOGEUSDT since 2026-10-21 10:00 KST
+2369798348 v6DOGE1792545935 MARKET BUY status=FILLED qty=9628 exec=9628 avg=0.081940 stop=0 reduceOnly=False closePos=False time=10-21 10:25:36.179 KST upd=10-21 10:25:36.179 KST
+2369898332 v6DOGE1792545935x0 MARKET SELL status=FILLED qty=9628 exec=9628 avg=0.081460 stop=0 reduceOnly=True closePos=False time=10-21 13:00:03.812 KST upd=10-21 13:00:03.812 KST
+## userTrades DOGEUSDT
+163647496 order=2369798348 BUY qty=9628 price=0.081940 pnl=0 fee=0.31556732 maker=False 10-21 10:25:36.179 KST
+163701909 order=2369898332 SELL qty=9628 price=0.081460 pnl=-4.62144000 fee=0.31371875 maker=False 10-21 13:00:03.812 KST
+## allAlgoOrders DOGEUSDT
+{'algoId': 1000000249196526, 'clientAlgoId': 'v6DOGE1792545935s0', 'orderType': 'STOP_MARKET', 'side': 'SELL', 'algoStatus': 'EXPIRED', 'triggerPrice': '0.079480', 'closePosition': True, 'reduceOnly': True, 'actualOrderId': ''} create=10-21 10:25:36.215 KST upd=10-21 13:00:03.831 KST
+{'algoId': 1000000249196524, 'clientAlgoId': 'v6DOGE1792545935p', 'orderType': 'STOP_MARKET', 'side': 'SELL', 'algoStatus': 'CANCELED', 'triggerPrice': '0.079480', 'closePosition': False, 'reduceOnly': True, 'actualOrderId': ''} create=10-21 10:25:36.055 KST upd=10-21 10:25:36.292 KST
+## positionRisk DOGEUSDT ['0']
+## openOrders DOGEUSDT 0
+
+## canary journal 2026-10-21 13:00:03 KST
+[tg:testnet] 🧪[TESTNET·모의] 🔴 청산 DOGEUSDT 롱 · 모델 동기화 청산
+수량 9628 · 0.081940 → 0.081460 · 손절 0.07948
+순손익 -5.2507 USDT · -0.222R (수수료 0.6293 · 펀딩 +0.0000)

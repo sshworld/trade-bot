@@ -27,4 +27,4 @@ Not changed / open for TA:
 * After a stop the unit stays enabled; a VPS reboot would start the release `current` points to (flagged by
   `CI_HALTED` and the heartbeat).
 * A rollback target whose own verification fails keeps its marker (the failure may be the exchange, not the code).
-* The testnet DOGEUSDT drill position was left to the canary; at 13:16 KST the testnet `status` showed positions=0 (closed on testnet; not investigated further).
+* **R4 (FAIL, reported):** the testnet DOGEUSDT drill position was market-closed by the canary BOT at the 13:00 KST 4h close (`model_sync`, orderId 2369898332, 13:00:03.812 KST, 0.081460); the exchange stop never fired (EXPIRED). Not CI. The drill opened the position outside the H7-T model, so the strategy reconciled it away. Evidence `evidence/2026-10-21_R4_doge_position.txt`.
