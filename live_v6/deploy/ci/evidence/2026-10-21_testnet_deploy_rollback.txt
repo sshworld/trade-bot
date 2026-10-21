@@ -1,0 +1,113 @@
+# VPS testnet canary drill 2026-10-21 (UTC timestamps). Live unit untouched: MainPID=3648 NRestarts=0 throughout.
+## status / forced-command rejections / live dry-run: see README_CI.md
+[2026-10-21T00:52:28Z] [testnet] action=deploy dry_run=0 current=none unit=inactive
+import ok, tick calls on_bar_close
+[2026-10-21T00:52:28Z] [testnet] import check OK for 950438b
+[2026-10-21T00:52:28Z] [testnet] time window OK (00:52 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+  verify-stops: pass=True positions=0 []
+[2026-10-21T00:52:28Z] [testnet] verify-stops exit=0
+[2026-10-21T00:52:28Z] [testnet] installed /opt/tradebot-ci-testnet/app/950438b
+[2026-10-21T00:52:28Z] [testnet] symlink current → 950438b
+[2026-10-21T00:52:28Z] [testnet] restarted live_v6-citest at 00:52:28Z; verifying (≤240s)
+[2026-10-21T00:52:38Z] [testnet]   state: health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up
+  verify-stops: pass=True positions=0 []
+[2026-10-21T00:53:24Z] [testnet] verify-stops exit=0
+[2026-10-21T00:53:24Z] [testnet] verification PASSED
+[2026-10-21T00:53:24Z] [testnet] DEPLOYED 950438b (previous: none). Heartbeat script NOT changed (manual step, runbook §5).
+SSH_EXIT= 0
+[2026-10-21T00:53:32Z] [testnet] action=deploy dry_run=0 current=950438b unit=active
+import ok, tick calls on_bar_close
+[2026-10-21T00:53:32Z] [testnet] import check OK for 27dabf5
+[2026-10-21T00:53:32Z] [testnet] time window OK (00:53 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+  verify-stops: pass=True positions=0 []
+[2026-10-21T00:53:32Z] [testnet] verify-stops exit=0
+[2026-10-21T00:53:32Z] [testnet] state backed up
+[2026-10-21T00:53:32Z] [testnet] installed /opt/tradebot-ci-testnet/app/27dabf5
+[2026-10-21T00:53:32Z] [testnet] symlink current → 27dabf5
+[2026-10-21T00:53:37Z] [testnet] restarted live_v6-citest at 00:53:32Z; verifying (≤240s)
+[2026-10-21T00:53:48Z] [testnet]   state: health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up
+  verify-stops: pass=True positions=0 []
+[2026-10-21T00:54:33Z] [testnet] verify-stops exit=0
+[2026-10-21T00:54:33Z] [testnet] verification PASSED
+[2026-10-21T00:54:33Z] [testnet] DEPLOYED 27dabf5 (previous: 950438b). Heartbeat script NOT changed (manual step, runbook §5).
+SSH_EXIT= 0
+[2026-10-21T00:54:36Z] [testnet] action=deploy dry_run=0 current=27dabf5 unit=active
+[2026-10-21T00:54:36Z] [testnet] 27dabf5 already current and live_v6-citest active — no-op
+SSH_EXIT= 0
+[2026-10-21T00:54:38Z] [testnet] action=rollback dry_run=0 current=27dabf5 unit=active
+[2026-10-21T00:54:38Z] [testnet] ROLLBACK to 950438b (reason: manual request)
+  verify-stops: pass=True positions=0 []
+[2026-10-21T00:54:38Z] [testnet] verify-stops exit=0
+[2026-10-21T00:54:38Z] [testnet] time window OK (00:54 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T00:54:38Z] [testnet] symlink current → 950438b
+[2026-10-21T00:54:43Z] [testnet] restarted live_v6-citest at 00:54:38Z; verifying (≤240s)
+[2026-10-21T00:54:53Z] [testnet]   state: health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up
+  verify-stops: pass=True positions=0 []
+[2026-10-21T00:55:39Z] [testnet] verify-stops exit=0
+[2026-10-21T00:55:39Z] [testnet] verification PASSED
+[2026-10-21T00:55:39Z] [testnet] rollback to 950438b verified
+SSH_EXIT= 0
+installed; citest unit not started
+ RC= 0
+== [5] drill: stops unverified -> deploy aborts before restart
+[2026-10-21T00:58:25Z] [testnet] action=deploy dry_run=0 current=950438b unit=active
+import ok, tick calls on_bar_close
+[2026-10-21T00:58:26Z] [testnet] import check OK for 27dabf5
+[2026-10-21T00:58:26Z] [testnet] time window OK (00:58 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+  verify-stops: pass=True positions=0 []
+[2026-10-21T00:58:26Z] [testnet] SIMULATED: verify-stops reports an unprotected position (testnet drill)
+[2026-10-21T00:58:26Z] [testnet] verify-stops exit=1
+[2026-10-21T00:58:26Z] [testnet] FAIL: stops NOT verified for every open position — deploy ABORTED before restart
+exit=5
+MainPID=12048
+ActiveEnterTimestamp=Wed 2026-10-21 00:57:11 UTC
+/opt/tradebot-ci-testnet/app/950438b
+ RC= 0
+== [7] drill: post-restart verification fails -> automatic rollback
+[2026-10-21T00:58:27Z] [testnet] action=deploy dry_run=0 current=950438b unit=active
+import ok, tick calls on_bar_close
+[2026-10-21T00:58:27Z] [testnet] import check OK for 27dabf5
+[2026-10-21T00:58:27Z] [testnet] time window OK (00:58 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+  verify-stops: pass=True positions=0 []
+[2026-10-21T00:58:27Z] [testnet] verify-stops exit=0
+[2026-10-21T00:58:27Z] [testnet] state backed up
+[2026-10-21T00:58:27Z] [testnet] /opt/tradebot-ci-testnet/app/27dabf5 already installed (reusing)
+[2026-10-21T00:58:27Z] [testnet] symlink current → 27dabf5
+[2026-10-21T00:58:31Z] [testnet] restarted live_v6-citest at 00:58:27Z; verifying (≤240s)
+[2026-10-21T00:58:42Z] [testnet]   state: health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up
+  verify-stops: pass=True positions=0 []
+[2026-10-21T00:59:27Z] [testnet] verify-stops exit=0
+[2026-10-21T00:59:27Z] [testnet] SIMULATED verification failure (testnet drill)
+[2026-10-21T00:59:27Z] [testnet] post-restart verification FAILED for 27dabf5
+[2026-10-21T00:59:27Z] [testnet] ROLLBACK to 950438b (reason: verification failed for 27dabf5)
+  verify-stops: pass=True positions=0 []
+[2026-10-21T00:59:27Z] [testnet] verify-stops exit=0
+[2026-10-21T00:59:27Z] [testnet] time window OK (00:59 UTC: ≥900s after the last 4h close, ≥1200s before the next)
+[2026-10-21T00:59:27Z] [testnet] symlink current → 950438b
+[2026-10-21T00:59:32Z] [testnet] restarted live_v6-citest at 00:59:27Z; verifying (≤240s)
+[2026-10-21T00:59:42Z] [testnet]   state: health ok, last_bar_close=1792540800000 boundary=1792540800000 models=6 all caught up
+  verify-stops: pass=True positions=0 []
+[2026-10-21T01:00:27Z] [testnet] verify-stops exit=0
+[2026-10-21T01:00:27Z] [testnet] verification PASSED
+[2026-10-21T01:00:27Z] [testnet] rollback to 950438b verified
+[2026-10-21T01:00:27Z] [testnet] FAIL: deploy of 27dabf5 failed; rolled back to 950438b
+exit=9
+/opt/tradebot-ci-testnet/app/950438b
+PREVIOUS=27dabf5
+testnet.json.bak-20261021T005332Z-pre-27dabf5
+testnet.json.bak-20261021T005605Z-pre-27dabf5
+testnet.json.bak-20261021T005827Z-pre-27dabf5
+[2026-10-21T00:55:39Z] [testnet] verify-stops exit=0
+[2026-10-21T00:55:39Z] [testnet] verification PASSED
+[2026-10-21T00:55:39Z] [testnet] rollback to 950438b verified
+ RC= 0
+== live untouched
+/opt/tradebot/app/fae64af
+MainPID=3648
+NRestarts=0
+ActiveEnterTimestamp=Tue 2026-10-20 09:41:15 UTC
+active
+               total        used        free      shared  buff/cache   available
+Mem:             955         398         140           1         566         557
+MemoryCurrent=31105024
+ RC= 0
