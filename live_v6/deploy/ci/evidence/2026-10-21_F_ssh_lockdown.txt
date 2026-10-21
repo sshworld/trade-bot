@@ -1,0 +1,69 @@
+# Evidence — TA F (VPS SSH lockdown), 2026-10-21. Log times UTC (KST = UTC+9); done 13:16–13:17 KST, i.e. after 13:10
+# and outside ±15 min of the 13:00 / 17:00 KST 4h closes. LIVE unit live_v6-live never stopped/restarted:
+# MainPID=12861 NRestarts=0 before, during and after. Order: ops created and proven (login + sudo) BEFORE any sshd /
+# authorized_keys change; the lockdown ran in a held root session with a 15-min auto-revert timer as root fallback,
+# cancelled only after a NEW ops session + sudo was proven. Keys shown as <key>; no secrets in this file.
+# GitHub part: repo secrets = VPS_HOST, VPS_KNOWN_HOSTS; VPS_SSH_KEY only as environment secret (live, testnet);
+# no repo-level VPS_SSH_KEY existed, so nothing had to be deleted (re-read 2026-10-21 ~11:55 KST).
+
+## F1 2026-10-21T04:16:06Z create user ops (box key tradebot_vps.pub), passwordless sudo
+/etc/sudoers.d/90-ops.tmp: parsed OK
+uid=1001(ops) gid=1001(ops) groups=1001(ops)
+total 12
+drwx------ 2 ops ops 4096 Oct 21 04:16 .
+drwxr-x--- 3 ops ops 4096 Oct 21 04:16 ..
+-rw------- 1 ops ops   94 Oct 21 04:16 authorized_keys
+256 SHA256:bmuGUK2fjpzr7iXXL4qJDOxnHB74BeiFkOdwQ9v2ov8 tradebot-vps (ED25519)
+[rc=0]
+## F1-verify 2026-10-21T04:16:06Z ops login (box key) + sudo, BEFORE any sshd change
+uid=1001(ops) gid=1001(ops) groups=1001(ops)
+ops
+sudo -n: OK
+User ops may run the following commands on vultr:
+    (ALL) NOPASSWD: ALL
+/usr/bin/systemctl stop live_v6-live
+sudo -n -l covers: systemctl stop live_v6-live (listed only, NOT run)
+MainPID=12861
+NRestarts=0
+ActiveState=active
+[rc=0]
+## F1-citest 2026-10-21T04:16:09Z prove `sudo systemctl stop` on the testnet canary (live untouched)
+after stop: inactive
+after start: active
+MainPID=12861
+NRestarts=0
+[rc=0]
+## F2 2026-10-21T04:16:24Z lockdown (backups *.bak-20261021T041624Z; auto-revert timer armed for 15 min until verified)
+sshd -t OK
+sshd reloaded
+permitrootlogin forced-commands-only
+pubkeyauthentication yes
+passwordauthentication no
+ssh-ed25519 <key> tradebot-vps
+restrict,command="/opt/tradebot/ci/ci_deploy_entry.sh live" ssh-ed25519 <key> tradebot_ci_live
+restrict,command="/opt/tradebot/ci/ci_deploy_entry.sh testnet" ssh-ed25519 <key> tradebot_ci_testnet
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin forced-commands-only
+[rc=0]
+## F2-verify 2026-10-21T04:16:24Z new sessions after reload (root session still held as fallback)
+ops login OK
+sudo OK
+/usr/bin/systemctl stop live_v6-live
+MainPID=12861
+NRestarts=0
+ActiveState=active
+[rc=0]
+root unrestricted key (tradebot-vps) refused as expected: AuthenticationException: Authentication failed: transport shut down or saw EOF
+## F2-commit cancel the auto-revert timer (ops proven)
+0
+[rc=0]
+
+## F3 2026-10-21T04:16:38Z CI forced-command keys after lockdown (client: ssh -i <ci key> root@VPS)
+testnet key, `status` → rc=0 (current=660eea8…, marker=yes, verify-stops exit=0, health ok, bars caught up)
+live key,    `status` → rc=0 (current=0d82b19, marker=yes, verify-stops exit=0, health ok, last_bar_close=boundary)
+testnet key, `id`     → "entry: command not allowed"
+live key,    `id`     → "entry: command not allowed"
+root with the unrestricted admin key (tradebot-vps) → refused (AuthenticationException), as intended.
+Fallbacks: ops (box key, NOPASSWD sudo); Vultr web console. Backups on VPS: /root/.ssh/authorized_keys.bak-20261021T041624Z,
+/etc/ssh/sshd_config.d/00-tradebot.conf.bak-20261021T041624Z.
