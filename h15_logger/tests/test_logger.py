@@ -206,10 +206,13 @@ def test_rest_429_stops_whole_process(tmp_path):
 
 
 def test_watchdog_stop_ends_whole_process_with_marker(tmp_path):
-    p = FakeProbe()
+    p, n = FakeProbe(), {"sleeps": 0}
 
     async def sleep(d):
         p.b["NRestarts"] = "1"                   # live bot crashed + auto-restarted by systemd = harm
+        n["sleeps"] += 1
+        if n["sleeps"] > 500:
+            raise L.Stop("test guard: watchdog never stopped the logger", 0)     # keeps a mutant from hanging the suite
         await asyncio.sleep(0)
 
     lg = L.Logger(tmp_path, probe=p, connect=lambda u: Silent(), oi=False, now_ms=lambda: T0, sleep=sleep)
