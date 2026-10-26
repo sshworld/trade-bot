@@ -437,6 +437,122 @@ def test_stop_unknown_outcome_keeps_prearm_so_position_is_never_naked(offline):
     offline.assert_safe()
 
 
+# ── TA (b): bounded confirmation of the protective stop after an unknown placement outcome ──
+# Exact window in the code (engine.Settings): stop_attempts = 3, stop_retry_delay_s = 3.0 s. Round 1 = _upgrade_stop (3 closePosition
+# attempts, sleeps between them) → pre-arm verified via open_orders → round 2 = protect()/ensure_stop (3 attempts, same delay).
+# Still no confirmed stop after that → this position is flattened in full + 🚨. Nothing waits for api_dead_s (300 s, flatten-all).
+def _cp_stop_attempts(offline):
+    return [c for c in offline.fx.calls if c[0] == "stop" and not str(c[1][3]).endswith("p")]   # pre-arm cid ends in 'p' 
+
+
+def _closeposition_down(offline):
+    def f(fn, s, side, trigger, cid, qty=None, **k):
+        if qty is None:
+            raise ExchangeUnavailable("down")
+        return fn(s, side, trigger, cid, qty=qty, **k)
+    offline.fx.inject("stop", f, times=100)
+
+
+def _sleeps(eng):
+    rec = []
+    eng.sleep = rec.append
+    return rec
+
+
+def test_stop_window_constants_are_the_documented_ones():
+    from live_v6.engine import Settings
+    assert (Settings().stop_attempts, Settings().stop_retry_delay_s) == (3, 3.0)
+
+
+def test_unknown_stop_outcome_with_prearm_verified_keeps_it_and_does_not_flatten(offline):
+    eng = _eng(offline)
+    sl = _sleeps(eng)
+    _closeposition_down(offline)
+    eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
+    assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] != 0
+    assert offline.stops("DOGEUSDT"), "verified pre-arm must stay"
+    assert not close_calls(offline) and not alerts(eng)
+    assert len(_cp_stop_attempts(offline)) == eng.cfg.stop_attempts
+    assert sum(sl) <= (eng.cfg.stop_attempts - 1) * eng.cfg.stop_retry_delay_s       # ≤ 6 s of waiting
+    offline.assert_safe()
+
+
+@pytest.mark.parametrize("how", ["reads_fail", "prearm_gone"])
+def test_unconfirmed_stop_after_the_bounded_window_flattens_in_full_with_alert(offline, how):
+    eng = _eng(offline)
+    sl = _sleeps(eng)
+    _closeposition_down(offline)
+
+    def entered_not_closed():
+        mk = [c for c in offline.fx.calls if c[0] == "market"]
+        return bool(mk) and not any(len(c) > 1 and len(c[1]) > 4 and c[1][4] for c in mk)
+
+    def oo(fn, sym):
+        if not entered_not_closed():
+            return fn(sym)
+        if how == "reads_fail":
+            raise ExchangeUnavailable("read down")
+        return [o for o in fn(sym) if not o["client_id"].endswith("p")]          # pre-arm not visible
+    offline.fx.inject("open_orders", oo, times=1000)
+    eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
+    assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] == 0, "must be flattened, not left unconfirmed"
+    assert any("손절 미확인" in m for m in alerts(eng)), eng.tg.sent
+    assert len(close_calls(offline)) == 1                                           # one single full exit
+    assert len(_cp_stop_attempts(offline)) <= 2 * eng.cfg.stop_attempts              # bounded: 2 rounds × 3
+    assert sum(sl) <= 2 * (eng.cfg.stop_attempts - 1) * eng.cfg.stop_retry_delay_s   # ≤ 12 s of waiting in total
+
+
+def test_no_alias_label_strings_in_emitted_skip_reasons(offline, caplog):
+    """TA (a): only the spec names reach skip records / logs / notifier; aliases live in comments only."""
+    import re
+    alias = re.compile(r"(?<![A-Za-z_])(loss_cap|open_risk_cap)(?![A-Za-z_])")
+    seen = set()
+    scen = [dict(wallet="20", prices={}),                                    # min-qty path, cap exceeded
+            dict(wallet="1000", prices={}),                                   # normal q0 entry
+            dict(wallet="100", prices={"DOGEUSDT": "0.0045"})]
+    with caplog.at_level("DEBUG"):
+        for sc in scen:
+            eng = _eng(offline, wallet=sc["wallet"], prices=sc["prices"])
+            eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
+            eng.enter("DOGEUSDT", Decimal("0.0045") * 80, unique_T())          # huge stop distance → other labels
+            for x in eng.meta.get("skip_log", []):
+                seen.add(x[2])
+                assert not alias.search(" ".join(map(str, x))), x
+            assert not any(alias.search(m) for m in eng.tg.sent)
+    assert not alias.search(caplog.text)
+    # every label the sizing path can emit, driven through size_entry directly
+    for sym in COINS:
+        r = R[sym]
+        for w in (5, 30, 1000):
+            for f in (0.2, 1, 5):
+                dist = max(ceil_to(PRICE[sym] * Decimal("0.024") * Decimal(str(f)), r.tick_size), r.tick_size)
+                z = size_entry(r, BRACKETS[sym], Decimal(w), Decimal(w), PRICE[sym], dist, mark=PRICE[sym])
+                if z.skip:
+                    seen.add(z.skip)
+                    assert not alias.search(z.skip + " " + z.detail), z
+    assert "min_order_risk_over_cap" in seen and seen <= KNOWN, seen
+    for f in ("sizing.py", "engine.py"):              # no alias string LITERAL anywhere in the code (comments are fine)
+        src = (Path(__file__).parent.parent / f).read_text()
+        for n in ast.walk(ast.parse(src)):
+            if isinstance(n, ast.Constant) and isinstance(n.value, str):
+                assert not alias.search(n.value), (f, n.value)
+
+
+def test_q0_zero_goes_to_min_qty_path_and_is_not_labelled_qty_zero():
+    s = "BTCUSDT"
+    r = R[s]
+    z = size_entry(r, BRACKETS[s], Decimal("20"), Decimal("20"), PRICE[s], PRICE[s] * Decimal("0.03"), mark=PRICE[s])
+    assert z.q0 == 0 and z.skip == "min_order_risk_over_cap" and "q0=0 " in z.detail and "qty_zero" not in z.detail, z
+
+
+def test_qty_zero_only_when_min_qty_path_is_unreachable():
+    import dataclasses
+    s = "BTCUSDT"
+    r = dataclasses.replace(R[s], min_qty=Decimal(0), min_notional=Decimal(0), mkt_min_qty=Decimal(0))
+    z = size_entry(r, BRACKETS[s], Decimal("20"), Decimal("20"), PRICE[s], PRICE[s] * Decimal("0.03"), mark=PRICE[s])
+    assert z.skip == "qty_zero", z
+
+
 def test_exit_is_one_full_reduce_only_order(offline):
     eng = _eng(offline, wallet="1000")
     assert eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())

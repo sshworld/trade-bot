@@ -15,7 +15,10 @@ passed in. Single market entry, single exit: this module never splits an order.
 Skip labels: qty_zero, below_min_qty, qty_step, max_qty, below_min_notional, percent_price, tick, stop_trigger,
 bracket, margin, leverage, liq_guard, risk_cap, min_order_risk_over_cap, risk_cap_portfolio, total_risk_cap,
 filter_read_failed (engine: exchangeInfo / bracket / price read failed).
+Only these spec names are ever logged / recorded; `qty_zero` = the minimum-quantity path cannot be reached at all.
 """
+# Label policy (TA): PM-side aliases loss_cap (= min_order_risk_over_cap) and open_risk_cap (= total_risk_cap) appear in comments only,
+# never in a log line / skip record / counter. A q0 = 0 that reaches the min-qty path is min_order_risk_over_cap with `q0=0` in the detail.
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -142,11 +145,14 @@ def size_entry(rules: SymbolRules, brackets: list[dict], wallet, available, ref,
     else:
         # q0 is below the exchange minimum → the smallest allowed quantity (step-rounded UP, 2% price buffer)
         q_min = max(ceil_to(rules.min_notional / worst, step), ceil_to(lo, step))
+        if q_min <= 0:     # the minimum-quantity path cannot be reached at all (degenerate filters) → the only qty_zero
+            return Sized("qty_zero", f"q0={0 if q0 == 0 else q0}; no allowed minimum quantity (minNotional {rules.min_notional}, minQty {lo}, step {step})",
+                         q0=q0)
         loss = q_min * stop_dist + q_min * ref * (fee_rt + D(p.entry_slippage) + D(p.stop_slippage))
         loss_frac = float(loss / wallet)
         if loss_frac > p.min_order_loss_cap + 1e-12:
             return Sized("min_order_risk_over_cap",
-                         f"q0={q0}{' (qty_zero)' if q0 == 0 else ''} < exchange minimum; min qty {q_min} (minNotional {rules.min_notional}, minQty {lo}) "
+                         f"q0={0 if q0 == 0 else q0} < exchange minimum; min qty {q_min} (minNotional {rules.min_notional}, minQty {lo}) "
                          f"loses {loss:.4f} = {loss_frac:.2%} of wallet {wallet:.2f} > {p.min_order_loss_cap:.0%}",
                          q0=q0, loss_frac=loss_frac)
         path, qty = "qty_floor", q_min
