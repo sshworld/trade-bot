@@ -412,6 +412,8 @@ class Watchdog:
             self.sleep_s(c.bot_grace_poll_s)
         self.base = {"MainPID": b["MainPID"], "NRestarts": b.get("NRestarts", "0")}
         self.base_oom, self.last_ok_ms = self.probe.oom_kills(), self.now_ms()
+        if self.base_oom is None:              # no baseline → the OOM harm check would be silently off: refuse to run
+            raise Stop("cannot read the OOM-kill counter (/proc/vmstat oom_kill) at logger start")
         log.info("watchdog baseline: live bot pid %s NRestarts %s oom_kill %s", self.base["MainPID"],
                  self.base["NRestarts"], self.base_oom)
 

@@ -37,6 +37,7 @@ Stops (marker + exit 75) on **harm**:
 * the bot is not `active` for 180 s (`bot_grace_s`; polled every 5 s);
 * more than 3 clean restarts within 24 h (3 is fine, the 4th stops; counter is in memory);
 * at logger start the bot is not active after retrying for 180 s (marker + exit 75, no connection made);
+* at logger start the `oom_kill` counter cannot be read (no baseline → the OOM check would be silently off): marker + exit 75, no connection made. A single failed read while running is skipped;
 * its state can't be read 3× in a row, or 2 consecutive checks with MemAvailable < 150 MB, CPU PSI some avg60 > 40 %,
   memory PSI some avg60 > 5 % (load5 > 3 only if PSI is unavailable) — these stay active during the grace window;
 * own caps (data dir / free disk → marker + 75; RSS → exit 1, restartable).

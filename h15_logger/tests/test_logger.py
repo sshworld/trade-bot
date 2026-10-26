@@ -523,11 +523,31 @@ def test_oom_counter_rise_during_grace_also_stops():
     assert "OOM-kill" in e.value.reason
 
 
-def test_oom_unreadable_counter_is_ignored():
+def test_oom_unreadable_counter_during_operation_is_skipped_not_fatal():
+    p = FakeProbe()
+    w = wd(p)
+    p.oom = None                                        # one failed read while running: skipped
+    at(w, 30)
+    p.oom = 7
+    at(w, 30)
+    p.oom = 8                                           # ... and the check still works afterwards
+    with pytest.raises(L.Stop):
+        at(w, 30)
+
+
+def test_start_with_unreadable_oom_counter_stops_with_marker_exit_75(tmp_path):
+    """TA review 2026-10-26: no OOM baseline would silently disable the OOM harm check → refuse to run."""
     p = FakeProbe()
     p.oom = None
-    w = wd(p)
-    at(w, 30)
+    clk = Clk()
+    with pytest.raises(L.Stop) as e:
+        L.Watchdog(p, L.Caps(), now_ms=clk.now, sleep_s=clk.sleep).start()
+    assert e.value.code == L.EXIT_STOPPED == 75 and "OOM-kill counter" in e.value.reason
+
+    def connect(url):
+        raise AssertionError("must not connect without an OOM baseline")
+    lg = L.Logger(tmp_path, probe=p, connect=connect, oi=False, now_ms=clk.now, start_sleep=clk.sleep)
+    assert lg.run() == 75 and "OOM-kill counter" in (tmp_path / "STOPPED").read_text()
 
 
 def test_probe_oom_kills_parses_proc_vmstat(monkeypatch):
