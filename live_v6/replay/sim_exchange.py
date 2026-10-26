@@ -209,6 +209,10 @@ class SimExchange:
     def set_leverage(self, s, lev):
         if self.pos.get(s) is None:
             self.lev[s] = int(lev)
+        return int(lev)                                  # echo like POST /fapi/v1/leverage (e2695d9 fail-safe needs it)
+
+    def leverage(self, s):                               # GET /fapi/v1/symbolConfig read-back (healthy exchange)
+        return self.lev[s]
 
     def market(self, s, side, qty, cid, reduce_only=False):
         if cid in self.orders:

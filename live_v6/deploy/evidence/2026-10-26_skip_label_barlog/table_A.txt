@@ -1,0 +1,52 @@
+wallet 117.46733957 fetched 1792972447793
+
+== BTCUSDT price 80020.10 ATR14(4h) state 706.1004165746699 (klines-recomputed 706.1004166) sd=2xATR 1412.2008 (1.765%)
+   exch minQty 0.001 step 0.001 minNotional 50; live effective minNotional 100
+   0.5% risk qty raw 0.00041590192 -> floored 0.000 => bot result: min_notional (qty 0.000 notional 0.0000 < minQty 0.001/minNotional 100)
+   s1: qty 0.002 notional 160.0402 loss 2.8244 USDT = 2.404% (fee-incl 2.541%) | size_entry code-checks: risk_cap ; relaxed fee: OK lev 10 margin 16.004
+   s2: qty 0.001 notional 80.0201 loss 1.4122 USDT = 1.202% (fee-incl 1.270%) | size_entry code-checks: risk_cap ; relaxed fee: OK lev 10 margin 8.002
+   s1_all100: qty 0.002 notional 160.0402 loss 2.8244 USDT = 2.404% (fee-incl 2.541%) | size_entry code-checks: risk_cap ; relaxed fee: OK lev 10 margin 16.004
+
+== ETHUSDT price 2322.97 ATR14(4h) state 32.98267194152467 (klines-recomputed 32.98267194) sd=2xATR 65.965344 (2.839%)
+   exch minQty 0.001 step 0.001 minNotional 20; live effective minNotional 20
+   0.5% risk qty raw 0.0089044375 -> floored 0.008 => bot result: min_notional (qty 0.008 notional 18.5838 < minQty 0.001/minNotional 20)
+   s1: qty 0.009 notional 20.9067 loss 0.5936 USDT = 0.505% (fee-incl 0.523%) | size_entry code-checks: OK ; relaxed fee: OK lev 10 margin 2.091
+   s2: qty 0.009 notional 20.9067 loss 0.5936 USDT = 0.505% (fee-incl 0.523%) | size_entry code-checks: OK ; relaxed fee: OK lev 10 margin 2.091
+   s1_all100: qty 0.044 notional 102.2107 loss 2.9022 USDT = 2.471% (fee-incl 2.558%) | size_entry code-checks: risk_cap ; relaxed fee: OK lev 10 margin 10.221
+
+== SOLUSDT price 101.1600 ATR14(4h) state 1.5308817332454356 (klines-recomputed 1.530881733) sd=2xATR 3.0617635 (3.025%)
+   exch minQty 0.01 step 0.01 minNotional 5; live effective minNotional 5
+   0.5% risk qty raw 0.1919401 -> floored 0.19 => bot result: OK ()
+   s1: qty 0.05 notional 5.0580 loss 0.1530 USDT = 0.130% (fee-incl 0.135%) | size_entry code-checks: OK ; relaxed fee: OK lev 10 margin 0.506
+   s2: qty 0.05 notional 5.0580 loss 0.1530 USDT = 0.130% (fee-incl 0.135%) | size_entry code-checks: OK ; relaxed fee: OK lev 10 margin 0.506
+   s1_all100: qty 0.99 notional 100.1484 loss 3.0294 USDT = 2.579% (fee-incl 2.664%) | size_entry code-checks: risk_cap ; relaxed fee: OK lev 10 margin 10.015
+
+== BNBUSDT price 738.010 ATR14(4h) state 7.8860339475129715 (klines-recomputed 7.885370682) sd=2xATR 15.772068 (2.137%)
+   exch minQty 0.01 step 0.01 minNotional 5; live effective minNotional 5
+   0.5% risk qty raw 0.037243925 -> floored 0.03 => bot result: OK ()
+   s1: qty 0.01 notional 7.3801 loss 0.1577 USDT = 0.134% (fee-incl 0.141%) | size_entry code-checks: OK ; relaxed fee: OK lev 10 margin 0.738
+   s2: qty 0.01 notional 7.3801 loss 0.1577 USDT = 0.134% (fee-incl 0.141%) | size_entry code-checks: OK ; relaxed fee: OK lev 10 margin 0.738
+   s1_all100: qty 0.14 notional 103.3214 loss 2.2078 USDT = 1.880% (fee-incl 1.967%) | size_entry code-checks: risk_cap ; relaxed fee: OK lev 10 margin 10.332
+
+== XRPUSDT price 1.2944 ATR14(4h) state 0.01863626363581803 (klines-recomputed 0.01863626364) sd=2xATR 0.037272527 (2.874%)
+   exch minQty 0.1 step 0.1 minNotional 5; live effective minNotional 5
+   0.5% risk qty raw 15.788621 -> floored 15.7 => bot result: OK ()
+   s1: qty 3.9 notional 5.0482 loss 0.1451 USDT = 0.124% (fee-incl 0.128%) | size_entry code-checks: OK ; relaxed fee: OK lev 10 margin 0.505
+   s2: qty 3.9 notional 5.0482 loss 0.1451 USDT = 0.124% (fee-incl 0.128%) | size_entry code-checks: OK ; relaxed fee: OK lev 10 margin 0.505
+   s1_all100: qty 77.3 notional 100.0571 loss 2.8756 USDT = 2.448% (fee-incl 2.533%) | size_entry code-checks: risk_cap ; relaxed fee: OK lev 10 margin 10.006
+
+== DOGEUSDT price 0.076780 ATR14(4h) state 0.001289730571161304 (klines-recomputed 0.001289730571) sd=2xATR 0.0025794611 (3.347%)
+   exch minQty 1 step 1 minNotional 5; live effective minNotional 5
+   0.5% risk qty raw 228.53568 -> floored 228 => bot result: OK ()
+   s1: qty 66 notional 5.0675 loss 0.1696 USDT = 0.144% (fee-incl 0.149%) | size_entry code-checks: OK ; relaxed fee: OK lev 10 margin 0.507
+   s2: qty 66 notional 5.0675 loss 0.1696 USDT = 0.144% (fee-incl 0.149%) | size_entry code-checks: OK ; relaxed fee: OK lev 10 margin 0.507
+   s1_all100: qty 1303 notional 100.0443 loss 3.3487 USDT = 2.851% (fee-incl 2.936%) | size_entry code-checks: risk_cap ; relaxed fee: OK lev 10 margin 10.004
+
+
+===== rule-3pct (exchange minimum only, q_min only if q0 < min; q_min entries need loss+fees <= 3.0% of wallet; total risk cap 5%) =====
+BTCUSDT   q_min (q0 0.000 < exchange min)    qty 0.001 notional   80.0201 loss 1.4122 USDT = 1.202% ; incl. fees 1.270% -> ENTER (lev 10, margin 8.002)
+ETHUSDT   q_min (q0 0.008 < exchange min)    qty 0.009 notional   20.9067 loss 0.5936 USDT = 0.505% ; incl. fees 0.523% -> ENTER (lev 10, margin 2.091)
+SOLUSDT   q0 (unchanged)                     qty 0.19 notional   19.2204 loss 0.5814 USDT = 0.495% ; incl. fees 0.511% -> ENTER (lev 10, margin 1.922)
+BNBUSDT   q0 (unchanged)                     qty 0.03 notional   22.1403 loss 0.4731 USDT = 0.403% ; incl. fees 0.422% -> ENTER (lev 10, margin 2.214)
+XRPUSDT   q0 (unchanged)                     qty 15.7 notional   20.3221 loss 0.5840 USDT = 0.497% ; incl. fees 0.514% -> ENTER (lev 10, margin 2.032)
+DOGEUSDT  q0 (unchanged)                     qty 228 notional   17.5058 loss 0.5860 USDT = 0.499% ; incl. fees 0.514% -> ENTER (lev 10, margin 1.751)

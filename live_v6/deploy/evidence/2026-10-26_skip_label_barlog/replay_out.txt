@@ -1,0 +1,63 @@
+
+### A_live_floor_ON_BTC100
+ seen touches (model entries): [('BTCUSDT', '10-21 23:35:00', True), ('BNBUSDT', '10-22 01:39:00', True)]
+  ENTRY {'sym': 'BNBUSDT', 'entry': '10-22 01:39:00', 'entry_px': 751.08, 'qty': '0.04', 'notional': 30.0432, 'lev': 10, 'exit': '10-22 16:12:00', 'exit_px': 737.4984715748095, 'kind': 'stop', 'net': -0.5938}
+  SKIP {'t': '10-21 23:35:00', 'sym': 'BTCUSDT', 'reason': 'min_notional', 'detail': 'qty 0.000 notional 0.0000 < minQty 0.001/minNotional 100'}
+  wallet 116.87354825412937 halted None
+
+### B_floor_OFF_exchange_min
+ seen touches (model entries): [('BTCUSDT', '10-21 23:35:00', True), ('BNBUSDT', '10-22 01:39:00', True)]
+  ENTRY {'sym': 'BNBUSDT', 'entry': '10-22 01:39:00', 'entry_px': 751.08, 'qty': '0.04', 'notional': 30.0432, 'lev': 10, 'exit': '10-22 16:12:00', 'exit_px': 737.4984715748095, 'kind': 'stop', 'net': -0.5938}
+  SKIP {'t': '10-21 23:35:00', 'sym': 'BTCUSDT', 'reason': 'min_notional', 'detail': 'qty 0.000 notional 0.0000 < minQty 0.001/minNotional 50'}
+  wallet 116.87354825412937 halted None
+
+### A2_floor100_ALL_coins
+ seen touches (model entries): [('BTCUSDT', '10-21 23:35:00', True), ('BNBUSDT', '10-22 01:39:00', True)]
+  (no entries)
+  SKIP {'t': '10-21 23:35:00', 'sym': 'BTCUSDT', 'reason': 'min_notional', 'detail': 'qty 0.000 notional 0.0000 < minQty 0.001/minNotional 100'}
+  SKIP {'t': '10-22 01:39:00', 'sym': 'BNBUSDT', 'reason': 'min_notional', 'detail': 'qty 0.04 notional 30.0432 < minQty 0.01/minNotional 100'}
+  wallet 117.46733957 halted None
+
+### E_rule3pct_floorOFF_qmin_3pct_fee_total5pct
+ seen touches (model entries): [('BTCUSDT', '10-21 23:35:00', True), ('BNBUSDT', '10-22 01:39:00', True)]
+  ENTRY {'sym': 'BTCUSDT', 'entry': '10-21 23:35:00', 'entry_px': 84134.3, 'qty': '0.001', 'notional': 84.1343, 'lev': 10, 'exit': '10-22 15:26:00', 'exit_px': 82572.24966858658, 'kind': 'stop', 'net': -1.7081}
+  ENTRY {'sym': 'BNBUSDT', 'entry': '10-22 01:39:00', 'entry_px': 751.08, 'qty': '0.04', 'notional': 30.0432, 'lev': 10, 'exit': '10-22 16:12:00', 'exit_px': 737.4984715748095, 'kind': 'stop', 'net': -0.5938}
+  bump ('rule3_qmin', 84134.3, '0.001', 1.3297, 1.4014, 'ENTER')
+  wallet 115.16546845901436 halted None
+
+### C_hyp_bump_floorON_cap3_fee1
+ seen touches (model entries): [('BTCUSDT', '10-21 23:35:00', True), ('BNBUSDT', '10-22 01:39:00', True)]
+  ENTRY {'sym': 'BNBUSDT', 'entry': '10-22 01:39:00', 'entry_px': 751.08, 'qty': '0.04', 'notional': 30.0432, 'lev': 10, 'exit': '10-22 16:12:00', 'exit_px': 737.4984715748095, 'kind': 'stop', 'net': -0.5938}
+  SKIP {'t': '10-21 23:35:00', 'sym': 'BTCUSDT', 'reason': 'risk_cap', 'detail': 'risk incl. fees 3.2923 > 1.0% of 117.467339570'}
+  bump ('bump', 84134.3, '0.002', 2.6594626314307357, 'risk_cap')
+  wallet 116.87354825412937 halted None
+
+### D_hyp_bump_floorOFF_cap3_fee1
+ seen touches (model entries): [('BTCUSDT', '10-21 23:35:00', True), ('BNBUSDT', '10-22 01:39:00', True)]
+  ENTRY {'sym': 'BNBUSDT', 'entry': '10-22 01:39:00', 'entry_px': 751.08, 'qty': '0.04', 'notional': 30.0432, 'lev': 10, 'exit': '10-22 16:12:00', 'exit_px': 737.4984715748095, 'kind': 'stop', 'net': -0.5938}
+  SKIP {'t': '10-21 23:35:00', 'sym': 'BTCUSDT', 'reason': 'risk_cap', 'detail': 'risk incl. fees 1.6461 > 1.0% of 117.467339570'}
+  bump ('bump', 84134.3, '0.001', 1.3297313157153678, 'risk_cap')
+  wallet 116.87354825412937 halted None
+
+### C2_hyp_bump_floorON_cap3_nofee
+ seen touches (model entries): [('BTCUSDT', '10-21 23:35:00', True), ('BNBUSDT', '10-22 01:39:00', True)]
+  ENTRY {'sym': 'BNBUSDT', 'entry': '10-22 01:39:00', 'entry_px': 751.08, 'qty': '0.04', 'notional': 30.0432, 'lev': 10, 'exit': '10-22 16:12:00', 'exit_px': 737.4984715748095, 'kind': 'stop', 'net': -0.5938}
+  SKIP {'t': '10-21 23:35:00', 'sym': 'BTCUSDT', 'reason': 'risk_cap_portfolio', 'detail': 'open risk + 2.6595% > 2.5%'}
+  bump ('bump', 84134.3, '0.002', 2.6594626314307357, 'risk_cap_portfolio')
+  wallet 116.87354825412937 halted None
+
+### D2_hyp_bump_floorOFF_cap3_nofee
+ seen touches (model entries): [('BTCUSDT', '10-21 23:35:00', True), ('BNBUSDT', '10-22 01:39:00', True)]
+  ENTRY {'sym': 'BTCUSDT', 'entry': '10-21 23:35:00', 'entry_px': 84134.3, 'qty': '0.001', 'notional': 84.1343, 'lev': 10, 'exit': '10-22 15:26:00', 'exit_px': 82572.24966858658, 'kind': 'stop', 'net': -1.7081}
+  ENTRY {'sym': 'BNBUSDT', 'entry': '10-22 01:39:00', 'entry_px': 751.08, 'qty': '0.04', 'notional': 30.0432, 'lev': 10, 'exit': '10-22 16:12:00', 'exit_px': 737.4984715748095, 'kind': 'stop', 'net': -0.5938}
+  bump ('bump', 84134.3, '0.001', 1.3297313157153678, None)
+  wallet 115.16546845901436 halted None
+
+### D3_hyp_bump_floorOFF_cap1.5_nofee
+ seen touches (model entries): [('BTCUSDT', '10-21 23:35:00', True), ('BNBUSDT', '10-22 01:39:00', True)]
+  ENTRY {'sym': 'BTCUSDT', 'entry': '10-21 23:35:00', 'entry_px': 84134.3, 'qty': '0.001', 'notional': 84.1343, 'lev': 10, 'exit': '10-22 15:26:00', 'exit_px': 82572.24966858658, 'kind': 'stop', 'net': -1.7081}
+  ENTRY {'sym': 'BNBUSDT', 'entry': '10-22 01:39:00', 'entry_px': 751.08, 'qty': '0.04', 'notional': 30.0432, 'lev': 10, 'exit': '10-22 16:12:00', 'exit_px': 737.4984715748095, 'kind': 'stop', 'net': -0.5938}
+  bump ('bump', 84134.3, '0.001', 1.3297313157153678, None)
+  wallet 115.16546845901436 halted None
+pre-start touches: {'BTCUSDT': False, 'ETHUSDT': False, 'SOLUSDT': False, 'BNBUSDT': False, 'XRPUSDT': False, 'DOGEUSDT': False}
+model state: {"BTCUSDT": {"atr": 706.1004165746699, "last_open": 1792944000000, "hi55": 84875.2}, "ETHUSDT": {"atr": 32.98267194152467, "last_open": 1792944000000, "hi55": 2526.99}, "SOLUSDT": {"atr": 1.5308817332454356, "last_open": 1792944000000, "hi55": 109.18}, "BNBUSDT": {"atr": 7.88537068220685, "last_open": 1792944000000, "hi55": 752.18}, "XRPUSDT": {"atr": 0.01863626363581803, "last_open": 1792944000000, "hi55": 1.3987}, "DOGEUSDT": {"atr": 0.001289730571161304, "last_open": 1792944000000, "hi55": 0.08378}}

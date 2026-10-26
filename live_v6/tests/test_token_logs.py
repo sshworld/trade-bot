@@ -52,8 +52,9 @@ def _assert_clean(caplog, min_records=1):
 
 
 def test_runner_quiets_httpx_request_lines():
-    src = inspect.getsource(runner.run)
-    assert '("httpx", "httpcore")' in src and "setLevel(logging.WARNING)" in src
+    assert "setup_logging()" in inspect.getsource(runner.run)
+    src = inspect.getsource(runner.setup_logging)
+    assert "httpx" in runner.NOISY_LOGGERS and "httpcore" in runner.NOISY_LOGGERS and "setLevel(logging.WARNING)" in src
 
 
 @pytest.mark.parametrize("kind", KINDS)

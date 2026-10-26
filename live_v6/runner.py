@@ -112,10 +112,19 @@ def serve(eng, q, should_stop, clock=time.time, block=True, hooks=()):
         loop_once(eng, q, clock=clock, block=block, hooks=hooks)
 
 
-def run(network=None):
+NOISY_LOGGERS = ("httpx", "httpcore", "websockets")
+
+
+def setup_logging():
+    """Root handler → stderr (journald via systemd) at LIVE_V6_LOG (default INFO). The live_v6 INFO lines (bar_close, entered)
+    are the journal's low-volume heartbeat; third-party libraries stay at WARNING (per-request lines would flood it)."""
     logging.basicConfig(level=os.getenv("LIVE_V6_LOG", "INFO"), format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    for noisy in ("httpx", "httpcore"):                 # per-request "HTTP Request: ..." INFO lines flood the journal
+    for noisy in NOISY_LOGGERS:
         logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
+def run(network=None):
+    setup_logging()
     rest, eng = build(network)
     q: queue.Queue = queue.Queue()
     ws = ws_base_for(rest.base_url)

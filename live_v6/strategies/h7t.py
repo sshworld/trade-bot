@@ -140,6 +140,32 @@ class H7T(V6H7):
         b["stopped"] = True
         return True
 
+    def bar_decisions(self, T, ctx, before: dict, intents: list[dict]) -> dict:
+        """H7-T decides intrabar, so the bar-close line reports what happened in the bar that just closed (T-4h .. T)."""
+        exits = {i["sym"]: i.get("reason") for i in intents if i["type"] == "exit"}
+        skips = {}
+        for t, sym, reason, _ in ctx.meta.get("skip_log", []):
+            if T - H4 <= int(t) < T:
+                skips[sym] = reason                          # last skip of the symbol inside the bar
+        out = {}
+        for sym in ctx.cfg.symbols:
+            b = (before.get("bar") or {}).get(sym) or {}
+            was_pos = bool(((before.get("models") or {}).get(sym) or {}).get("pos"))
+            in_bar = b.get("open") == T - H4
+            if in_bar and b.get("entered"):
+                out[sym] = f"skip:{skips[sym]}" if sym in skips else "entered"
+                if b.get("stopped"):
+                    out[sym] += "+stopped"
+            elif in_bar and b.get("missed"):
+                out[sym] = "skip:missed"
+            elif sym in exits:
+                out[sym] = f"exit:{exits[sym]}"
+            elif was_pos:
+                out[sym] = "in_position"
+            else:
+                out[sym] = "no_signal"
+        return out
+
     def on_bar_close(self, T, ctx, force=False):
         new = {}
         for sym in ctx.cfg.symbols:

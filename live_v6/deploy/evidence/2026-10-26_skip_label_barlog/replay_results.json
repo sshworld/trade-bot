@@ -1,0 +1,770 @@
+{
+ "A_live_floor_ON_BTC100": {
+  "entries": [
+   {
+    "sym": "BNBUSDT",
+    "entry": "10-22 01:39:00",
+    "entry_px": 751.08,
+    "qty": "0.04",
+    "notional": 30.0432,
+    "lev": 10,
+    "exit": "10-22 16:12:00",
+    "exit_px": 737.4984715748095,
+    "kind": "stop",
+    "net": -0.5938
+   }
+  ],
+  "skips": [
+   {
+    "t": "10-21 23:35:00",
+    "sym": "BTCUSDT",
+    "reason": "min_notional",
+    "detail": "qty 0.000 notional 0.0000 < minQty 0.001/minNotional 100"
+   }
+  ],
+  "pre_start_touch": {
+   "BTCUSDT": false,
+   "ETHUSDT": false,
+   "SOLUSDT": false,
+   "BNBUSDT": false,
+   "XRPUSDT": false,
+   "DOGEUSDT": false
+  },
+  "seen": [
+   [
+    "BTCUSDT",
+    "10-21 23:35:00",
+    true
+   ],
+   [
+    "BNBUSDT",
+    "10-22 01:39:00",
+    true
+   ]
+  ],
+  "bump_log": [],
+  "final_wallet": 116.87354825412937,
+  "halted": null,
+  "model_state": {
+   "BTCUSDT": {
+    "atr": 706.1004165746699,
+    "last_open": 1792944000000,
+    "hi55": 84875.2
+   },
+   "ETHUSDT": {
+    "atr": 32.98267194152467,
+    "last_open": 1792944000000,
+    "hi55": 2526.99
+   },
+   "SOLUSDT": {
+    "atr": 1.5308817332454356,
+    "last_open": 1792944000000,
+    "hi55": 109.18
+   },
+   "BNBUSDT": {
+    "atr": 7.88537068220685,
+    "last_open": 1792944000000,
+    "hi55": 752.18
+   },
+   "XRPUSDT": {
+    "atr": 0.01863626363581803,
+    "last_open": 1792944000000,
+    "hi55": 1.3987
+   },
+   "DOGEUSDT": {
+    "atr": 0.001289730571161304,
+    "last_open": 1792944000000,
+    "hi55": 0.08378
+   }
+  }
+ },
+ "B_floor_OFF_exchange_min": {
+  "entries": [
+   {
+    "sym": "BNBUSDT",
+    "entry": "10-22 01:39:00",
+    "entry_px": 751.08,
+    "qty": "0.04",
+    "notional": 30.0432,
+    "lev": 10,
+    "exit": "10-22 16:12:00",
+    "exit_px": 737.4984715748095,
+    "kind": "stop",
+    "net": -0.5938
+   }
+  ],
+  "skips": [
+   {
+    "t": "10-21 23:35:00",
+    "sym": "BTCUSDT",
+    "reason": "min_notional",
+    "detail": "qty 0.000 notional 0.0000 < minQty 0.001/minNotional 50"
+   }
+  ],
+  "pre_start_touch": {
+   "BTCUSDT": false,
+   "ETHUSDT": false,
+   "SOLUSDT": false,
+   "BNBUSDT": false,
+   "XRPUSDT": false,
+   "DOGEUSDT": false
+  },
+  "seen": [
+   [
+    "BTCUSDT",
+    "10-21 23:35:00",
+    true
+   ],
+   [
+    "BNBUSDT",
+    "10-22 01:39:00",
+    true
+   ]
+  ],
+  "bump_log": [],
+  "final_wallet": 116.87354825412937,
+  "halted": null,
+  "model_state": {
+   "BTCUSDT": {
+    "atr": 706.1004165746699,
+    "last_open": 1792944000000,
+    "hi55": 84875.2
+   },
+   "ETHUSDT": {
+    "atr": 32.98267194152467,
+    "last_open": 1792944000000,
+    "hi55": 2526.99
+   },
+   "SOLUSDT": {
+    "atr": 1.5308817332454356,
+    "last_open": 1792944000000,
+    "hi55": 109.18
+   },
+   "BNBUSDT": {
+    "atr": 7.88537068220685,
+    "last_open": 1792944000000,
+    "hi55": 752.18
+   },
+   "XRPUSDT": {
+    "atr": 0.01863626363581803,
+    "last_open": 1792944000000,
+    "hi55": 1.3987
+   },
+   "DOGEUSDT": {
+    "atr": 0.001289730571161304,
+    "last_open": 1792944000000,
+    "hi55": 0.08378
+   }
+  }
+ },
+ "A2_floor100_ALL_coins": {
+  "entries": [],
+  "skips": [
+   {
+    "t": "10-21 23:35:00",
+    "sym": "BTCUSDT",
+    "reason": "min_notional",
+    "detail": "qty 0.000 notional 0.0000 < minQty 0.001/minNotional 100"
+   },
+   {
+    "t": "10-22 01:39:00",
+    "sym": "BNBUSDT",
+    "reason": "min_notional",
+    "detail": "qty 0.04 notional 30.0432 < minQty 0.01/minNotional 100"
+   }
+  ],
+  "pre_start_touch": {
+   "BTCUSDT": false,
+   "ETHUSDT": false,
+   "SOLUSDT": false,
+   "BNBUSDT": false,
+   "XRPUSDT": false,
+   "DOGEUSDT": false
+  },
+  "seen": [
+   [
+    "BTCUSDT",
+    "10-21 23:35:00",
+    true
+   ],
+   [
+    "BNBUSDT",
+    "10-22 01:39:00",
+    true
+   ]
+  ],
+  "bump_log": [],
+  "final_wallet": 117.46733957,
+  "halted": null,
+  "model_state": {
+   "BTCUSDT": {
+    "atr": 706.1004165746699,
+    "last_open": 1792944000000,
+    "hi55": 84875.2
+   },
+   "ETHUSDT": {
+    "atr": 32.98267194152467,
+    "last_open": 1792944000000,
+    "hi55": 2526.99
+   },
+   "SOLUSDT": {
+    "atr": 1.5308817332454356,
+    "last_open": 1792944000000,
+    "hi55": 109.18
+   },
+   "BNBUSDT": {
+    "atr": 7.88537068220685,
+    "last_open": 1792944000000,
+    "hi55": 752.18
+   },
+   "XRPUSDT": {
+    "atr": 0.01863626363581803,
+    "last_open": 1792944000000,
+    "hi55": 1.3987
+   },
+   "DOGEUSDT": {
+    "atr": 0.001289730571161304,
+    "last_open": 1792944000000,
+    "hi55": 0.08378
+   }
+  }
+ },
+ "E_rule3pct_floorOFF_qmin_3pct_fee_total5pct": {
+  "entries": [
+   {
+    "sym": "BTCUSDT",
+    "entry": "10-21 23:35:00",
+    "entry_px": 84134.3,
+    "qty": "0.001",
+    "notional": 84.1343,
+    "lev": 10,
+    "exit": "10-22 15:26:00",
+    "exit_px": 82572.24966858658,
+    "kind": "stop",
+    "net": -1.7081
+   },
+   {
+    "sym": "BNBUSDT",
+    "entry": "10-22 01:39:00",
+    "entry_px": 751.08,
+    "qty": "0.04",
+    "notional": 30.0432,
+    "lev": 10,
+    "exit": "10-22 16:12:00",
+    "exit_px": 737.4984715748095,
+    "kind": "stop",
+    "net": -0.5938
+   }
+  ],
+  "skips": [],
+  "pre_start_touch": {
+   "BTCUSDT": false,
+   "ETHUSDT": false,
+   "SOLUSDT": false,
+   "BNBUSDT": false,
+   "XRPUSDT": false,
+   "DOGEUSDT": false
+  },
+  "seen": [
+   [
+    "BTCUSDT",
+    "10-21 23:35:00",
+    true
+   ],
+   [
+    "BNBUSDT",
+    "10-22 01:39:00",
+    true
+   ]
+  ],
+  "bump_log": [
+   [
+    "rule3_qmin",
+    84134.3,
+    "0.001",
+    1.3297,
+    1.4014,
+    "ENTER"
+   ]
+  ],
+  "final_wallet": 115.16546845901436,
+  "halted": null,
+  "model_state": {
+   "BTCUSDT": {
+    "atr": 706.1004165746699,
+    "last_open": 1792944000000,
+    "hi55": 84875.2
+   },
+   "ETHUSDT": {
+    "atr": 32.98267194152467,
+    "last_open": 1792944000000,
+    "hi55": 2526.99
+   },
+   "SOLUSDT": {
+    "atr": 1.5308817332454356,
+    "last_open": 1792944000000,
+    "hi55": 109.18
+   },
+   "BNBUSDT": {
+    "atr": 7.88537068220685,
+    "last_open": 1792944000000,
+    "hi55": 752.18
+   },
+   "XRPUSDT": {
+    "atr": 0.01863626363581803,
+    "last_open": 1792944000000,
+    "hi55": 1.3987
+   },
+   "DOGEUSDT": {
+    "atr": 0.001289730571161304,
+    "last_open": 1792944000000,
+    "hi55": 0.08378
+   }
+  }
+ },
+ "C_hyp_bump_floorON_cap3_fee1": {
+  "entries": [
+   {
+    "sym": "BNBUSDT",
+    "entry": "10-22 01:39:00",
+    "entry_px": 751.08,
+    "qty": "0.04",
+    "notional": 30.0432,
+    "lev": 10,
+    "exit": "10-22 16:12:00",
+    "exit_px": 737.4984715748095,
+    "kind": "stop",
+    "net": -0.5938
+   }
+  ],
+  "skips": [
+   {
+    "t": "10-21 23:35:00",
+    "sym": "BTCUSDT",
+    "reason": "risk_cap",
+    "detail": "risk incl. fees 3.2923 > 1.0% of 117.467339570"
+   }
+  ],
+  "pre_start_touch": {
+   "BTCUSDT": false,
+   "ETHUSDT": false,
+   "SOLUSDT": false,
+   "BNBUSDT": false,
+   "XRPUSDT": false,
+   "DOGEUSDT": false
+  },
+  "seen": [
+   [
+    "BTCUSDT",
+    "10-21 23:35:00",
+    true
+   ],
+   [
+    "BNBUSDT",
+    "10-22 01:39:00",
+    true
+   ]
+  ],
+  "bump_log": [
+   [
+    "bump",
+    84134.3,
+    "0.002",
+    2.6594626314307357,
+    "risk_cap"
+   ]
+  ],
+  "final_wallet": 116.87354825412937,
+  "halted": null,
+  "model_state": {
+   "BTCUSDT": {
+    "atr": 706.1004165746699,
+    "last_open": 1792944000000,
+    "hi55": 84875.2
+   },
+   "ETHUSDT": {
+    "atr": 32.98267194152467,
+    "last_open": 1792944000000,
+    "hi55": 2526.99
+   },
+   "SOLUSDT": {
+    "atr": 1.5308817332454356,
+    "last_open": 1792944000000,
+    "hi55": 109.18
+   },
+   "BNBUSDT": {
+    "atr": 7.88537068220685,
+    "last_open": 1792944000000,
+    "hi55": 752.18
+   },
+   "XRPUSDT": {
+    "atr": 0.01863626363581803,
+    "last_open": 1792944000000,
+    "hi55": 1.3987
+   },
+   "DOGEUSDT": {
+    "atr": 0.001289730571161304,
+    "last_open": 1792944000000,
+    "hi55": 0.08378
+   }
+  }
+ },
+ "D_hyp_bump_floorOFF_cap3_fee1": {
+  "entries": [
+   {
+    "sym": "BNBUSDT",
+    "entry": "10-22 01:39:00",
+    "entry_px": 751.08,
+    "qty": "0.04",
+    "notional": 30.0432,
+    "lev": 10,
+    "exit": "10-22 16:12:00",
+    "exit_px": 737.4984715748095,
+    "kind": "stop",
+    "net": -0.5938
+   }
+  ],
+  "skips": [
+   {
+    "t": "10-21 23:35:00",
+    "sym": "BTCUSDT",
+    "reason": "risk_cap",
+    "detail": "risk incl. fees 1.6461 > 1.0% of 117.467339570"
+   }
+  ],
+  "pre_start_touch": {
+   "BTCUSDT": false,
+   "ETHUSDT": false,
+   "SOLUSDT": false,
+   "BNBUSDT": false,
+   "XRPUSDT": false,
+   "DOGEUSDT": false
+  },
+  "seen": [
+   [
+    "BTCUSDT",
+    "10-21 23:35:00",
+    true
+   ],
+   [
+    "BNBUSDT",
+    "10-22 01:39:00",
+    true
+   ]
+  ],
+  "bump_log": [
+   [
+    "bump",
+    84134.3,
+    "0.001",
+    1.3297313157153678,
+    "risk_cap"
+   ]
+  ],
+  "final_wallet": 116.87354825412937,
+  "halted": null,
+  "model_state": {
+   "BTCUSDT": {
+    "atr": 706.1004165746699,
+    "last_open": 1792944000000,
+    "hi55": 84875.2
+   },
+   "ETHUSDT": {
+    "atr": 32.98267194152467,
+    "last_open": 1792944000000,
+    "hi55": 2526.99
+   },
+   "SOLUSDT": {
+    "atr": 1.5308817332454356,
+    "last_open": 1792944000000,
+    "hi55": 109.18
+   },
+   "BNBUSDT": {
+    "atr": 7.88537068220685,
+    "last_open": 1792944000000,
+    "hi55": 752.18
+   },
+   "XRPUSDT": {
+    "atr": 0.01863626363581803,
+    "last_open": 1792944000000,
+    "hi55": 1.3987
+   },
+   "DOGEUSDT": {
+    "atr": 0.001289730571161304,
+    "last_open": 1792944000000,
+    "hi55": 0.08378
+   }
+  }
+ },
+ "C2_hyp_bump_floorON_cap3_nofee": {
+  "entries": [
+   {
+    "sym": "BNBUSDT",
+    "entry": "10-22 01:39:00",
+    "entry_px": 751.08,
+    "qty": "0.04",
+    "notional": 30.0432,
+    "lev": 10,
+    "exit": "10-22 16:12:00",
+    "exit_px": 737.4984715748095,
+    "kind": "stop",
+    "net": -0.5938
+   }
+  ],
+  "skips": [
+   {
+    "t": "10-21 23:35:00",
+    "sym": "BTCUSDT",
+    "reason": "risk_cap_portfolio",
+    "detail": "open risk + 2.6595% > 2.5%"
+   }
+  ],
+  "pre_start_touch": {
+   "BTCUSDT": false,
+   "ETHUSDT": false,
+   "SOLUSDT": false,
+   "BNBUSDT": false,
+   "XRPUSDT": false,
+   "DOGEUSDT": false
+  },
+  "seen": [
+   [
+    "BTCUSDT",
+    "10-21 23:35:00",
+    true
+   ],
+   [
+    "BNBUSDT",
+    "10-22 01:39:00",
+    true
+   ]
+  ],
+  "bump_log": [
+   [
+    "bump",
+    84134.3,
+    "0.002",
+    2.6594626314307357,
+    "risk_cap_portfolio"
+   ]
+  ],
+  "final_wallet": 116.87354825412937,
+  "halted": null,
+  "model_state": {
+   "BTCUSDT": {
+    "atr": 706.1004165746699,
+    "last_open": 1792944000000,
+    "hi55": 84875.2
+   },
+   "ETHUSDT": {
+    "atr": 32.98267194152467,
+    "last_open": 1792944000000,
+    "hi55": 2526.99
+   },
+   "SOLUSDT": {
+    "atr": 1.5308817332454356,
+    "last_open": 1792944000000,
+    "hi55": 109.18
+   },
+   "BNBUSDT": {
+    "atr": 7.88537068220685,
+    "last_open": 1792944000000,
+    "hi55": 752.18
+   },
+   "XRPUSDT": {
+    "atr": 0.01863626363581803,
+    "last_open": 1792944000000,
+    "hi55": 1.3987
+   },
+   "DOGEUSDT": {
+    "atr": 0.001289730571161304,
+    "last_open": 1792944000000,
+    "hi55": 0.08378
+   }
+  }
+ },
+ "D2_hyp_bump_floorOFF_cap3_nofee": {
+  "entries": [
+   {
+    "sym": "BTCUSDT",
+    "entry": "10-21 23:35:00",
+    "entry_px": 84134.3,
+    "qty": "0.001",
+    "notional": 84.1343,
+    "lev": 10,
+    "exit": "10-22 15:26:00",
+    "exit_px": 82572.24966858658,
+    "kind": "stop",
+    "net": -1.7081
+   },
+   {
+    "sym": "BNBUSDT",
+    "entry": "10-22 01:39:00",
+    "entry_px": 751.08,
+    "qty": "0.04",
+    "notional": 30.0432,
+    "lev": 10,
+    "exit": "10-22 16:12:00",
+    "exit_px": 737.4984715748095,
+    "kind": "stop",
+    "net": -0.5938
+   }
+  ],
+  "skips": [],
+  "pre_start_touch": {
+   "BTCUSDT": false,
+   "ETHUSDT": false,
+   "SOLUSDT": false,
+   "BNBUSDT": false,
+   "XRPUSDT": false,
+   "DOGEUSDT": false
+  },
+  "seen": [
+   [
+    "BTCUSDT",
+    "10-21 23:35:00",
+    true
+   ],
+   [
+    "BNBUSDT",
+    "10-22 01:39:00",
+    true
+   ]
+  ],
+  "bump_log": [
+   [
+    "bump",
+    84134.3,
+    "0.001",
+    1.3297313157153678,
+    null
+   ]
+  ],
+  "final_wallet": 115.16546845901436,
+  "halted": null,
+  "model_state": {
+   "BTCUSDT": {
+    "atr": 706.1004165746699,
+    "last_open": 1792944000000,
+    "hi55": 84875.2
+   },
+   "ETHUSDT": {
+    "atr": 32.98267194152467,
+    "last_open": 1792944000000,
+    "hi55": 2526.99
+   },
+   "SOLUSDT": {
+    "atr": 1.5308817332454356,
+    "last_open": 1792944000000,
+    "hi55": 109.18
+   },
+   "BNBUSDT": {
+    "atr": 7.88537068220685,
+    "last_open": 1792944000000,
+    "hi55": 752.18
+   },
+   "XRPUSDT": {
+    "atr": 0.01863626363581803,
+    "last_open": 1792944000000,
+    "hi55": 1.3987
+   },
+   "DOGEUSDT": {
+    "atr": 0.001289730571161304,
+    "last_open": 1792944000000,
+    "hi55": 0.08378
+   }
+  }
+ },
+ "D3_hyp_bump_floorOFF_cap1.5_nofee": {
+  "entries": [
+   {
+    "sym": "BTCUSDT",
+    "entry": "10-21 23:35:00",
+    "entry_px": 84134.3,
+    "qty": "0.001",
+    "notional": 84.1343,
+    "lev": 10,
+    "exit": "10-22 15:26:00",
+    "exit_px": 82572.24966858658,
+    "kind": "stop",
+    "net": -1.7081
+   },
+   {
+    "sym": "BNBUSDT",
+    "entry": "10-22 01:39:00",
+    "entry_px": 751.08,
+    "qty": "0.04",
+    "notional": 30.0432,
+    "lev": 10,
+    "exit": "10-22 16:12:00",
+    "exit_px": 737.4984715748095,
+    "kind": "stop",
+    "net": -0.5938
+   }
+  ],
+  "skips": [],
+  "pre_start_touch": {
+   "BTCUSDT": false,
+   "ETHUSDT": false,
+   "SOLUSDT": false,
+   "BNBUSDT": false,
+   "XRPUSDT": false,
+   "DOGEUSDT": false
+  },
+  "seen": [
+   [
+    "BTCUSDT",
+    "10-21 23:35:00",
+    true
+   ],
+   [
+    "BNBUSDT",
+    "10-22 01:39:00",
+    true
+   ]
+  ],
+  "bump_log": [
+   [
+    "bump",
+    84134.3,
+    "0.001",
+    1.3297313157153678,
+    null
+   ]
+  ],
+  "final_wallet": 115.16546845901436,
+  "halted": null,
+  "model_state": {
+   "BTCUSDT": {
+    "atr": 706.1004165746699,
+    "last_open": 1792944000000,
+    "hi55": 84875.2
+   },
+   "ETHUSDT": {
+    "atr": 32.98267194152467,
+    "last_open": 1792944000000,
+    "hi55": 2526.99
+   },
+   "SOLUSDT": {
+    "atr": 1.5308817332454356,
+    "last_open": 1792944000000,
+    "hi55": 109.18
+   },
+   "BNBUSDT": {
+    "atr": 7.88537068220685,
+    "last_open": 1792944000000,
+    "hi55": 752.18
+   },
+   "XRPUSDT": {
+    "atr": 0.01863626363581803,
+    "last_open": 1792944000000,
+    "hi55": 1.3987
+   },
+   "DOGEUSDT": {
+    "atr": 0.001289730571161304,
+    "last_open": 1792944000000,
+    "hi55": 0.08378
+   }
+  }
+ }
+}

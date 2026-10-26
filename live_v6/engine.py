@@ -399,7 +399,20 @@ class V6Engine:
         self.meta["last_bar_close"] = T
         self._bar_first_try.pop(T, None)
         self.save()
+        self._log_bar_close(T, before, intents)
         self.execute(intents, T)
+
+    def _log_bar_close(self, T, before, intents):
+        """One INFO line per completed 4h bar per model: bar open (KST), then symbol=decision (no keys / account data)."""
+        if not callable(getattr(self.strategy, "bar_decisions", None)):
+            return
+        try:
+            dec = self.strategy.bar_decisions(T, self, before, intents)
+            t_open = datetime.fromtimestamp((T - H4) / 1000, KST).strftime("%Y-%m-%d %H:%M")
+            log.info("bar_close model=%s bar_open=%s KST %s", self.strategy.name, t_open,
+                     " ".join(f"{s}={dec.get(s, 'no_signal')}" for s in self.cfg.symbols))
+        except Exception:  # noqa: BLE001  logging must never break the trading loop
+            log.exception("bar_close log failed")
 
     def execute(self, intents, T=None):
         """Run strategy intents. Exits always; entries only inside the act window and trading period."""
@@ -754,6 +767,8 @@ class V6Engine:
         self.notify(f"🟢 진입 {sym} 롱 · 수량 {j['qty']} · 체결가 {j['entry_px']}{part}\n"
                      f"손절 {j['stop_px']} · {sz.lev}x · 위험 {D(j['risk_usdt']):.4f} USDT ({sz.risk_pct_used}%)",
                      kind="entry", event_ms=intent.get("model_id") or intent.get("T"))
+        log.info("entered %s long qty %s fill %s stop %s lev %sx risk %s USDT (%s%%)", sym, j["qty"], j["entry_px"], j["stop_px"],
+                 sz.lev, f"{D(j['risk_usdt']):.4f}", sz.risk_pct_used)
         self._slippage_monitor(sym, j, intent)
         return True
 

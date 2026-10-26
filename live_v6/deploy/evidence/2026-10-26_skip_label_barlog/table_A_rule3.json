@@ -1,0 +1,74 @@
+[
+ {
+  "sym": "BTCUSDT",
+  "path": "q_min (q0 0.000 < exchange min)",
+  "qty": "0.001",
+  "notional": 80.0201,
+  "loss": 1.4122,
+  "loss_pct": 1.2022065070763397,
+  "loss_fee_pct": 1.2703276548719065,
+  "lev": 10,
+  "margin": 8.00201,
+  "verdict": "ENTER"
+ },
+ {
+  "sym": "ETHUSDT",
+  "path": "q_min (q0 0.008 < exchange min)",
+  "qty": "0.009",
+  "notional": 20.90673,
+  "loss": 0.59364,
+  "loss_pct": 0.5053660040084962,
+  "loss_fee_pct": 0.5231639128370531,
+  "lev": 10,
+  "margin": 2.090673,
+  "verdict": "ENTER"
+ },
+ {
+  "sym": "SOLUSDT",
+  "path": "q0 (unchanged)",
+  "qty": "0.19",
+  "notional": 19.2204,
+  "loss": 0.5814,
+  "loss_pct": 0.49494608640007354,
+  "loss_fee_pct": 0.5113084217269466,
+  "lev": 10,
+  "margin": 1.92204,
+  "verdict": "ENTER"
+ },
+ {
+  "sym": "BNBUSDT",
+  "path": "q0 (unchanged)",
+  "qty": "0.03",
+  "notional": 22.1403,
+  "loss": 0.4731,
+  "loss_pct": 0.40275024677653043,
+  "loss_fee_pct": 0.4215982943113147,
+  "lev": 10,
+  "margin": 2.21403,
+  "verdict": "ENTER"
+ },
+ {
+  "sym": "XRPUSDT",
+  "path": "q0 (unchanged)",
+  "qty": "15.7",
+  "notional": 20.32208,
+  "loss": 0.58404,
+  "loss_pct": 0.49719351960973335,
+  "loss_fee_pct": 0.514493715625401,
+  "lev": 10,
+  "margin": 2.032208,
+  "verdict": "ENTER"
+ },
+ {
+  "sym": "DOGEUSDT",
+  "path": "q0 (unchanged)",
+  "qty": "228",
+  "notional": 17.50584,
+  "loss": 0.58596,
+  "loss_pct": 0.4988280164894859,
+  "loss_fee_pct": 0.5137307461027398,
+  "lev": 10,
+  "margin": 1.750584,
+  "verdict": "ENTER"
+ }
+]

@@ -68,5 +68,20 @@ class Strategy:
     def stop_hint(self, sym):
         return None
 
+    def bar_decisions(self, T, ctx, before: dict, intents: list[dict]) -> dict:
+        """One-word decision per symbol for the 4h bar that closed at T (logged by the engine at INFO):
+        entered / skip:<reason> / exit:<reason> / in_position / no_signal. `before` = strategy state before the step."""
+        by = {i["sym"]: i for i in intents}
+        out = {}
+        for sym in ctx.cfg.symbols:
+            it = by.get(sym)
+            if it is not None:
+                out[sym] = ("entered" if it["type"] == "enter" else
+                            f"skip:{it.get('reason')}" if it["type"] == "skip" else f"exit:{it.get('reason')}")
+            else:
+                m = (self.state.get("models") or {}).get(sym) or {}
+                out[sym] = "in_position" if m.get("pos") else "no_signal"
+        return out
+
     def exit_line(self, sym, side: int):
         return None

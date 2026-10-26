@@ -4,6 +4,8 @@ Arithmetic = live_v1 engine `_enter` (b9f2c84, lines 678-724), which the v6 back
 (research/v6_sizing.live_enter) and verified on 1,200 random cases. Portfolio rules = research/v6.py `portfolio`:
   * risk 0.5% of wallet; 0.25% when ≥3 positions on the same side are already open (v2 §4 / H4 halving rule)
   * open-risk cap: Σ risk of open positions + new ≤ 2.5% of wallet, else skip `risk_cap_portfolio`
+Skip labels: `qty_zero` = qty is 0 after step rounding (risk budget too small for one step); `min_notional` = qty > 0
+but qty < exchange min qty or notional < min notional / the bot's floor.
 """
 from __future__ import annotations
 
@@ -57,6 +59,9 @@ def size_entry(rules: SymbolRules, brackets: list[dict], wallet, available, ref,
     notional = qty * ref
     if qty * risk_dist > risk_usdt:
         return Sized("risk_cap", f"risk {qty * risk_dist} > {risk_usdt}")
+    if qty <= 0:                                  # risk budget / stop distance rounds to 0 steps: not a notional problem
+        return Sized("qty_zero", f"qty 0 after step {rules.step_size} rounding (risk {risk_usdt:.4f} / stop distance "
+                                 f"{risk_dist} = {risk_usdt / risk_dist:.8f}); exchange min qty {rules.min_qty}")
     if qty < rules.min_qty or notional < rules.min_notional:
         return Sized("min_notional", f"qty {qty} notional {notional:.4f} < minQty {rules.min_qty}/minNotional {rules.min_notional}")
     br = bracket_for(brackets, notional)

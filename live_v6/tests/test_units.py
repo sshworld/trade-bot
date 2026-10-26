@@ -112,7 +112,8 @@ def test_stop_rounded_toward_entry_and_qty_floor():
 
 def test_skip_order_and_reasons():
     r = RULES["BTCUSDT"]
-    assert size_entry(r, BR, 100, 100, 60000, 1200).skip == "min_notional"            # BTC floor 100
+    assert size_entry(r, BR, 100, 100, 60000, 1200).skip == "qty_zero"                # 0.4166e-3 → 0 steps (was "min_notional")
+    assert size_entry(r, BR, 300, 300, 60000, 1200).skip == "min_notional"            # qty 0.001 = 60 USDT < BTC floor 100
     assert size_entry(RULES["DOGEUSDT"], BR, 1000, 1, Decimal("0.15"), Decimal("0.0045")).skip == "margin"
     full = [{"side": 1, "risk_frac": 0.01}, {"side": 1, "risk_frac": 0.012}]
     assert size_entry(RULES["DOGEUSDT"], BR, 1000, 1000, Decimal("0.15"), Decimal("0.0045"), 1, full).skip == "risk_cap_portfolio"
