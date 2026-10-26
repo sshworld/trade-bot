@@ -1,0 +1,609 @@
+{
+ "results": [
+  {
+   "case": "4 read path: BinanceREST.mark_price + fresh exchangeInfo/brackets/book/account",
+   "expect": "real reads",
+   "ok": true,
+   "error": null,
+   "flat_after": true,
+   "info": {
+    "mark_price": "0.20387226",
+    "mark_type": "Decimal",
+    "book": "0.20380/0.20390",
+    "tick": "0.0001",
+    "step": "1",
+    "minQty": "1",
+    "minNotional": "5",
+    "mkt_max": "10000000",
+    "pct": "0.9500..1.0500",
+    "brackets": 8,
+    "bracket0": {
+     "floor": 0.0,
+     "cap": 10000.0,
+     "mmr": 0.0065,
+     "max_lev": 75
+    },
+    "wallet": "4557.93485367",
+    "available": "4557.93485367",
+    "engine_fresh_calls": [
+     "exchange_info",
+     "brackets",
+     "book",
+     "mark_price",
+     "account"
+    ],
+    "engine_sized": {
+     "qty": "3736",
+     "path": "q0",
+     "lev": 10
+    }
+   },
+   "log": []
+  },
+  {
+   "case": "1 min-qty entry (qty_floor) → full sequence → full exit",
+   "expect": "entered, stop live, then flat",
+   "ok": true,
+   "error": null,
+   "flat_after": true,
+   "info": {
+    "qty": "26",
+    "notional": "5.3014",
+    "entry_px": "0.20390",
+    "stop_px": "0.1978",
+    "lev": 10,
+    "stop_loss_usdt": "0.1586",
+    "loss_incl_fees_slip_usdt": "0.1692",
+    "loss_pct_wallet": "1.692%",
+    "wallet": "10",
+    "fresh": {
+     "ref": "0.20390",
+     "mark": "0.20402070",
+     "minNotional": "5",
+     "minQty": "1",
+     "step": "1",
+     "brackets0": {
+      "floor": 0.0,
+      "cap": 10000.0,
+      "mmr": 0.0065,
+      "max_lev": 75
+     },
+     "q_min": "26",
+     "notional": "5.30140",
+     "loss_usdt": "0.1692",
+     "loss_pct_wallet": "1.692%"
+    },
+    "calls_in_order": [
+     "positions",
+     "open_orders",
+     "exchange_info",
+     "brackets",
+     "book",
+     "mark_price",
+     "account",
+     "positions",
+     "exchange_info",
+     "brackets",
+     "book",
+     "mark_price",
+     "account",
+     "stop",
+     "get_order",
+     "market",
+     "stop",
+     "open_orders",
+     "cancel",
+     "positions"
+    ],
+    "qty_floor_log": "INFO live_v6.engine: qty_floor ADAUSDT: q0 8 < 거래소 최소 → 최소수량 26 · 손절+수수료+슬리피지 위험 1.68% (지갑 대비, 한도 3%)",
+    "entered_log": "INFO live_v6.engine: entered ADAUSDT long qty 26 fill 0.20390 stop 0.1978 lev 10x risk 0.1586 USDT (0.5%)",
+    "alerts_records": 2,
+    "after_exit": {
+     "positions": {},
+     "orders": {}
+    }
+   },
+   "log": [
+    "INFO httpx: HTTP Request: POST https://testnet.binancefuture.com/fapi/v1/algoOrder?algoType=CONDITIONAL&symbol=ADAUSDT&side=SELL&type=STOP_MARKET&triggerPrice=0.1978&workingType=MARK_PRICE&clientAlgoId=v6tADA1792977867s0&closePosition=true&timestamp=1792977872541&recvWindow=10000&signature=<redacted> \"HTTP/1.1 200 OK\"",
+    "INFO live_v6.engine: qty_floor ADAUSDT: q0 8 < 거래소 최소 → 최소수량 26 · 손절+수수료+슬리피지 위험 1.68% (지갑 대비, 한도 3%)",
+    "WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🟢 진입 ADAUSDT 롱 · 수량 26 · 체결가 0.20390\n⚠️ qty_floor ADAUSDT: q0 8 < 거래소 최소 → 최소수량 26 · 손절+수수료+슬리피지 위험 1.68% (지갑 대비, 한도 3%)\n손절 0.1978 · 10x · 위험 0.1586 USDT (0.5%)",
+    "INFO live_v6.engine: entered ADAUSDT long qty 26 fill 0.20390 stop 0.1978 lev 10x risk 0.1586 USDT (0.5%)"
+   ]
+  },
+  {
+   "case": "2a skip: tiny wallet (2 USDT) → min_order_risk_over_cap",
+   "expect": "no order",
+   "ok": true,
+   "error": null,
+   "flat_after": true,
+   "info": {
+    "wallet": "2",
+    "stop_dist": "0.0061",
+    "skip": "min_order_risk_over_cap",
+    "detail": "q0=1 < exchange minimum; min qty 26 (minNotional 5, minQty 1) loses 0.1676 = 8.38% of wallet 2.00 > 3%",
+    "calls": [
+     "positions",
+     "open_orders",
+     "exchange_info",
+     "brackets",
+     "book",
+     "mark_price",
+     "account"
+    ],
+    "fresh": {
+     "ref": "0.20390",
+     "mark": "0.20420950",
+     "minNotional": "5",
+     "minQty": "1",
+     "step": "1",
+     "brackets0": {
+      "floor": 0.0,
+      "cap": 10000.0,
+      "mmr": 0.0065,
+      "max_lev": 75
+     },
+     "q_min": "26",
+     "notional": "5.30140",
+     "loss_usdt": "0.1692",
+     "loss_pct_wallet": "8.460%"
+    }
+   },
+   "log": [
+    "WARNING live_v6.engine: skip ADAUSDT min_order_risk_over_cap: q0=1 < exchange minimum; min qty 26 (minNotional 5, minQty 1) loses 0.1676 = 8.38% of wallet 2.00 > 3%"
+   ]
+  },
+  {
+   "case": "2b skip: high ATR (stop 30% of price, wallet 10) → min_order_risk_over_cap",
+   "expect": "no order",
+   "ok": true,
+   "error": null,
+   "flat_after": true,
+   "info": {
+    "wallet": "10",
+    "stop_dist": "0.0612",
+    "skip": "min_order_risk_over_cap",
+    "detail": "q0=0 < exchange minimum; min qty 26 (minNotional 5, minQty 1) loses 1.6002 = 16.00% of wallet 10.00 > 3%",
+    "calls": [
+     "positions",
+     "open_orders",
+     "exchange_info",
+     "brackets",
+     "book",
+     "mark_price",
+     "account"
+    ],
+    "fresh": {
+     "ref": "0.20400",
+     "mark": "0.20405985",
+     "minNotional": "5",
+     "minQty": "1",
+     "step": "1",
+     "brackets0": {
+      "floor": 0.0,
+      "cap": 10000.0,
+      "mmr": 0.0065,
+      "max_lev": 75
+     },
+     "q_min": "26",
+     "notional": "5.30400",
+     "loss_usdt": "1.6018",
+     "loss_pct_wallet": "16.018%"
+    }
+   },
+   "log": [
+    "WARNING live_v6.engine: skip ADAUSDT min_order_risk_over_cap: q0=0 < exchange minimum; min qty 26 (minNotional 5, minQty 1) loses 1.6002 = 16.00% of wallet 10.00 > 3%"
+   ]
+  },
+  {
+   "case": "3a −4164 min notional (precheck bypassed: qty 1 sent)",
+   "expect": "-4164, pre-arm cancelled, flat",
+   "ok": true,
+   "error": null,
+   "flat_after": true,
+   "info": {
+    "skip": "entry_rejected",
+    "detail": "25 @ 0.20410: -4164: Order's notional must be no smaller than 5 (unless you choose reduce only).",
+    "exchange_error": "-4164: Order's notional must be no smaller than 5 (unless you choose reduce only).",
+    "sent": "qty 1 (planned 25)",
+    "prearm_live_at_send": [
+     [
+      "v6tADA1792978571p",
+      "reduceOnly"
+     ]
+    ],
+    "prearm_cancelled": true,
+    "alerts": [
+     [
+      "start",
+      false,
+      "🧪[TESTNET·모의] ▶️ live_v6 시작 · FaultEx(BinanceREST(https://testnet.binancefuture.com)) · 포지션 0개 · 진입 "
+     ],
+     [
+      "alert",
+      false,
+      "🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음\nADAUSDT 25: -4164: Order's notional must be no smalle"
+     ]
+    ],
+    "calls": [
+     "mark_price",
+     "account",
+     "positions",
+     "exchange_info",
+     "brackets",
+     "book",
+     "mark_price",
+     "account",
+     "stop",
+     "get_order",
+     "market",
+     "cancel"
+    ]
+   },
+   "log": [
+    "WARNING live_v6.engine: skip ADAUSDT entry_rejected: 25 @ 0.20410: -4164: Order's notional must be no smaller than 5 (unless you choose reduce only).",
+    "CRITICAL live_v6.engine: 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음 | ADAUSDT 25: -4164: Order's notional must be no smaller than 5 (unless you choose reduce only).",
+    "WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음\nADAUSDT 25: -4164: Order's notional must be no smaller than 5 (unless you choose reduce only)."
+   ]
+  },
+  {
+   "case": "3b −2019 margin (precheck bypassed: leverage 1x, qty 30000)",
+   "expect": "-2019, pre-arm cancelled, flat",
+   "ok": true,
+   "error": null,
+   "flat_after": true,
+   "info": {
+    "skip": "entry_rejected",
+    "detail": "25 @ 0.20420: -2019: Margin is insufficient.",
+    "exchange_error": "-2019: Margin is insufficient.",
+    "sent": "qty 30000 (planned 25)",
+    "prearm_live_at_send": [
+     [
+      "v6tADA1792978556p",
+      "reduceOnly"
+     ]
+    ],
+    "prearm_cancelled": true,
+    "alerts": [
+     [
+      "start",
+      false,
+      "🧪[TESTNET·모의] ▶️ live_v6 시작 · FaultEx(BinanceREST(https://testnet.binancefuture.com)) · 포지션 0개 · 진입 "
+     ],
+     [
+      "alert",
+      false,
+      "🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음\nADAUSDT 25: -2019: Margin is insufficient."
+     ]
+    ],
+    "calls": [
+     "mark_price",
+     "account",
+     "positions",
+     "exchange_info",
+     "brackets",
+     "book",
+     "mark_price",
+     "account",
+     "stop",
+     "get_order",
+     "market",
+     "cancel"
+    ]
+   },
+   "log": [
+    "WARNING live_v6.engine: skip ADAUSDT entry_rejected: 25 @ 0.20420: -2019: Margin is insufficient.",
+    "CRITICAL live_v6.engine: 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음 | ADAUSDT 25: -2019: Margin is insufficient.",
+    "WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음\nADAUSDT 25: -2019: Margin is insufficient."
+   ]
+  },
+  {
+   "case": "3c −2021 on the PRE-ARM stop (trigger 5% above mark)",
+   "expect": "-2021 → no entry sent, flat",
+   "ok": true,
+   "error": null,
+   "flat_after": true,
+   "info": {
+    "skip": "stop_prearm",
+    "detail": "protective stop 0.1981 not confirmed → entry not sent",
+    "exchange_error": "WouldTrigger -2021: Order would immediately trigger.",
+    "sent": "prearm stop trigger 0.2142 (mark 0.20400000, planned 0.1981)",
+    "prearm_live_at_send": null,
+    "prearm_cancelled": true,
+    "alerts": [
+     [
+      "start",
+      false,
+      "🧪[TESTNET·모의] ▶️ live_v6 시작 · FaultEx(BinanceREST(https://testnet.binancefuture.com)) · 포지션 0개 · 진입 "
+     ]
+    ],
+    "calls": [
+     "book",
+     "mark_price",
+     "account",
+     "set_leverage",
+     "positions",
+     "leverage",
+     "exchange_info",
+     "brackets",
+     "book",
+     "mark_price",
+     "account",
+     "stop"
+    ]
+   },
+   "log": [
+    "WARNING live_v6.engine: skip ADAUSDT stop_prearm: protective stop 0.1981 not confirmed → entry not sent"
+   ]
+  },
+  {
+   "case": "3d entry fills, closePosition stop rejected (-2021) → full flatten + 🚨",
+   "expect": "flatten, flat",
+   "ok": true,
+   "error": null,
+   "flat_after": true,
+   "info": {
+    "stop_sent": "close stop trigger 0.2141 (mark 0.20393903, planned 0.1981)",
+    "exchange_error": "WouldTrigger -2021: Order would immediately trigger.",
+    "flatten_orders": 1,
+    "alerts": [
+     [
+      "start",
+      false,
+      "🧪[TESTNET·모의] ▶️ live_v6 시작 · FaultEx(BinanceREST(https://testnet.binancefuture.com)) · 포지션 0개 · 진입 가능"
+     ],
+     [
+      "alert",
+      false,
+      "🧪[TESTNET·모의] 🚨 진입 체결 후 손절 거절 — 전량 청산\nADAUSDT 25 · 손절 0.1981 거절/즉시발동 → reduceOnly 전량 청산"
+     ],
+     [
+      "exit",
+      false,
+      "🧪[TESTNET·모의] 🔴 청산 ADAUSDT 롱 · stop_rejected_after_fill\n수량 25 · 0.20420 → 0.20390 · 손절 0.1981\n순손익 -0.0116 USDT"
+     ]
+    ],
+    "crit_logs": [
+     "CRITICAL live_v6.engine: 🚨 진입 체결 후 손절 거절 — 전량 청산 | ADAUSDT 25 · 손절 0.1981 거절/즉시발동 → reduceOnly 전량 청산",
+     "WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🚨 진입 체결 후 손절 거절 — 전량 청산\nADAUSDT 25 · 손절 0.1981 거절/즉시발동 → reduceOnly 전량 청산"
+    ],
+    "calls": [
+     "stop",
+     "get_order",
+     "market",
+     "stop",
+     "positions",
+     "positions",
+     "book",
+     "get_order",
+     "market",
+     "positions",
+     "open_orders",
+     "cancel",
+     "user_trades",
+     "income"
+    ]
+   },
+   "log": [
+    "INFO httpx: HTTP Request: POST https://testnet.binancefuture.com/fapi/v1/algoOrder?algoType=CONDITIONAL&symbol=ADAUSDT&side=SELL&type=STOP_MARKET&triggerPrice=0.2141&workingType=MARK_PRICE&clientAlgoId=v6tADA1792978024s0&closePosition=true&timestamp=1792978023461&recvWindow=10000&signature=<redacted> \"HTTP/1.1 400 Bad Request\"",
+    "CRITICAL live_v6.engine: 🚨 진입 체결 후 손절 거절 — 전량 청산 | ADAUSDT 25 · 손절 0.1981 거절/즉시발동 → reduceOnly 전량 청산",
+    "WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🚨 진입 체결 후 손절 거절 — 전량 청산\nADAUSDT 25 · 손절 0.1981 거절/즉시발동 → reduceOnly 전량 청산",
+    "WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🔴 청산 ADAUSDT 롱 · stop_rejected_after_fill\n수량 25 · 0.20420 → 0.20390 · 손절 0.1981\n순손익 -0.0116 USDT · -0.076R (수수료 0.0041 · 펀딩 +0.0000)"
+   ]
+  },
+  {
+   "case": "3e −1111/LOT_SIZE-class: qty off-step 26.5 (testnet: -1111 precision)",
+   "expect": "reject, pre-arm cancelled, flat",
+   "ok": true,
+   "error": null,
+   "flat_after": true,
+   "info": {
+    "skip": "entry_rejected",
+    "detail": "25 @ 0.20420: -1111: Precision is over the maximum defined for this asset.",
+    "exchange_error": "-1111: Precision is over the maximum defined for this asset.",
+    "sent": "qty 26.5 (planned 25)",
+    "prearm_live_at_send": [
+     [
+      "v6tADA1792978721p",
+      "reduceOnly"
+     ]
+    ],
+    "prearm_cancelled": true,
+    "alerts": [
+     [
+      "start",
+      false,
+      "🧪[TESTNET·모의] ▶️ live_v6 시작 · FaultEx(BinanceREST(https://testnet.binancefuture.com)) · 포지션 0개 · 진입 "
+     ],
+     [
+      "alert",
+      false,
+      "🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음\nADAUSDT 25: -1111: Precision is over the maximum defi"
+     ]
+    ],
+    "calls": [
+     "mark_price",
+     "account",
+     "positions",
+     "exchange_info",
+     "brackets",
+     "book",
+     "mark_price",
+     "account",
+     "stop",
+     "get_order",
+     "market",
+     "cancel"
+    ]
+   },
+   "log": [
+    "WARNING live_v6.engine: skip ADAUSDT entry_rejected: 25 @ 0.20420: -1111: Precision is over the maximum defined for this asset.",
+    "CRITICAL live_v6.engine: 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음 | ADAUSDT 25: -1111: Precision is over the maximum defined for this asset.",
+    "WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음\nADAUSDT 25: -1111: Precision is over the maximum defined for this asset."
+   ]
+  },
+  {
+   "case": "3f MARKET_LOT_SIZE-class: qty above market max (testnet: -4005)",
+   "expect": "reject, pre-arm cancelled, flat",
+   "ok": true,
+   "error": null,
+   "flat_after": true,
+   "info": {
+    "skip": "entry_rejected",
+    "detail": "25 @ 0.20420: -4005: Quantity greater than max quantity.",
+    "exchange_error": "-4005: Quantity greater than max quantity.",
+    "sent": "qty 10000001 (planned 25)",
+    "prearm_live_at_send": [
+     [
+      "v6tADA1792978838p",
+      "reduceOnly"
+     ]
+    ],
+    "prearm_cancelled": true,
+    "alerts": [
+     [
+      "start",
+      false,
+      "🧪[TESTNET·모의] ▶️ live_v6 시작 · FaultEx(BinanceREST(https://testnet.binancefuture.com)) · 포지션 0개 · 진입 "
+     ],
+     [
+      "alert",
+      false,
+      "🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음\nADAUSDT 25: -4005: Quantity greater than max quantity"
+     ]
+    ],
+    "calls": [
+     "mark_price",
+     "account",
+     "positions",
+     "exchange_info",
+     "brackets",
+     "book",
+     "mark_price",
+     "account",
+     "stop",
+     "get_order",
+     "market",
+     "cancel"
+    ]
+   },
+   "log": [
+    "WARNING live_v6.engine: skip ADAUSDT entry_rejected: 25 @ 0.20420: -4005: Quantity greater than max quantity.",
+    "CRITICAL live_v6.engine: 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음 | ADAUSDT 25: -4005: Quantity greater than max quantity.",
+    "WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음\nADAUSDT 25: -4005: Quantity greater than max quantity."
+   ]
+  },
+  {
+   "case": "3g LOT_SIZE below minQty (ALLUSDT, qty 5 < minQty 10; testnet: -4004)",
+   "expect": "reject, pre-arm cancelled, flat",
+   "ok": true,
+   "error": null,
+   "flat_after": true,
+   "info": {
+    "skip": "entry_rejected",
+    "detail": "10 @ 0.586600: -4004: Quantity less than min quantity.",
+    "exchange_error": "-4004: Quantity less than min quantity.",
+    "sent": "qty 5 (planned 10)",
+    "prearm_live_at_send": [
+     [
+      "v6tALL1792978875p",
+      "reduceOnly"
+     ]
+    ],
+    "prearm_cancelled": true,
+    "alerts": [
+     [
+      "start",
+      false,
+      "🧪[TESTNET·모의] ▶️ live_v6 시작 · FaultEx(BinanceREST(https://testnet.binancefuture.com)) · 포지션 0개 · 진입 "
+     ],
+     [
+      "alert",
+      false,
+      "🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음\nALLUSDT 10: -4004: Quantity less than min quantity."
+     ]
+    ],
+    "calls": [
+     "mark_price",
+     "account",
+     "positions",
+     "exchange_info",
+     "brackets",
+     "book",
+     "mark_price",
+     "account",
+     "stop",
+     "get_order",
+     "market",
+     "cancel"
+    ]
+   },
+   "log": [
+    "WARNING live_v6.engine: skip ALLUSDT entry_rejected: 10 @ 0.586600: -4004: Quantity less than min quantity.",
+    "CRITICAL live_v6.engine: 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음 | ALLUSDT 10: -4004: Quantity less than min quantity.",
+    "WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음\nALLUSDT 10: -4004: Quantity less than min quantity."
+   ]
+  },
+  {
+   "case": "3h tick/precision: pre-arm stop trigger with 7 decimals (testnet: -1111)",
+   "expect": "reject → no entry, flat",
+   "ok": true,
+   "error": null,
+   "flat_after": true,
+   "info": {
+    "skip": "stop_prearm",
+    "detail": "protective stop 0.1981 not confirmed → entry not sent",
+    "exchange_error": "OrderRejected -1111: Precision is over the maximum defined for this asset.",
+    "sent": "prearm stop trigger 0.1981001 (mark 0.20336005, planned 0.1981)",
+    "prearm_live_at_send": null,
+    "prearm_cancelled": true,
+    "alerts": [
+     [
+      "start",
+      false,
+      "🧪[TESTNET·모의] ▶️ live_v6 시작 · FaultEx(BinanceREST(https://testnet.binancefuture.com)) · 포지션 0개 · 진입 "
+     ]
+    ],
+    "calls": [
+     "brackets",
+     "book",
+     "mark_price",
+     "account",
+     "positions",
+     "exchange_info",
+     "brackets",
+     "book",
+     "mark_price",
+     "account",
+     "stop",
+     "open_orders"
+    ]
+   },
+   "log": [
+    "ERROR live_v6.engine: ADAUSDT pre-arm stop failed: -1111: Precision is over the maximum defined for this asset. → read-back",
+    "WARNING live_v6.engine: skip ADAUSDT stop_prearm: protective stop 0.1981 not confirmed → entry not sent"
+   ]
+  },
+  {
+   "case": "3i raw probes: PERCENT_PRICE / -1013 attempts",
+   "expect": "documented",
+   "ok": true,
+   "error": null,
+   "flat_after": true,
+   "info": {
+    "LOT_SIZE below minQty (ALLUSDT qty 5 < 10)": "OrderRejected -4004: Quantity less than min quantity.",
+    "LOT_SIZE qty 0": "OrderRejected -4003: Quantity less than or equal to zero.",
+    "qty off step (ADA 26.5)": "OrderRejected -1111: Precision is over the maximum defined for this asset.",
+    "MARKET_LOT_SIZE above max": "OrderRejected -4005: Quantity greater than max quantity.",
+    "tick: stop trigger = tick-grid + tick/10 (5 decimals; ADA pricePrecision 5)": "ACCEPTED algo STOP_MARKET id=1000000257980332",
+    "tick: stop trigger = tick-grid + tick/1000 (7 decimals)": "OrderRejected -1111: Precision is over the maximum defined for this asset.",
+    "PERCENT_PRICE: reduceOnly stop at 0.5×mark": "ACCEPTED algo STOP_MARKET id=1000000257980354",
+    "PERCENT_PRICE: market order (no price) n/a → closePosition flat": "OrderRejected -4509: Time in Force (TIF) GTE can only be used with open positions. Please ensure that positions are available."
+   },
+   "log": [
+    "INFO httpx: HTTP Request: POST https://testnet.binancefuture.com/fapi/v1/algoOrder?algoType=CONDITIONAL&symbol=ADAUSDT&side=SELL&type=STOP_MARKET&triggerPrice=0.1016&workingType=MARK_PRICE&clientAlgoId=v6tprobe92978145417&closePosition=true&timestamp=1792978145417&recvWindow=10000&signature=<redacted> \"HTTP/1.1 400 Bad Request\""
+   ]
+  }
+ ],
+ "telegram_posts": 0,
+ "final_flat": true
+}

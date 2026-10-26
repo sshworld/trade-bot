@@ -76,10 +76,64 @@ Scripts/outputs next to this file: `replay_new.py`, `replay_results_new.json`, `
 
 Entries/skips: old 1 entry + 1 skip → new 2 entries + 0 skips. Final simulated wallet 116.87 → 115.17 (the BTC min-qty trade lost 1.71). The new result equals the earlier hypothetical "rule3" variant (qty 0.001, net −1.7081).
 
-## 6. What testnet must exercise next (not done here)
+## 6. What testnet must exercise next — DONE, see `2026-10-26_sizing_testnet.md`
 
 1. Min-qty entry on a testnet symbol (q0 < minimum): entry, closePosition stop, `qty_floor` log/Telegram line, exit.
 2. 3%-cap skip (`min_order_risk_over_cap`) and 5%-sum skip (`total_risk_cap`) with no order sent.
 3. Filter violations per rejection type on the real testnet API: −4164 (below minNotional), −2019 (margin), −2021 (stop would trigger), −1013 (LOT / MARKET_LOT / PERCENT_PRICE) → pre-arm cancelled, no position, no leftover stop; entry filled + stop rejected → full flatten + 🚨.
 4. Real `BinanceREST.mark_price` (premiumIndex) and the freshly-read exchangeInfo/bracket path (never exercised against a real endpoint yet).
 5. Re-run the 51 testnet tests (`-m testnet`) — `fakes.py` changed and the engine entry path changed.
+
+## 7. TA-review items (2026-10-26, offline, same branch)
+
+### (a) Labels
+* Logs / skip records / counts use only the spec names `min_order_risk_over_cap`, `total_risk_cap`, `risk_cap_portfolio`. The aliases (`loss_cap` / `open_risk_cap`) appear only in a `#` comment in `sizing.py`.
+  `test_no_alias_label_strings_in_emitted_skip_reasons` sweeps all emitted skip reasons and fails if an alias shows up.
+* `qty_zero` is emitted **only** when the min-qty path itself is unreachable (`q_min <= 0`). q0 = 0 that goes to the min-qty path and exceeds 3 % is `min_order_risk_over_cap` with `q0=0` in the detail
+  (live testnet case 2b above: "q0=0 < exchange minimum; min qty 26 … 16.00 % … > 3 %"). Tests: `test_q0_zero_goes_to_min_qty_path_and_is_not_labelled_qty_zero`, `test_qty_zero_only_when_min_qty_path_is_unreachable`.
+
+### (b) Unknown-outcome stop placement — exact window
+`Settings.stop_attempts = 3`, `stop_retry_delay_s = 3.0` (engine.py:82-83), two bounded rounds:
+1. `_upgrade_stop`: up to **3 closePosition attempts**, each followed by an `open_orders` check; **3.0 s** sleep between attempts (2 sleeps = 6 s). Unknown outcome ≠ rejected: the pre-arm reduceOnly stop (qty ≥ filled) is kept and verified via `open_orders`/`find_stop`.
+2. If not confirmed: `protect()` → `ensure_stop`: again up to **3 attempts**, **3.0 s** apart (6 s).
+Total: ≤ 6 placement attempts and ≤ 12 s of deliberate waiting (+ per-call HTTP timeout 10 s ⇒ hard upper bound ≈ 2 min even if every call hangs; typical ≈ 12 s).
+**New behaviour (was: wait for reconcile up to `api_dead_s = 300` s with an unprotected position):** still unconfirmed after round 2 → 🚨 `진입 후 손절 미확인(재시도 한도 초과) — 전량 청산` + `close(sym, "stop_unconfirmed")` (reduceOnly full flatten). 🚨 is only logged/queued in testnet.
+Tests: `test_stop_window_constants_are_the_documented_ones`, `test_unknown_stop_outcome_with_prearm_verified_keeps_it_and_does_not_flatten`,
+`test_unconfirmed_stop_after_the_bounded_window_flattens_in_full_with_alert[reads_fail|prearm_gone]`.
+
+### (c) Mutation tests (manual mutants via `run_mutants.py`, full offline suite per mutant, file restored each time)
+Baseline run: `mutation_run1_baseline.txt`; after killers: `mutation_run2_after_killers.txt` (in `2026-10-26_sizing_testnet/`). **25 mutants; 8 survived/weak at first; 0 survive now.**
+Killers added (`test_sizing_minorder.py`): `test_cap_3pct_exact_boundary_enters_and_tolerance_edge_enters_just_above_skips`, `test_open_risk_cap_exact_boundaries_5pct_and_2_5pct[qty_floor|q0]`,
+`test_min_notional_equality_is_allowed_in_precheck_and_q0_path`, `test_engine_second_pass_open_risk_guard_boundary[0.0-False|1e-12-False|0.0005-True]`.
+
+| mutant | boundary | before | now | failing test(s) |
+|---|---|---|---|---|
+| M01 | 3% cap `>` -> `>=` (<= vs <) | SURVIVED | **killed** | test_cap_3pct_exact_boundary_enters_and_tolerance_edge_enters_just_above_skips |
+| M02 | 3% cap 0.03 -> 0.031 | killed | **killed** | test_boundary_loss_cap_3pct_per_coin, test_no_hardcoded_price_constants_in_sizing_path, test_property_sweep_price_atr_wallet_all_coins |
+| M03 | 3% cap 0.03 -> 0.029 | killed | **killed** | test_boundary_loss_cap_3pct_per_coin, test_no_hardcoded_price_constants_in_sizing_path, test_property_sweep_price_atr_wallet_all_coins |
+| M04 | 5% total cap `>` -> `>=` (sizing) | SURVIVED | **killed** | test_open_risk_cap_exact_boundaries_5pct_and_2_5pct |
+| M05 | 5% total cap 0.05 -> 0.051 | killed | **killed** | test_no_hardcoded_price_constants_in_sizing_path, test_open_risk_cap_exact_boundaries_5pct_and_2_5pct, test_open_risk_sum_cap_5pct_for_min_qty_and_2_5pct_for_q0 |
+| M06 | 5% total cap 0.05 -> 0.049 | killed | **killed** | test_no_hardcoded_price_constants_in_sizing_path, test_open_risk_cap_exact_boundaries_5pct_and_2_5pct, test_open_risk_sum_cap_5pct_for_min_qty_and_2_5pct_for_q0 |
+| M07 | 2.5% q0 cap 0.025 -> 0.026 | killed | **killed** | test_no_hardcoded_price_constants_in_sizing_path, test_open_risk_cap_exact_boundaries_5pct_and_2_5pct, test_open_risk_sum_cap_5pct_for_min_qty_and_2_5pct_for_q0 |
+| M08 | 2.5% q0 cap 0.025 -> 0.024 | killed | **killed** | test_no_hardcoded_price_constants_in_sizing_path, test_open_risk_cap_exact_boundaries_5pct_and_2_5pct |
+| M09 | open-risk `>` -> `>=` (engine 2nd pass, 2.5%/5%) | SURVIVED | **killed** | test_engine_second_pass_open_risk_guard_boundary |
+| M10 | engine 2nd-pass cap tolerance: cap + 1e-12 -> cap + 1e-3 (cap loosened) | SURVIVED | **killed** | test_engine_second_pass_open_risk_guard_boundary |
+| M11 | sizing cap tolerance 1e-12 -> 1e-3 (loosened) | killed | **killed** | test_open_risk_sum_cap_5pct_for_min_qty_and_2_5pct_for_q0 |
+| M12 | margin 90% `>` -> `>=` (<= vs <) | killed | **killed** | test_boundary_margin_plus_minus_one_percent |
+| M13 | margin 90% -> 91% | killed | **killed** | test_boundary_margin_plus_minus_one_percent, test_no_hardcoded_price_constants_in_sizing_path |
+| M14 | margin 90% -> 89% | killed | **killed** | test_boundary_margin_plus_minus_one_percent, test_no_hardcoded_price_constants_in_sizing_path |
+| M15 | price buffer 2% -> 3% (param, both sites) | killed | **killed** | test_boundary_min_notional_plus_minus_one_tick, test_property_sweep_price_atr_wallet_all_coins |
+| M16 | price buffer 2% -> 1% (param, both sites) | killed | **killed** | test_boundary_loss_cap_3pct_per_coin, test_boundary_min_notional_plus_minus_one_tick |
+| M17 | precheck worst-price buffer only: 0.98 -> 0.97 | killed | **killed** | test_boundary_min_notional_plus_minus_one_tick |
+| M18 | precheck worst-price buffer only: 0.98 -> 0.99 | killed | **killed** | test_boundary_min_notional_plus_minus_one_tick |
+| M19 | size_entry worst-price buffer only: 0.98 -> 0.97 | killed | **killed** | test_min_notional_equality_is_allowed_in_precheck_and_q0_path, test_property_sweep_price_atr_wallet_all_coins |
+| M20 | size_entry worst-price buffer only: 0.98 -> 0.99 | killed | **killed** | test_boundary_loss_cap_3pct_per_coin, test_filter_values_drive_the_quantity, test_no_alias_label_strings_in_emitted_skip_reasons, test_q0_inside_price_buffer_band_goes_to_min_qty_path_not_skip |
+| M21 | minNotional precheck `<` -> `<=` (qty*worst == minNotional rejected) | SURVIVED | **killed** | test_min_notional_equality_is_allowed_in_precheck_and_q0_path |
+| M22 | minNotional precheck `<` -> `<` +1 tick (needs one step more) | killed | **killed** | test_boundary_min_notional_plus_minus_one_tick, test_boundary_min_qty_plus_minus_one_step |
+| M23 | q0 path minNotional `>=` -> `>` (q0*worst == minNotional goes to qty_floor) | SURVIVED | **killed** | test_min_notional_equality_is_allowed_in_precheck_and_q0_path |
+| M24 | q_min ceil_to -> floor_to (-1 tick below minNotional) | killed | **killed** | test_boundary_loss_cap_3pct_per_coin, test_filter_values_drive_the_quantity, test_no_alias_label_strings_in_emitted_skip_reasons, test_q0_inside_price_buffer_band_goes_to_min_qty_path_not_skip, test_sweep_price_scale_changes_notional_not_rules |
+| M25 | q_min +1 tick (one step more than needed) | killed | **killed** | test_boundary_loss_cap_3pct_per_coin, test_min_qty_entry_is_the_smallest_allowed_quantity, test_q0_inside_price_buffer_band_goes_to_min_qty_path_not_skip |
+
+Notes: (1) `>` → `>=` on the cap compares (M01/M04/M09) is only distinguishable at *exactly* `cap + 1e-12` because the code adds a 1e-12 float tolerance; the new tests build inputs whose float value equals that bit-for-bit (`_exact_open`, `loss/Decimal(0.03+1e-12)`), so they are real kills, not equivalent mutants.
+(2) M09/M10 (engine second-pass guard) sit behind the identical check in `size_entry`, so via normal inputs they cannot differ; they are killed by stubbing `size_entry`'s second-pass result so the engine guard itself decides.
+(3) The margin-90 and minNotional ±1 tick mutants (M12–M18, M22) were already killed by the pre-existing boundary tests. (4) M05–M08 were also killed by the static `test_no_hardcoded_price_constants_in_sizing_path`; the new behavioural boundary test kills them independently (M08 re-run with the static test deselected still fails on `…exact_boundaries…[q0]`).

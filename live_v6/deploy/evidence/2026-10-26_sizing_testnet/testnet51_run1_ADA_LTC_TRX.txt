@@ -1,0 +1,142 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.7.0 -- /workspace/.venv-live6/bin/python
+rootdir: /workspace/swap-src/live_v6
+configfile: pytest.ini
+plugins: platformdirs-4.13.5, anyio-4.15.1
+collecting ... collected 45 items
+
+live_v6/tests/test_faults.py::test_stop_present_after_fill[testnet] PASSED [  2%]
+live_v6/tests/test_faults.py::test_isolated_set_and_read_back[testnet] PASSED [  4%]
+live_v6/tests/test_faults.py::test_isolated_failure_blocks_entries[testnet] PASSED [  6%]
+live_v6/tests/test_faults.py::test_no_averaging[testnet] PASSED          [  8%]
+live_v6/tests/test_faults.py::test_margin_skip_alert[testnet] PASSED     [ 11%]
+live_v6/tests/test_faults.py::test_kill_after_fill_then_restart[testnet] PASSED [ 13%]
+live_v6/tests/test_faults.py::test_kill_before_entry_sent_cleans_prearm[testnet] PASSED [ 15%]
+live_v6/tests/test_faults.py::test_new_stop_confirmed_before_old_cancelled[testnet] PASSED [ 17%]
+live_v6/tests/test_faults.py::test_restart_with_stop_removed[testnet] PASSED [ 20%]
+live_v6/tests/test_faults.py::test_restart_multiple_positions_rearms_all[testnet] PASSED [ 22%]
+live_v6/tests/test_faults.py::test_entry_response_lost_no_duplicate[testnet] PASSED [ 24%]
+live_v6/tests/test_faults.py::test_entry_never_sent_is_not_resent[testnet] PASSED [ 26%]
+live_v6/tests/test_faults.py::test_drop_during_status_query[testnet] PASSED [ 28%]
+live_v6/tests/test_faults.py::test_outage_while_holding_never_closes[testnet] PASSED [ 31%]
+live_v6/tests/test_faults.py::test_http_faults_map_to_unavailable[testnet-http429] PASSED [ 33%]
+live_v6/tests/test_faults.py::test_http_faults_map_to_unavailable[testnet-http418] PASSED [ 35%]
+live_v6/tests/test_faults.py::test_http_faults_map_to_unavailable[testnet-http503] PASSED [ 37%]
+live_v6/tests/test_faults.py::test_http_faults_map_to_unavailable[testnet-http500] PASSED [ 40%]
+live_v6/tests/test_faults.py::test_http_faults_map_to_unavailable[testnet-timeout] PASSED [ 42%]
+live_v6/tests/test_faults.py::test_http_faults_map_to_unavailable[testnet-connect] PASSED [ 44%]
+live_v6/tests/test_faults.py::test_stop_rejected_closes_only_that_position[testnet] PASSED [ 46%]
+live_v6/tests/test_faults.py::test_unprotectable_position_flattens_all_and_halts[testnet] PASSED [ 48%]
+live_v6/tests/test_faults.py::test_breach_closes_only_that_position[testnet] PASSED [ 51%]
+live_v6/tests/test_faults.py::test_drawdown_25pct_flattens_all_and_halts[testnet] PASSED [ 53%]
+live_v6/tests/test_faults.py::test_overreaction_5xx_three_in_a_row[testnet] PASSED [ 55%]
+live_v6/tests/test_faults.py::test_overreaction_429_once[testnet] PASSED [ 57%]
+live_v6/tests/test_faults.py::test_overreaction_stop_rejected_once_then_retry_ok[testnet] PASSED [ 60%]
+live_v6/tests/test_faults.py::test_exit_response_lost_no_duplicate[testnet] PASSED [ 62%]
+live_v6/tests/test_faults.py::test_partial_fills_and_failed_final_exit[testnet] PASSED [ 64%]
+live_v6/tests/test_faults.py::test_risk_cap_enforced_at_placement[testnet] PASSED [ 66%]
+live_v6/tests/test_faults.py::test_max_positions_enforced_at_placement[testnet] PASSED [ 68%]
+live_v6/tests/test_faults.py::test_ledger_matches_income_after_round_trip[testnet] PASSED [ 71%]
+live_v6/tests/test_faults.py::test_ledger_gap_blocks_entries[testnet] PASSED [ 73%]
+live_v6/tests/test_gate_sigkill.py::test_gate_sigkill_multiple_positions_all_stops_present[testnet] FAILED [ 75%]
+live_v6/tests/test_gate_sigkill.py::test_gate_sigkill_right_after_entry_fill[testnet] FAILED [ 77%]
+live_v6/tests/test_h7t.py::test_h7t_touch_market_entry_stop_immediately[testnet] PASSED [ 80%]
+live_v6/tests/test_h7t.py::test_h7t_partial_fill_stop_sized_no_chase[testnet] PASSED [ 82%]
+live_v6/tests/test_h7t.py::test_h7t_revert_below_level_no_extra_exit_no_reentry[testnet] PASSED [ 84%]
+live_v6/tests/test_h7t.py::test_h7t_breakout_while_down_no_catch_up_entry[testnet] PASSED [ 86%]
+live_v6/tests/test_h7t.py::test_h7t_killed_right_after_entry_stop_on_exchange[testnet] PASSED [ 88%]
+live_v6/tests/test_h7t.py::test_h7t_stopped_while_down_closes_model_as_stopout[testnet] PASSED [ 91%]
+live_v6/tests/test_streams.py::test_testnet_market_stream_drop_and_resubscribe[testnet] PASSED [ 93%]
+live_v6/tests/test_streams.py::test_testnet_user_stream_fill_and_keepalive[testnet] PASSED [ 95%]
+live_v6/tests/test_streams.py::test_testnet_overreaction_ws_down_30s[testnet] PASSED [ 97%]
+live_v6/tests/test_streams.py::test_testnet_market_stream_killed_stale_guard[testnet] PASSED [100%]
+
+=================================== FAILURES ===================================
+_______ test_gate_sigkill_multiple_positions_all_stops_present[testnet] ________
+
+backend = <live_v6.tests.conftest.Backend object at 0x7f336616b2d0>
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-57/test_gate_sigkill_multiple_pos0')
+
+    @pytest.mark.testnet
+    def test_gate_sigkill_multiple_positions_all_stops_present(backend, tmp_path):
+        if backend.kind != "testnet":
+            pytest.skip("testnet only")
+>       p, _ = _run_bot(tmp_path, [], "READY")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+live_v6/tests/test_gate_sigkill.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-57/test_gate_sigkill_multiple_pos0')
+args = [], until = 'READY'
+
+    def _run_bot(tmp_path, args, until):
+        p = subprocess.Popen([sys.executable, str(ROOT / "tests" / "bot_proc.py"), str(tmp_path / "bot.json"), ",".join(SYMS),
+                              *args], env=_env(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        lines, t0 = [], time.time()
+        while time.time() - t0 < 180:
+            line = p.stdout.readline()
+            if not line and p.poll() is not None:
+                break
+            lines.append(line)
+            if until in line:
+                return p, lines
+        p.kill()
+>       raise AssertionError("bot did not reach " + until + ":\n" + "".join(lines[-30:]))
+E       AssertionError: bot did not reach READY:
+E       Traceback (most recent call last):
+E         File "/workspace/swap-src/live_v6/tests/bot_proc.py", line 62, in <module>
+E           main()
+E           ~~~~^^
+E         File "/workspace/swap-src/live_v6/tests/bot_proc.py", line 53, in main
+E           tick = eng.rules[s].tick_size
+E                  ~~~~~~~~~^^^
+E       KeyError: 'ADAUSDT'
+
+live_v6/tests/test_gate_sigkill.py:48: AssertionError
+______________ test_gate_sigkill_right_after_entry_fill[testnet] _______________
+
+backend = <live_v6.tests.conftest.Backend object at 0x7f3365f437d0>
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-57/test_gate_sigkill_right_after_0')
+
+    @pytest.mark.testnet
+    def test_gate_sigkill_right_after_entry_fill(backend, tmp_path):
+        if backend.kind != "testnet":
+            pytest.skip("testnet only")
+>       p, _ = _run_bot(tmp_path, ["--kill-mid-entry", "TRXUSDT"], "KILLING-SELF")
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+live_v6/tests/test_gate_sigkill.py:70: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-57/test_gate_sigkill_right_after_0')
+args = ['--kill-mid-entry', 'TRXUSDT'], until = 'KILLING-SELF'
+
+    def _run_bot(tmp_path, args, until):
+        p = subprocess.Popen([sys.executable, str(ROOT / "tests" / "bot_proc.py"), str(tmp_path / "bot.json"), ",".join(SYMS),
+                              *args], env=_env(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        lines, t0 = [], time.time()
+        while time.time() - t0 < 180:
+            line = p.stdout.readline()
+            if not line and p.poll() is not None:
+                break
+            lines.append(line)
+            if until in line:
+                return p, lines
+        p.kill()
+>       raise AssertionError("bot did not reach " + until + ":\n" + "".join(lines[-30:]))
+E       AssertionError: bot did not reach KILLING-SELF:
+E       Traceback (most recent call last):
+E         File "/workspace/swap-src/live_v6/tests/bot_proc.py", line 62, in <module>
+E           main()
+E           ~~~~^^
+E         File "/workspace/swap-src/live_v6/tests/bot_proc.py", line 53, in main
+E           tick = eng.rules[s].tick_size
+E                  ~~~~~~~~~^^^
+E       KeyError: 'ADAUSDT'
+
+live_v6/tests/test_gate_sigkill.py:48: AssertionError
+=========================== short test summary info ============================
+FAILED live_v6/tests/test_gate_sigkill.py::test_gate_sigkill_multiple_positions_all_stops_present[testnet]
+FAILED live_v6/tests/test_gate_sigkill.py::test_gate_sigkill_right_after_entry_fill[testnet]
+================== 2 failed, 43 passed in 1197.61s (0:19:57) ===================

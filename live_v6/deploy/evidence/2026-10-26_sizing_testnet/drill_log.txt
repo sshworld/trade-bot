@@ -1,0 +1,105 @@
+10:23:52 Notifier policy: Notifier(mode='testnet') → .live=False; Telegram post tripwire installed; TELEGRAM_*/HEARTBEAT env removed
+10:23:56 PRE-CHECK testnet: positions none | open+algo orders none
+10:23:56 account {'wallet': '4557.93485367', 'available': '4557.93485367', 'equity': '4557.93485367', 'margin_used': '0E-8'}
+10:23:56 ======== CASE 4 read path: BinanceREST.mark_price + fresh exchangeInfo/brackets/book/account
+10:24:01 READ PATH {"mark_price": "0.20387226", "mark_type": "Decimal", "book": "0.20380/0.20390", "tick": "0.0001", "step": "1", "minQty": "1", "minNotional": "5", "mkt_max": "10000000", "pct": "0.9500..1.0500", "brackets": 8, "bracket0": {"floor": 0.0, "cap": 10000.0, "mmr": 0.0065, "max_lev": 75}, "wallet": "4557.93485367", "available": "4557.93485367"}
+10:24:08 ENGINE _size_fresh calls: ['exchange_info', 'brackets', 'book', 'mark_price', 'account'] | sized qty 3736 path q0
+10:24:15 RESULT 4 read path: BinanceREST.mark_price + fresh exchangeInfo/brackets/book/account PASS  | flat after: True
+10:24:15 ======== CASE 1 min-qty entry (qty_floor) → full sequence → full exit
+10:24:22 FRESH NUMBERS (independent, before the entry) {"ref": "0.20390", "mark": "0.20402070", "minNotional": "5", "minQty": "1", "step": "1", "brackets0": {"floor": 0.0, "cap": 10000.0, "mmr": 0.0065, "max_lev": 75}, "q_min": "26", "notional": "5.30140", "loss_usdt": "0.1692", "loss_pct_wallet": "1.692%"} stop_dist 0.0061 wallet(injected) 10
+10:24:34 SEQUENCE (engine → exchange calls) ['positions', 'open_orders', 'exchange_info', 'brackets', 'book', 'mark_price', 'account', 'positions', 'exchange_info', 'brackets', 'book', 'mark_price', 'account', 'stop', 'get_order', 'market', 'stop', 'open_orders', 'cancel', 'positions']
+10:24:34 ENTERED journal: {"qty": "26", "entry_px": "0.20390", "stop_px": "0.1978", "risk_usdt": "0.15860", "lev": 10, "wallet_at_entry": "10"}
+10:24:34 EXCHANGE after entry: positions {'ADAUSDT': '26'} | open+algo orders {'ADAUSDT': [('algo', 'STOP_MARKET', 'v6tADA1792977867s0', 'closePos')]}
+10:24:34 qty_floor log: INFO live_v6.engine: qty_floor ADAUSDT: q0 8 < 거래소 최소 → 최소수량 26 · 손절+수수료+슬리피지 위험 1.68% (지갑 대비, 한도 3%)
+10:24:34 entered log: INFO live_v6.engine: entered ADAUSDT long qty 26 fill 0.20390 stop 0.1978 lev 10x risk 0.1586 USDT (0.5%)
+10:24:39 AFTER EXIT: positions none | orders none
+10:24:45 RESULT 1 min-qty entry (qty_floor) → full sequence → full exit PASS  | flat after: True
+10:24:45    LOG INFO httpx: HTTP Request: POST https://testnet.binancefuture.com/fapi/v1/algoOrder?algoType=CONDITIONAL&symbol=ADAUSDT&side=SELL&type=STOP_MARKET&triggerPrice=0.1978&workingType=MARK_PRICE&clientAlgoId=v6tADA1792977867s0&closePosition=true&timestamp=1792977872541&recvWindow=10000&signature=<redacted> "HTTP/1.1 200 OK"
+10:24:45    LOG INFO live_v6.engine: qty_floor ADAUSDT: q0 8 < 거래소 최소 → 최소수량 26 · 손절+수수료+슬리피지 위험 1.68% (지갑 대비, 한도 3%)
+10:24:45    LOG WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🟢 진입 ADAUSDT 롱 · 수량 26 · 체결가 0.20390
+⚠️ qty_floor ADAUSDT: q0 8 < 거래소 최소 → 최소수량 26 · 손절+수수료+슬리피지 위험 1.68% (지갑 대비, 한도 3%)
+손절 0.1978 · 10x · 위험 0.1586 USDT (0.5%)
+10:24:45    LOG INFO live_v6.engine: entered ADAUSDT long qty 26 fill 0.20390 stop 0.1978 lev 10x risk 0.1586 USDT (0.5%)
+10:24:45 ======== CASE 2a skip: tiny wallet (2 USDT) → min_order_risk_over_cap
+10:25:01 SKIP ['min_order_risk_over_cap', 'q0=1 < exchange minimum; min qty 26 (minNotional 5, minQty 1) loses 0.1676 = 8.38% of wallet 2.00 > 3%'] | calls ['positions', 'open_orders', 'exchange_info', 'brackets', 'book', 'mark_price', 'account'] | fresh {"ref": "0.20390", "mark": "0.20420950", "minNotional": "5", "minQty": "1", "step": "1", "brackets0": {"floor": 0.0, "cap": 10000.0, "mmr": 0.0065, "max_lev": 75}, "q_min": "26", "notional": "5.30140", "loss_usdt": "0.1692", "loss_pct_wallet": "8.460%"}
+10:25:08 RESULT 2a skip: tiny wallet (2 USDT) → min_order_risk_over_cap PASS  | flat after: True
+10:25:08    LOG WARNING live_v6.engine: skip ADAUSDT min_order_risk_over_cap: q0=1 < exchange minimum; min qty 26 (minNotional 5, minQty 1) loses 0.1676 = 8.38% of wallet 2.00 > 3%
+10:25:08 ======== CASE 2b skip: high ATR (stop 30% of price, wallet 10) → min_order_risk_over_cap
+10:25:23 SKIP ['min_order_risk_over_cap', 'q0=0 < exchange minimum; min qty 26 (minNotional 5, minQty 1) loses 1.6002 = 16.00% of wallet 10.00 > 3%'] | calls ['positions', 'open_orders', 'exchange_info', 'brackets', 'book', 'mark_price', 'account'] | fresh {"ref": "0.20400", "mark": "0.20405985", "minNotional": "5", "minQty": "1", "step": "1", "brackets0": {"floor": 0.0, "cap": 10000.0, "mmr": 0.0065, "max_lev": 75}, "q_min": "26", "notional": "5.30400", "loss_usdt": "1.6018", "loss_pct_wallet": "16.018%"}
+10:25:30 RESULT 2b skip: high ATR (stop 30% of price, wallet 10) → min_order_risk_over_cap PASS  | flat after: True
+10:25:30    LOG WARNING live_v6.engine: skip ADAUSDT min_order_risk_over_cap: q0=0 < exchange minimum; min qty 26 (minNotional 5, minQty 1) loses 1.6002 = 16.00% of wallet 10.00 > 3%
+10:25:30 ======== CASE 3a −4164 min notional (precheck bypassed: qty 1 sent)
+10:25:49 OUTCOME entered= False skip ['entry_rejected', "25 @ 0.20410: -4164: Order's notional must be no smaller than 5 (unless you choose reduce only)."] | pre-arm seen live at send: [('v6tADA1792978571p', 'reduceOnly')] | sent: qty 1 (planned 25) | exchange error: -4164: Order's notional must be no smaller than 5 (unless you choose reduce only). | positions none | orders none
+10:25:49 ALERT RECORDS (testnet: logged only, sent=False): [('start', False, '🧪[TESTNET·모의] ▶️ live_v6 시작 · FaultEx(BinanceREST(https://testnet.binancefuture.com)) · 포지'), ('alert', False, "🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음\nADAUSDT 25: -4164: Order's notional must be")]
+10:25:55 RESULT 3a −4164 min notional (precheck bypassed: qty 1 sent) PASS  | flat after: True
+10:25:55    LOG WARNING live_v6.engine: skip ADAUSDT entry_rejected: 25 @ 0.20410: -4164: Order's notional must be no smaller than 5 (unless you choose reduce only).
+10:25:55    LOG CRITICAL live_v6.engine: 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음 | ADAUSDT 25: -4164: Order's notional must be no smaller than 5 (unless you choose reduce only).
+10:25:55    LOG WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음
+ADAUSDT 25: -4164: Order's notional must be no smaller than 5 (unless you choose reduce only).
+10:25:55 ======== CASE 3b −2019 margin (precheck bypassed: leverage 1x, qty 30000)
+10:26:14 OUTCOME entered= False skip ['entry_rejected', '25 @ 0.20420: -2019: Margin is insufficient.'] | pre-arm seen live at send: [('v6tADA1792978556p', 'reduceOnly')] | sent: qty 30000 (planned 25) | exchange error: -2019: Margin is insufficient. | positions none | orders none
+10:26:14 ALERT RECORDS (testnet: logged only, sent=False): [('start', False, '🧪[TESTNET·모의] ▶️ live_v6 시작 · FaultEx(BinanceREST(https://testnet.binancefuture.com)) · 포지'), ('alert', False, '🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음\nADAUSDT 25: -2019: Margin is insufficient.')]
+10:26:22 RESULT 3b −2019 margin (precheck bypassed: leverage 1x, qty 30000) PASS  | flat after: True
+10:26:22    LOG WARNING live_v6.engine: skip ADAUSDT entry_rejected: 25 @ 0.20420: -2019: Margin is insufficient.
+10:26:22    LOG CRITICAL live_v6.engine: 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음 | ADAUSDT 25: -2019: Margin is insufficient.
+10:26:22    LOG WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음
+ADAUSDT 25: -2019: Margin is insufficient.
+10:26:22 ======== CASE 3c −2021 on the PRE-ARM stop (trigger 5% above mark)
+10:26:39 OUTCOME entered= False skip ['stop_prearm', 'protective stop 0.1981 not confirmed → entry not sent'] | pre-arm seen live at send: None | sent: prearm stop trigger 0.2142 (mark 0.20400000, planned 0.1981) | exchange error: WouldTrigger -2021: Order would immediately trigger. | positions none | orders none
+10:26:39 ALERT RECORDS (testnet: logged only, sent=False): [('start', False, '🧪[TESTNET·모의] ▶️ live_v6 시작 · FaultEx(BinanceREST(https://testnet.binancefuture.com)) · 포지')]
+10:26:46 RESULT 3c −2021 on the PRE-ARM stop (trigger 5% above mark) PASS  | flat after: True
+10:26:46    LOG WARNING live_v6.engine: skip ADAUSDT stop_prearm: protective stop 0.1981 not confirmed → entry not sent
+10:26:46 ======== CASE 3d entry fills, closePosition stop rejected (-2021) → full flatten + 🚨
+10:27:07 OUTCOME entered= False | stop sent: close stop trigger 0.2141 (mark 0.20393903, planned 0.1981) | err: WouldTrigger -2021: Order would immediately trigger. | positions none | orders none | state pos None
+10:27:07 🚨 log lines: ['WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음\nADAUSDT 25: -2019: Margin is insufficient.', 'CRITICAL live_v6.engine: 🚨 진입 체결 후 손절 거절 — 전량 청산 | ADAUSDT 25 · 손절 0.1981 거절/즉시발동 → reduceOnly 전량 청산', 'WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🚨 진입 체결 후 손절 거절 — 전량 청산\nADAUSDT 25 · 손절 0.1981 거절/즉시발동 → reduceOnly 전량 청산']
+10:27:12 RESULT 3d entry fills, closePosition stop rejected (-2021) → full flatten + 🚨 PASS  | flat after: True
+10:27:12    LOG INFO httpx: HTTP Request: POST https://testnet.binancefuture.com/fapi/v1/algoOrder?algoType=CONDITIONAL&symbol=ADAUSDT&side=SELL&type=STOP_MARKET&triggerPrice=0.2141&workingType=MARK_PRICE&clientAlgoId=v6tADA1792978024s0&closePosition=true&timestamp=1792978023461&recvWindow=10000&signature=<redacted> "HTTP/1.1 400 Bad Request"
+10:27:12    LOG CRITICAL live_v6.engine: 🚨 진입 체결 후 손절 거절 — 전량 청산 | ADAUSDT 25 · 손절 0.1981 거절/즉시발동 → reduceOnly 전량 청산
+10:27:12    LOG WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🚨 진입 체결 후 손절 거절 — 전량 청산
+ADAUSDT 25 · 손절 0.1981 거절/즉시발동 → reduceOnly 전량 청산
+10:27:12    LOG WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🔴 청산 ADAUSDT 롱 · stop_rejected_after_fill
+수량 25 · 0.20420 → 0.20390 · 손절 0.1981
+순손익 -0.0116 USDT · -0.076R (수수료 0.0041 · 펀딩 +0.0000)
+10:27:12 ======== CASE 3e −1111/LOT_SIZE-class: qty off-step 26.5 (testnet: -1111 precision)
+10:27:32 OUTCOME entered= False skip ['entry_rejected', '25 @ 0.20420: -1111: Precision is over the maximum defined for this asset.'] | pre-arm seen live at send: [('v6tADA1792978721p', 'reduceOnly')] | sent: qty 26.5 (planned 25) | exchange error: -1111: Precision is over the maximum defined for this asset. | positions none | orders none
+10:27:32 ALERT RECORDS (testnet: logged only, sent=False): [('start', False, '🧪[TESTNET·모의] ▶️ live_v6 시작 · FaultEx(BinanceREST(https://testnet.binancefuture.com)) · 포지'), ('alert', False, '🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음\nADAUSDT 25: -1111: Precision is over the ma')]
+10:27:39 RESULT 3e −1111/LOT_SIZE-class: qty off-step 26.5 (testnet: -1111 precision) PASS  | flat after: True
+10:27:39    LOG WARNING live_v6.engine: skip ADAUSDT entry_rejected: 25 @ 0.20420: -1111: Precision is over the maximum defined for this asset.
+10:27:39    LOG CRITICAL live_v6.engine: 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음 | ADAUSDT 25: -1111: Precision is over the maximum defined for this asset.
+10:27:39    LOG WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음
+ADAUSDT 25: -1111: Precision is over the maximum defined for this asset.
+10:27:39 ======== CASE 3f MARKET_LOT_SIZE-class: qty above market max (testnet: -4005)
+10:27:57 OUTCOME entered= False skip ['entry_rejected', '25 @ 0.20420: -4005: Quantity greater than max quantity.'] | pre-arm seen live at send: [('v6tADA1792978838p', 'reduceOnly')] | sent: qty 10000001 (planned 25) | exchange error: -4005: Quantity greater than max quantity. | positions none | orders none
+10:27:57 ALERT RECORDS (testnet: logged only, sent=False): [('start', False, '🧪[TESTNET·모의] ▶️ live_v6 시작 · FaultEx(BinanceREST(https://testnet.binancefuture.com)) · 포지'), ('alert', False, '🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음\nADAUSDT 25: -4005: Quantity greater than ma')]
+10:28:05 RESULT 3f MARKET_LOT_SIZE-class: qty above market max (testnet: -4005) PASS  | flat after: True
+10:28:05    LOG WARNING live_v6.engine: skip ADAUSDT entry_rejected: 25 @ 0.20420: -4005: Quantity greater than max quantity.
+10:28:05    LOG CRITICAL live_v6.engine: 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음 | ADAUSDT 25: -4005: Quantity greater than max quantity.
+10:28:05    LOG WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음
+ADAUSDT 25: -4005: Quantity greater than max quantity.
+10:28:05 ======== CASE 3g LOT_SIZE below minQty (ALLUSDT, qty 5 < minQty 10; testnet: -4004)
+10:28:23 OUTCOME entered= False skip ['entry_rejected', '10 @ 0.586600: -4004: Quantity less than min quantity.'] | pre-arm seen live at send: [('v6tALL1792978875p', 'reduceOnly')] | sent: qty 5 (planned 10) | exchange error: -4004: Quantity less than min quantity. | positions none | orders none
+10:28:23 ALERT RECORDS (testnet: logged only, sent=False): [('start', False, '🧪[TESTNET·모의] ▶️ live_v6 시작 · FaultEx(BinanceREST(https://testnet.binancefuture.com)) · 포지'), ('alert', False, '🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음\nALLUSDT 10: -4004: Quantity less than min q')]
+10:28:29 RESULT 3g LOT_SIZE below minQty (ALLUSDT, qty 5 < minQty 10; testnet: -4004) PASS  | flat after: True
+10:28:29    LOG WARNING live_v6.engine: skip ALLUSDT entry_rejected: 10 @ 0.586600: -4004: Quantity less than min quantity.
+10:28:29    LOG CRITICAL live_v6.engine: 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음 | ALLUSDT 10: -4004: Quantity less than min quantity.
+10:28:29    LOG WARNING live_v6.notify: [tg:testnet] 🧪[TESTNET·모의] 🚨 진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음
+ALLUSDT 10: -4004: Quantity less than min quantity.
+10:28:29 ======== CASE 3h tick/precision: pre-arm stop trigger with 7 decimals (testnet: -1111)
+10:28:47 OUTCOME entered= False skip ['stop_prearm', 'protective stop 0.1981 not confirmed → entry not sent'] | pre-arm seen live at send: None | sent: prearm stop trigger 0.1981001 (mark 0.20336005, planned 0.1981) | exchange error: OrderRejected -1111: Precision is over the maximum defined for this asset. | positions none | orders none
+10:28:47 ALERT RECORDS (testnet: logged only, sent=False): [('start', False, '🧪[TESTNET·모의] ▶️ live_v6 시작 · FaultEx(BinanceREST(https://testnet.binancefuture.com)) · 포지')]
+10:28:53 RESULT 3h tick/precision: pre-arm stop trigger with 7 decimals (testnet: -1111) PASS  | flat after: True
+10:28:53    LOG ERROR live_v6.engine: ADAUSDT pre-arm stop failed: -1111: Precision is over the maximum defined for this asset. → read-back
+10:28:53    LOG WARNING live_v6.engine: skip ADAUSDT stop_prearm: protective stop 0.1981 not confirmed → entry not sent
+10:28:53 ======== CASE 3i raw probes: PERCENT_PRICE / -1013 attempts
+10:29:05 PROBE LOT_SIZE below minQty (ALLUSDT qty 5 < 10) → OrderRejected -4004: Quantity less than min quantity.
+10:29:05 PROBE LOT_SIZE qty 0 → OrderRejected -4003: Quantity less than or equal to zero.
+10:29:05 PROBE qty off step (ADA 26.5) → OrderRejected -1111: Precision is over the maximum defined for this asset.
+10:29:05 PROBE MARKET_LOT_SIZE above max → OrderRejected -4005: Quantity greater than max quantity.
+10:29:05 PROBE tick: stop trigger = tick-grid + tick/10 (5 decimals; ADA pricePrecision 5) → ACCEPTED algo STOP_MARKET id=1000000257980332
+10:29:05 PROBE tick: stop trigger = tick-grid + tick/1000 (7 decimals) → OrderRejected -1111: Precision is over the maximum defined for this asset.
+10:29:05 PROBE PERCENT_PRICE: reduceOnly stop at 0.5×mark → ACCEPTED algo STOP_MARKET id=1000000257980354
+10:29:05 PROBE PERCENT_PRICE: market order (no price) n/a → closePosition flat → OrderRejected -4509: Time in Force (TIF) GTE can only be used with open positions. Please ensure that positions are available.
+10:29:12 RESULT 3i raw probes: PERCENT_PRICE / -1013 attempts PASS  | flat after: True
+10:29:12    LOG INFO httpx: HTTP Request: POST https://testnet.binancefuture.com/fapi/v1/algoOrder?algoType=CONDITIONAL&symbol=ADAUSDT&side=SELL&type=STOP_MARKET&triggerPrice=0.1016&workingType=MARK_PRICE&clientAlgoId=v6tprobe92978145417&closePosition=true&timestamp=1792978145417&recvWindow=10000&signature=<redacted> "HTTP/1.1 400 Bad Request"
+10:29:16 FINAL: positions none | open+algo orders none | telegram posts: 0
+10:29:16 DRILL PASS

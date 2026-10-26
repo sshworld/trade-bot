@@ -553,6 +553,99 @@ def test_qty_zero_only_when_min_qty_path_is_unreachable():
     assert z.skip == "qty_zero", z
 
 
+# ───────────────────────── exact-boundary killers (mutation round, 2026-10-26) ─────────────────────────
+# Float tolerance of the cap compares is 1e-12 (`> cap + 1e-12`), so "<=" vs "<" can only be told apart AT cap + 1e-12:
+# the helpers below build inputs whose float sum equals that value bit-for-bit.
+import math  # noqa: E402
+
+TOL = 1e-12
+
+
+def _exact_open(rf: float, target: float) -> float:
+    """open-risk value o with o + rf == target in float arithmetic (search the neighbouring floats)."""
+    o = target - rf
+    for _ in range(64):
+        if 0 + o + rf == target:
+            return o
+        o = math.nextafter(o, math.inf if o + rf < target else -math.inf)
+    raise AssertionError("no float o with o + rf == target")
+
+
+def test_cap_3pct_exact_boundary_enters_and_tolerance_edge_enters_just_above_skips():
+    s, ref = "BTCUSDT", PRICE["BTCUSDT"]
+    dist = Decimal("1800")
+    worst = ref * Decimal("0.98")
+    q_min = max(ceil_to(R[s].min_notional / worst, R[s].order_step), ceil_to(R[s].order_min_qty, R[s].order_step))
+    p = SizingParams()
+    loss = q_min * dist + q_min * ref * (2 * Decimal("0.0005") + Decimal(str(p.entry_slippage)) + Decimal(str(p.stop_slippage)))
+    for target, ok in ((0.03, True), (0.03 + TOL, True), (0.03 + 5 * TOL, False), (0.03 - 1e-6, True), (0.03 + 1e-6, False)):
+        wallet = loss / Decimal(target)                                   # loss_frac == target to ~1e-27 relative
+        z = size_entry(R[s], BRACKETS[s], wallet, wallet, ref, dist, mark=ref)
+        assert (z.skip is None) is ok, (target, z.skip, z.loss_frac)
+        if z.skip is None:
+            assert z.path == "qty_floor"
+        else:
+            assert z.skip == "min_order_risk_over_cap"
+    wallet = loss / Decimal(0.03 + TOL)
+    assert size_entry(R[s], BRACKETS[s], wallet, wallet, ref, dist, mark=ref).loss_frac == 0.03 + TOL   # the edge really is hit
+
+
+@pytest.mark.parametrize("path", ["qty_floor", "q0"])
+def test_open_risk_cap_exact_boundaries_5pct_and_2_5pct(path):
+    if path == "qty_floor":
+        s, ref, dist, wallet, cap, label = "BTCUSDT", PRICE["BTCUSDT"], Decimal("1800"), 100, 0.05, "total_risk_cap"
+    else:
+        s, ref, dist, wallet, cap, label = "DOGEUSDT", PRICE["DOGEUSDT"], Decimal("0.009"), 1000, 0.025, "risk_cap_portfolio"
+    z0 = size_entry(R[s], BRACKETS[s], wallet, wallet, ref, dist, mark=ref)
+    assert z0.skip is None and z0.path == path and z0.cap_frac == cap
+    rf = z0.risk_frac
+    def run(open_risk):
+        return size_entry(R[s], BRACKETS[s], wallet, wallet, ref, dist, 1, [{"side": 1, "risk_frac": open_risk}], mark=ref)
+    assert run(cap - rf).skip is None                                   # sum == cap exactly → allowed (≤)
+    assert run(cap - rf - 1e-4).skip is None
+    z = run(cap - rf + 1e-6)                                            # a hair over → skipped with the spec label
+    assert z.skip == label and z.skip not in ("loss_cap", "open_risk_cap")
+    assert run(cap - rf + 1e-3).skip == label                           # a loosened cap (cap + 1e-3) would let this in
+    assert run(_exact_open(rf, cap + TOL)).skip is None                 # tolerance edge: sum == cap + 1e-12 → allowed
+    assert run(_exact_open(rf, cap + 3 * TOL)).skip == label
+
+
+def test_min_notional_equality_is_allowed_in_precheck_and_q0_path():
+    """qty·worst == minNotional exactly (buffer 50% keeps the decimal math exact): allowed by `<`, rejected by `<=`;
+    q0·worst == minNotional stays on the q0 path (`>=`), not qty_floor."""
+    s, ref = "BTCUSDT", Decimal("100000")
+    p = SizingParams(price_buffer=0.5)
+    r = R[s]
+    qty = Decimal("0.001")                                              # 0.001 × 100000 × 0.5 == 50 == minNotional
+    assert qty * ref * Decimal("0.5") == r.min_notional
+    args = (r, BRACKETS[s], qty, ref, 5, stop_for(s, ref), 10**6, 1)
+    assert precheck_order(*args, mark=ref, p=p)[0] is None
+    assert precheck_order(r, BRACKETS[s], qty, ref - r.tick_size, 5, stop_for(s, ref), 10**6, 1, mark=ref, p=p)[0] == "below_min_notional"
+    z = size_entry(r, BRACKETS[s], 1000, 1000, ref, Decimal("3000"), mark=ref, p=p)
+    assert z.q0 == qty and z.path == "q0" and z.qty == qty and z.skip is None, z
+
+
+@pytest.mark.parametrize("delta,skipped", [(0.0, False), (1e-12, False), (5e-4, True)])
+def test_engine_second_pass_open_risk_guard_boundary(offline, monkeypatch, delta, skipped):
+    """The engine re-checks Σ open risk + new ≤ cap on the second pass (defence behind size_entry's identical check).
+    size_entry is stubbed to hand back a risk_frac of cap + delta so that guard itself is what decides."""
+    import live_v6.engine as engmod
+    real = engmod.size_entry
+
+    def stub(*a, **k):
+        z = real(*a, **k)
+        return dataclasses.replace(z, risk_frac=z.cap_frac + delta) if (k.get("fixed_lev") and z.skip is None) else z
+    monkeypatch.setattr(engmod, "size_entry", stub)
+    eng = _eng(offline, wallet="1000")
+    ok = eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
+    last = eng.meta["skip_log"][-1][2] if eng.meta.get("skip_log") else None
+    assert ok is (not skipped), (ok, last)
+    if skipped:
+        assert last == "risk_cap_portfolio"
+        assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] == 0
+        assert not [c for c in offline.fx.calls if c[0] == "market"]
+
+
 def test_exit_is_one_full_reduce_only_order(offline):
     eng = _eng(offline, wallet="1000")
     assert eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
