@@ -1,0 +1,14 @@
+O1 disable orphan detection (_is_orphan_prearm -> False)
+   -> KILLED (3): ['test_orphan_prearm_never_becomes_the_stop_of_a_manual_position_in_the_same_coin', 'test_orphan_prearm_stays_until_the_bot_has_its_own_stop_for_an_unowned_position', 'test_orphan_prearm_is_not_adopted_as_protection_of_a_manual_position_without_stop']  | FAILED live_v6/tests/test_sizing_minorder.py::test_orphan_prearm_is_not_adopted_as_protection_of_a_manual_position_without_stop
+O2 orphan test ignores our cid prefix (user's *p orders qualify)
+   -> KILLED (1): ['test_orphan_prearm_never_becomes_the_stop_of_a_manual_position_in_the_same_coin']  | FAILED live_v6/tests/test_sizing_minorder.py::test_orphan_prearm_never_becomes_the_stop_of_a_manual_position_in_the_same_coin
+O3 never cancel orphans next to an unknown position
+   -> KILLED (3): ['test_orphan_prearm_never_becomes_the_stop_of_a_manual_position_in_the_same_coin', 'test_orphan_prearm_stays_until_the_bot_has_its_own_stop_for_an_unowned_position', 'test_orphan_prearm_is_not_adopted_as_protection_of_a_manual_position_without_stop']  | FAILED live_v6/tests/test_sizing_minorder.py::test_orphan_prearm_is_not_adopted_as_protection_of_a_manual_position_without_stop
+O4 cancel orphan even while the bot has no own stop yet
+   -> KILLED (1): ['test_orphan_prearm_stays_until_the_bot_has_its_own_stop_for_an_unowned_position']  | FAILED live_v6/tests/test_sizing_minorder.py::test_orphan_prearm_stays_until_the_bot_has_its_own_stop_for_an_unowned_position
+O5 flat reconcile cancels ANY reduceOnly/closePosition order (no prefix check)
+   -> KILLED (1): ['test_orphan_prearm_after_failed_cancel_is_removed_by_reconcile_when_flat']  | FAILED live_v6/tests/test_sizing_minorder.py::test_orphan_prearm_after_failed_cancel_is_removed_by_reconcile_when_flat
+O6 flat reconcile never cancels the orphan
+   -> KILLED (3): ['test_orphan_prearm_after_failed_cancel_is_removed_by_reconcile_when_flat', 'test_unresolved_entry_keeps_its_prearm_through_a_flat_reconcile', 'test_kill_before_entry_sent_cleans_prearm[offline]']  | FAILED live_v6/tests/test_faults.py::test_kill_before_entry_sent_cleans_prearm[offline]
+O7 flat reconcile ignores pending (cancels unresolved-entry pre-arm)
+   -> KILLED (1): ['test_unresolved_entry_keeps_its_prearm_through_a_flat_reconcile']  | FAILED live_v6/tests/test_sizing_minorder.py::test_unresolved_entry_keeps_its_prearm_through_a_flat_reconcile
