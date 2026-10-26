@@ -10,7 +10,9 @@
 * 429 / 418 (REST or websocket handshake) → write STOPPED marker, exit 75 (systemd RestartPreventExitStatus=75).
   The marker keeps it stopped across restarts until ops remove it.
 * Own caps: RSS, data-dir size, filesystem free space. Watchdog stops the logger (marker + exit 75) if the live bot
-  is affected: its MainPID / NRestarts / ActiveState change, MemAvailable low, CPU / memory pressure high.
+  is HARMED: NRestarts rises, the system OOM-kill counter rises, it stays not-active for > 180 s, it restarts more than
+  3 times in 24 h, MemAvailable low, CPU / memory pressure high. A clean restart (deploy: new MainPID, NRestarts
+  unchanged, back active within the 180 s grace) is survived: re-baseline + a `bot_restart_rebaseline` row in gaps.csv.
 """
 from __future__ import annotations
 
@@ -26,6 +28,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -60,6 +63,9 @@ class Caps:
     pressure_strikes: int = 2            # consecutive bad watchdog checks before stopping
     probe_fail_strikes: int = 3          # consecutive failures to read the bot's state → stop
     watchdog_s: float = 30.0
+    bot_grace_s: float = 180.0           # TA 2026-10-26: bot may be down/changed this long without stopping the logger
+    bot_grace_poll_s: float = 5.0        # watchdog period while a bot change is pending (grace window open)
+    max_bot_restarts_24h: int = 3        # TA: 3 clean restarts in 24 h are fine, the 4th stops the logger
     oi_interval_s: int = 300
     ip_weight_limit: int = 2_400         # Binance futures REQUEST_WEIGHT / min / IP
     ip_weight_frac: float = 0.10         # TA: OI polling only while the IP is < 10 % of its weight
@@ -345,6 +351,17 @@ class Probe:
         return dict(l.split("=", 1) for l in r.stdout.strip().splitlines() if "=" in l)
 
     @staticmethod
+    def oom_kills() -> int | None:
+        """System-wide OOM-kill counter (/proc/vmstat), None if unreadable. Monotonic since boot."""
+        try:
+            for line in Path("/proc/vmstat").read_text(encoding="ascii").splitlines():
+                if line.startswith("oom_kill "):
+                    return int(line.split()[1])
+        except (OSError, ValueError, IndexError):
+            return None
+        return None
+
+    @staticmethod
     def _psi(kind: str):
         try:
             for line in Path(f"/proc/pressure/{kind}").read_text(encoding="ascii").splitlines():
@@ -374,13 +391,56 @@ class Watchdog:
     base: dict = field(default_factory=dict)
     strikes: int = 0
     probe_fails: int = 0
+    now_ms: Callable[[], int] = field(default=lambda: int(time.time() * 1000))
+    sleep_s: Callable[[float], None] = time.sleep          # blocking sleep, only used by start() before any task runs
+    on_rebaseline: Callable[[int, int, str], None] | None = None   # (grace_start_ms, grace_end_ms, reason) → gaps.csv
+    base_oom: int | None = None
+    pending_ms: int | None = None                           # first sighting of a bot change = grace window start
+    last_ok_ms: int | None = None
+    restarts: list = field(default_factory=list)            # re-baseline times (ms) inside the last 24 h
 
     def start(self) -> None:
-        b = self.probe.bot()
-        if b.get("ActiveState") != "active" or b.get("MainPID", "0") == "0":
-            raise Stop(f"live bot not active at logger start ({b.get('ActiveState')}, pid {b.get('MainPID')})")
+        """Baseline = bot active with a MainPID. Not active → retry every grace_poll_s for bot_grace_s, then stop (marker)."""
+        c, t0 = self.caps, self.now_ms()
+        while True:
+            b = self.probe.bot()
+            if b.get("ActiveState") == "active" and b.get("MainPID", "0") != "0":
+                break
+            if self.now_ms() - t0 >= int(c.bot_grace_s * 1000):
+                raise Stop(f"live bot not active at logger start after {c.bot_grace_s:.0f} s grace "
+                           f"({b.get('ActiveState')}, pid {b.get('MainPID')})")
+            self.sleep_s(c.bot_grace_poll_s)
         self.base = {"MainPID": b["MainPID"], "NRestarts": b.get("NRestarts", "0")}
-        log.info("watchdog baseline: live bot pid %s NRestarts %s", self.base["MainPID"], self.base["NRestarts"])
+        self.base_oom, self.last_ok_ms = self.probe.oom_kills(), self.now_ms()
+        log.info("watchdog baseline: live bot pid %s NRestarts %s oom_kill %s", self.base["MainPID"],
+                 self.base["NRestarts"], self.base_oom)
+
+    def interval_s(self) -> float:
+        return self.caps.bot_grace_poll_s if self.pending_ms is not None else self.caps.watchdog_s
+
+    def _bot(self, b: dict) -> None:
+        """Harm → Stop. A clean restart (new MainPID, active again inside the grace) → re-baseline, keep logging."""
+        c, now = self.caps, self.now_ms()
+        if b.get("NRestarts", "0") != self.base["NRestarts"]:
+            raise Stop(f"live bot auto-restarted (NRestarts {self.base['NRestarts']}->{b.get('NRestarts')}): harm")
+        if b.get("ActiveState") != "active" or b.get("MainPID", "0") == "0":
+            self.pending_ms = now if self.pending_ms is None else self.pending_ms
+            if now - self.pending_ms >= int(c.bot_grace_s * 1000):
+                raise Stop(f"live bot not active for {(now - self.pending_ms) / 1000:.0f} s "
+                           f"(grace {c.bot_grace_s:.0f} s; state {b.get('ActiveState')}, pid {b.get('MainPID')})")
+            return
+        if b["MainPID"] != self.base["MainPID"]:
+            start, old = (self.pending_ms if self.pending_ms is not None else self.last_ok_ms or now), self.base["MainPID"]
+            self.base["MainPID"] = b["MainPID"]
+            self.restarts = [t for t in self.restarts if now - t < 86_400_000] + [now]
+            log.warning("watchdog: bot restarted cleanly pid %s->%s (NRestarts %s); re-baselined, logging continues",
+                        old, b["MainPID"], b.get("NRestarts"))
+            if self.on_rebaseline:
+                self.on_rebaseline(start, now, f"pid {old}->{b['MainPID']}; NRestarts {b.get('NRestarts', '0')}; "
+                                   f"last_ok_ms {self.last_ok_ms}; restarts_24h {len(self.restarts)}")
+            if len(self.restarts) > c.max_bot_restarts_24h:
+                raise Stop(f"live bot restarted {len(self.restarts)}x in 24 h (> {c.max_bot_restarts_24h}): harm")
+        self.pending_ms, self.last_ok_ms = None, now
 
     def check(self) -> None:
         c = self.caps
@@ -392,10 +452,10 @@ class Watchdog:
             if self.probe_fails >= c.probe_fail_strikes:
                 raise Stop(f"cannot read live bot state {self.probe_fails}x: {type(e).__name__}") from e
             return
-        if b.get("ActiveState") != "active" or b.get("MainPID") != self.base["MainPID"] \
-                or b.get("NRestarts", "0") != self.base["NRestarts"]:
-            raise Stop(f"live bot changed (state {b.get('ActiveState')}, pid {self.base['MainPID']}->{b.get('MainPID')}, "
-                       f"NRestarts {self.base['NRestarts']}->{b.get('NRestarts')}) - logger stops itself")
+        oom = self.probe.oom_kills()
+        if oom is not None and self.base_oom is not None and oom > self.base_oom:
+            raise Stop(f"OOM-kill counter rose {self.base_oom}->{oom}: harm")
+        self._bot(b)
         h = self.probe.host()
         if h["data_mb"] > c.data_max_mb:
             raise Stop(f"data dir {h['data_mb']:.1f} MB > cap {c.data_max_mb} MB")
@@ -431,7 +491,8 @@ def handshake_status(e: BaseException):
 
 class Logger:
     def __init__(self, data_dir: Path, caps: Caps | None = None, *, probe=None, connect=default_connect,
-                 get=urllib_get, now_ms=lambda: int(time.time() * 1000), oi=True, sleep=asyncio.sleep):
+                 get=urllib_get, now_ms=lambda: int(time.time() * 1000), oi=True, sleep=asyncio.sleep,
+                 start_sleep=time.sleep):
         self.dir, self.caps = Path(data_dir), caps or Caps()
         self.dir.mkdir(parents=True, exist_ok=True)
         self.now_ms, self.connect, self.sleep = now_ms, connect, sleep
@@ -440,7 +501,8 @@ class Logger:
         self.minutes = Minutes(SYMBOLS, self.caps)
         self.liq = DailyCsv(self.dir / "liq", LIQ_HEADER)
         self.oi = OiPoller(DailyCsv(self.dir / "oi", OI_HEADER), self.caps, get) if oi else None
-        self.watchdog = Watchdog(probe or Probe("live_v6-live", self.dir), self.caps)
+        self.watchdog = Watchdog(probe or Probe("live_v6-live", self.dir), self.caps, now_ms=now_ms, sleep_s=start_sleep,
+                                 on_rebaseline=lambda t0, t1, why: self.gaps.row("bot_restart_rebaseline", t0, t1, why))
         self.quality = Quality(self.dir / "quality.csv", self.minutes, self.caps)
         self.rows = 0
 
@@ -501,7 +563,7 @@ class Logger:
 
     async def watchdog_loop(self) -> None:
         while True:
-            await self.sleep(self.caps.watchdog_s)
+            await self.sleep(self.watchdog.interval_s())
             self.watchdog.check()
 
     async def run_async(self) -> int:

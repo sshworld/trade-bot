@@ -1,5 +1,6 @@
 import asyncio
 import gzip
+import heapq
 import json
 import subprocess
 import sys
@@ -140,6 +141,10 @@ class FakeProbe:
         self.h = host or {"mem_avail_mb": 500, "psi_cpu": 1.0, "psi_mem": 0.0, "load5": 0.1, "rss_mb": 25,
                           "data_mb": 1, "fs_free_mb": 17_000}
         self.fail = 0
+        self.oom = 7                                        # system-wide /proc/vmstat oom_kill
+
+    def oom_kills(self):
+        return self.oom
 
     def bot(self):
         if self.fail:
@@ -204,11 +209,11 @@ def test_watchdog_stop_ends_whole_process_with_marker(tmp_path):
     p = FakeProbe()
 
     async def sleep(d):
-        p.b["MainPID"] = "99999"                 # live bot restarted
+        p.b["NRestarts"] = "1"                   # live bot crashed + auto-restarted by systemd = harm
         await asyncio.sleep(0)
 
     lg = L.Logger(tmp_path, probe=p, connect=lambda u: Silent(), oi=False, now_ms=lambda: T0, sleep=sleep)
-    assert lg.run() == L.EXIT_STOPPED and "live bot changed" in (tmp_path / "STOPPED").read_text()
+    assert lg.run() == L.EXIT_STOPPED and "NRestarts 0->1" in (tmp_path / "STOPPED").read_text()
 
 
 def test_ws_reconnects_with_backoff_and_logs_sessions(tmp_path):
@@ -272,26 +277,51 @@ def test_tick_loop_writes_daily_csv_rows(tmp_path):
 
 
 # ───────── watchdog: the live bot comes first ─────────
-def wd(probe, **caps):
-    w = L.Watchdog(probe, L.Caps(**caps))
+class Clk:
+    """Fake wall clock for the watchdog (ms); sleep() advances it."""
+
+    def __init__(self, t=T0):
+        self.t = t
+
+    def now(self):
+        return self.t
+
+    def adv(self, s):
+        self.t += int(s * 1000)
+
+    sleep = adv
+
+
+def wd(probe, clk=None, **caps):
+    clk, rows = clk or Clk(), []
+    w = L.Watchdog(probe, L.Caps(**caps), now_ms=clk.now, sleep_s=clk.sleep, on_rebaseline=lambda *a: rows.append(a))
     w.start()
+    w.clk, w.rows = clk, rows
     return w
 
 
-def test_watchdog_refuses_start_if_bot_not_active():
-    with pytest.raises(L.Stop):
-        wd(FakeProbe(bot={"ActiveState": "activating", "MainPID": "0", "NRestarts": "0"}))
+def ACTIVE(pid, n=0):
+    return {"ActiveState": "active", "MainPID": str(pid), "NRestarts": str(n)}
 
 
-@pytest.mark.parametrize("change", [{"MainPID": "40000"}, {"NRestarts": "1"}, {"ActiveState": "failed"}])
-def test_watchdog_stops_if_live_bot_pid_restarts_or_state_change(change):
+def DOWN(n=0, state="activating"):
+    return {"ActiveState": state, "MainPID": "0", "NRestarts": str(n)}
+
+
+def at(w, s):
+    """advance the fake clock by s seconds, then run one watchdog check"""
+    w.clk.adv(s)
+    w.check()
+
+
+def test_watchdog_stops_if_live_bot_state_failed_forever():
     p = FakeProbe()
     w = wd(p)
-    w.check()
-    p.b.update(change)
+    p.b.update(ActiveState="failed", MainPID="0")
     with pytest.raises(L.Stop) as e:
-        w.check()
-    assert e.value.code == L.EXIT_STOPPED and "live bot changed" in e.value.reason
+        for _ in range(60):
+            at(w, 5)                             # polled every 5 s: stops once 180 s have passed
+    assert e.value.code == L.EXIT_STOPPED and "not active for 180 s" in e.value.reason
 
 
 @pytest.mark.parametrize("key,val", [("mem_avail_mb", 100), ("psi_cpu", 60.0), ("psi_mem", 9.0)])
@@ -339,6 +369,380 @@ def test_watchdog_stops_if_bot_state_unreadable_3x():
 def test_rss_cap_exit_is_restartable_no_marker(tmp_path):
     lg = L.Logger(tmp_path, probe=FakeProbe(), oi=False, now_ms=lambda: T0)
     assert lg.stopped(L.Stop("rss", L.EXIT_RESTARTABLE)) == 1 and not (tmp_path / "STOPPED").exists()
+
+
+# ───────── watchdog grace (TA 2026-10-26): survive a clean redeploy, stop on harm ─────────
+MS = 1000
+
+
+def test_replay_2026_10_22_clean_redeploy_pid_51227_to_60556_is_survived():
+    """The real 10/22 incident: `systemctl restart live_v6-live` (MainPID 51227 -> 60556, NRestarts stays 0) used to
+    stop the logger with a marker. Now: re-baseline, keep logging, one gaps row."""
+    p = FakeProbe(bot=ACTIVE(51227))
+    w = wd(p)
+    at(w, 30)                                           # normal tick
+    p.b = ACTIVE(60556)                                 # redeploy completed between two 30 s ticks
+    at(w, 30)                                           # must NOT raise
+    assert w.base["MainPID"] == "60556" and w.interval_s() == 30.0
+    ((t0, t1, why),) = w.rows
+    assert "51227->60556" in why and t0 == T0 + 30 * MS and t1 == T0 + 60 * MS
+    at(w, 30)                                           # and keeps running against the new baseline
+    p.b = ACTIVE(60556, 1)
+    with pytest.raises(L.Stop):                         # ... where harm is still detected
+        at(w, 30)
+
+
+def test_bot_returns_inside_grace_with_new_pid_rebaselines_and_returns_to_30s_polling():
+    p = FakeProbe(bot=ACTIVE(100))
+    w = wd(p)
+    at(w, 30)
+    p.b = DOWN(state="inactive")                        # stop phase of `systemctl restart`
+    at(w, 5)
+    assert w.pending_ms == T0 + 35 * MS and w.interval_s() == 5.0
+    for _ in range(20):                                 # 100 s down
+        at(w, 5)
+    p.b = ACTIVE(200)                                   # back, new PID, NRestarts unchanged
+    at(w, 5)
+    assert w.pending_ms is None and w.base["MainPID"] == "200" and w.interval_s() == 30.0
+    ((t0, t1, why),) = w.rows
+    assert (t0, t1) == (T0 + 35 * MS, T0 + 140 * MS) and "100->200" in why and "NRestarts 0" in why
+
+
+def test_bot_back_exactly_at_180s_boundary_survives_but_still_down_at_180s_stops():
+    p = FakeProbe(bot=ACTIVE(100))
+    w = wd(p)
+    p.b = DOWN()
+    at(w, 0)                                            # first sighting: grace window opens
+    for _ in range(35):
+        at(w, 5)                                        # 175 s: tolerated
+    p.b = ACTIVE(200)
+    at(w, 5)                                            # active again at exactly 180 s → survives
+    assert w.rows and w.base["MainPID"] == "200"
+    p.b = DOWN()
+    at(w, 0)
+    for _ in range(35):
+        at(w, 5)
+    with pytest.raises(L.Stop) as e:
+        at(w, 5)                                        # still down at 180 s
+    assert e.value.code == L.EXIT_STOPPED and "not active for 180 s" in e.value.reason
+
+
+def test_grace_exceeded_whole_logger_stops_with_marker_exit_75_and_keeps_written_data(tmp_path):
+    steps = [(0, ACTIVE(100)), (200, DOWN(state="inactive")), (200 + 600, ACTIVE(300))]   # bot never back in time
+    lg, vt, sent, rc = run_vt(tmp_path, steps, end_s=900)
+    assert rc == L.EXIT_STOPPED and (tmp_path / "STOPPED").exists()
+    assert "not active for 18" in (tmp_path / "STOPPED").read_text()
+    assert "bot_restart_rebaseline" not in (tmp_path / "gaps.csv").read_text()
+    assert "process_stop" in (tmp_path / "gaps.csv").read_text()
+    assert vt.t < T0 + 5 * MS + 480 * MS and len(minute_counts(tmp_path)) >= 3      # stopped at ~383 s, rows kept
+
+
+@pytest.mark.parametrize("down_first", [False, True])
+def test_nrestarts_rise_stops_at_once_even_if_bot_is_active_again(down_first):
+    p = FakeProbe(bot=ACTIVE(100))
+    w = wd(p)
+    if down_first:
+        p.b = DOWN(n=1)                                 # systemd crash-restart: NRestarts 1 while activating
+    else:
+        p.b = ACTIVE(200, 1)
+    with pytest.raises(L.Stop) as e:
+        at(w, 5)
+    assert e.value.code == L.EXIT_STOPPED and "NRestarts 0->1" in e.value.reason and not w.rows
+
+
+def test_nrestarts_unchanged_is_not_harm():
+    p = FakeProbe(bot=ACTIVE(100, 4))
+    w = wd(p)
+    p.b = ACTIVE(101, 4)
+    at(w, 30)
+    assert len(w.rows) == 1
+
+
+def test_restart_cap_three_in_24h_ok_fourth_stops():
+    p = FakeProbe(bot=ACTIVE(100))
+    w = wd(p)
+    for k in range(1, 4):                               # 3 clean redeploys 1 h apart: fine
+        p.b = ACTIVE(100 + k)
+        at(w, 3600)
+    assert len(w.rows) == 3 and len(w.restarts) == 3
+    p.b = ACTIVE(104)
+    with pytest.raises(L.Stop) as e:                    # the 4th inside 24 h
+        at(w, 3600)
+    assert e.value.code == L.EXIT_STOPPED and "4x in 24 h" in e.value.reason and len(w.rows) == 4   # row still written
+
+
+@pytest.mark.parametrize("gap_s,stops", [(86_400 - 1, True), (86_400, False), (86_400 + 1, False)])
+def test_restart_cap_24h_window_boundary(gap_s, stops):
+    """restarts at 0, +1 h, +2 h; the 4th at `gap_s` after the 1st: 24 h old restarts no longer count."""
+    p = FakeProbe(bot=ACTIVE(100))
+    w = wd(p)
+    for k in range(3):
+        p.b = ACTIVE(101 + k)
+        at(w, 0 if k == 0 else 3600)
+    p.b = ACTIVE(110)
+    w.clk.t = T0 + gap_s * MS
+    if stops:
+        with pytest.raises(L.Stop):
+            w.check()
+    else:
+        w.check()
+        assert len(w.restarts) == 3
+
+
+def test_two_quick_clean_restarts_each_rebaseline_and_count_twice():
+    p = FakeProbe(bot=ACTIVE(100))
+    w = wd(p)
+    p.b = ACTIVE(101)
+    at(w, 30)
+    p.b = ACTIVE(102)
+    at(w, 30)
+    assert [r[2].split(";")[0] for r in w.rows] == ["pid 100->101", "pid 101->102"] and len(w.restarts) == 2
+
+
+def test_oom_counter_rise_stops_equal_does_not():
+    p = FakeProbe()
+    w = wd(p)
+    at(w, 30)                                           # unchanged counter: fine
+    p.oom += 1
+    with pytest.raises(L.Stop) as e:
+        at(w, 30)
+    assert e.value.code == L.EXIT_STOPPED and "OOM-kill counter rose 7->8" in e.value.reason
+
+
+def test_oom_counter_rise_during_grace_also_stops():
+    p = FakeProbe(bot=ACTIVE(100))
+    w = wd(p)
+    p.b = DOWN()
+    at(w, 5)
+    p.oom += 2
+    with pytest.raises(L.Stop) as e:
+        at(w, 5)
+    assert "OOM-kill" in e.value.reason
+
+
+def test_oom_unreadable_counter_is_ignored():
+    p = FakeProbe()
+    p.oom = None
+    w = wd(p)
+    at(w, 30)
+
+
+def test_probe_oom_kills_parses_proc_vmstat(monkeypatch):
+    def fake(text):
+        def read_text(encoding=None):
+            if text is None:
+                raise OSError("no /proc")
+            return text
+        return lambda path: SimpleNamespace(read_text=read_text)
+    monkeypatch.setattr(L, "Path", fake("nr_free_pages 1\noom_kill 42\npgfault 9\n"))
+    assert L.Probe.oom_kills() == 42
+    monkeypatch.setattr(L, "Path", fake("nr_free_pages 1\n"))
+    assert L.Probe.oom_kills() is None
+    monkeypatch.setattr(L, "Path", fake(None))
+    assert L.Probe.oom_kills() is None
+
+
+def test_probe_oom_kills_reads_this_host():
+    n = L.Probe.oom_kills()
+    assert n is None or n >= 0
+
+
+def test_start_bot_inactive_retries_180s_then_stops_with_marker_exit_75():
+    clk, polls = Clk(), []
+
+    class Down(FakeProbe):
+        def bot(self):
+            polls.append(clk.t)
+            return DOWN()
+    w = L.Watchdog(Down(), L.Caps(), now_ms=clk.now, sleep_s=clk.sleep)
+    with pytest.raises(L.Stop) as e:
+        w.start()
+    assert e.value.code == L.EXIT_STOPPED == 75 and "after 180 s grace" in e.value.reason
+    assert polls[0] == T0 and polls[-1] == T0 + 180 * MS and len(polls) == 37 and clk.t == T0 + 180 * MS
+
+
+def test_start_bot_comes_up_inside_grace_baselines_the_new_pid_without_gaps_row():
+    clk = Clk()
+
+    class Late(FakeProbe):
+        def bot(self):
+            return ACTIVE(555) if clk.t >= T0 + 60 * MS else DOWN()
+    w = L.Watchdog(Late(), L.Caps(), now_ms=clk.now, sleep_s=clk.sleep)
+    w.start()
+    assert w.base == {"MainPID": "555", "NRestarts": "0"} and clk.t == T0 + 60 * MS and w.base_oom == 7
+
+
+def test_logger_start_with_bot_inactive_writes_marker_exit_75_after_grace_and_stays_stopped(tmp_path):
+    clk = Clk()
+
+    def connect(url):
+        raise AssertionError("must not connect while the live bot is down")
+    lg = L.Logger(tmp_path, probe=FakeProbe(bot=DOWN()), connect=connect, oi=False, now_ms=clk.now, start_sleep=clk.sleep)
+    assert lg.run() == 75 and clk.t - T0 == 180 * MS
+    assert "after 180 s grace" in (tmp_path / "STOPPED").read_text()
+    assert L.Logger(tmp_path, probe=FakeProbe(), connect=connect, oi=False, now_ms=clk.now).run() == 75   # marker holds
+
+
+def test_watchdog_polls_every_5s_while_a_bot_change_is_pending_else_30s():
+    p = FakeProbe(bot=ACTIVE(100))
+    w = wd(p)
+    assert w.interval_s() == 30.0
+    p.b = DOWN()
+    at(w, 30)
+    assert w.interval_s() == 5.0
+    p.b = ACTIVE(101)
+    at(w, 5)
+    assert w.interval_s() == 30.0
+
+
+def test_host_pressure_and_caps_are_still_enforced_during_grace():
+    p = FakeProbe(bot=ACTIVE(100))
+    w = wd(p)
+    p.b = DOWN()
+    p.h["psi_mem"] = 9.0
+    at(w, 5)
+    with pytest.raises(L.Stop) as e:
+        at(w, 5)
+    assert "pressure" in e.value.reason
+
+
+def test_unreadable_bot_state_3x_still_stops_during_grace():
+    p = FakeProbe(bot=ACTIVE(100))
+    w = wd(p)
+    p.b = DOWN()
+    at(w, 5)
+    p.fail = 3
+    at(w, 5)
+    at(w, 5)
+    with pytest.raises(L.Stop):
+        at(w, 5)
+
+
+def test_default_caps_are_the_ta_values():
+    c = L.Caps()
+    assert (c.bot_grace_s, c.bot_grace_poll_s, c.max_bot_restarts_24h, c.watchdog_s) == (180.0, 5.0, 3, 30.0)
+
+
+# ── whole-logger runs on a virtual clock: no data is lost while the grace window is open ──
+class VT:
+    """Virtual time: every Logger sleep() registers a wake-up; the driver jumps to the earliest one."""
+
+    def __init__(self, t):
+        self.t, self.q, self.n = t, [], 0
+
+    def advance(self, d):
+        self.t += int(d * 1000)
+
+    async def sleep(self, d):
+        fut = asyncio.get_running_loop().create_future()
+        self.n += 1
+        heapq.heappush(self.q, (self.t + int(d * 1000), self.n, fut))
+        await fut
+
+    async def driver(self):
+        while True:
+            for _ in range(8):
+                await asyncio.sleep(0)
+            if self.q:
+                wake, _, fut = heapq.heappop(self.q)
+                self.t = max(self.t, wake)
+                if not fut.done():
+                    fut.set_result(None)
+
+
+class Feed:
+    """A websocket that delivers one SOLUSDT liquidation every 20 s of virtual time until end_ms."""
+
+    def __init__(self, vt, end_ms, sent):
+        self.vt, self.end, self.sent = vt, end_ms, sent
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        await self.vt.sleep(20)
+        if self.vt.t >= self.end:
+            raise L.Stop("test end", 0)
+        self.sent.append(self.vt.t)
+        return msg("SOLUSDT", "SELL", 1, 100, self.vt.t)
+
+
+class ScriptedBot(FakeProbe):
+    """bot state as a function of virtual time: steps = [(seconds after start, state)]"""
+
+    def __init__(self, vt, steps):
+        super().__init__()
+        self.vt, self.t0, self.steps = vt, vt.t, steps
+
+    def bot(self):
+        cur = [st for rel, st in self.steps if self.t0 + rel * MS <= self.vt.t][-1]
+        return dict(cur)
+
+
+def run_vt(tmp_path, steps, end_s):
+    vt = VT(T0 + 5 * MS)
+    sent = []
+    lg = L.Logger(tmp_path, probe=ScriptedBot(vt, steps), connect=lambda u: Feed(vt, vt.t + end_s * MS, sent), oi=False,
+                  now_ms=lambda: vt.t, sleep=vt.sleep, start_sleep=vt.advance)
+
+    async def go():
+        drv = asyncio.ensure_future(vt.driver())
+        try:
+            return await lg.run_async()
+        finally:
+            drv.cancel()
+    return lg, vt, sent, asyncio.run(go())
+
+
+def minute_counts(path):
+    out = {}
+    for f in sorted((path / "liq").glob("*.csv")):
+        for line in f.read_text().splitlines()[1:]:
+            c = line.split(",")
+            if c[1] == "SOLUSDT":
+                out[int(c[0])] = int(c[4]) + int(c[5])
+    return out
+
+
+def test_no_data_lost_during_grace_window_and_gaps_row_has_start_and_end(tmp_path):
+    steps = [(0, ACTIVE(51227)), (200, DOWN(state="inactive")), (300, ACTIVE(60556))]    # ~100 s outage, clean redeploy
+    lg, vt, sent, rc = run_vt(tmp_path, steps, end_s=900)
+    assert rc == 0 and not (tmp_path / "STOPPED").exists()                    # survived; Feed ended the test (Stop code 0)
+    rows = [r.split(",") for r in (tmp_path / "gaps.csv").read_text().splitlines() if r.startswith("bot_restart_rebaseline")]
+    assert len(rows) == 1
+    kind, g0, g1, why = rows[0]
+    g0, g1 = int(g0), int(g1)
+    start = T0 + 5 * MS
+    assert start + 200 * MS <= g0 <= start + 235 * MS and start + 300 * MS <= g1 <= start + 305 * MS      # both ends present
+    assert 0 < g1 - g0 < 180 * MS and "51227->60556" in why
+    counts = minute_counts(tmp_path)
+    minutes = sorted(counts)
+    assert minutes == list(range(minutes[0], minutes[-1] + L.MIN, L.MIN)) and len(minutes) >= 10        # no hole at all
+    for m in minutes:                                                                          # every event is in a row
+        assert counts[m] == len([t for t in sent if m <= t < m + L.MIN])
+    grace = [m for m in minutes if g0 - L.MIN < m < g1 + L.MIN]
+    assert len(grace) >= 2 and all(counts[m] >= 2 for m in grace)                              # data kept inside the window
+
+
+def test_clean_redeploy_between_ticks_logger_keeps_running_and_logs_row(tmp_path):
+    steps = [(0, ACTIVE(51227)), (100, ACTIVE(60556))]                                          # 10/22 replay, no down state seen
+    lg, vt, sent, rc = run_vt(tmp_path, steps, end_s=400)
+    assert rc == 0 and not (tmp_path / "STOPPED").exists()
+    gaps = (tmp_path / "gaps.csv").read_text()
+    assert gaps.count("bot_restart_rebaseline") == 1 and "51227->60556" in gaps
+
+
+def test_fourth_restart_in_24h_stops_whole_logger_with_marker(tmp_path):
+    steps = [(0, ACTIVE(1))] + [(100 * k, ACTIVE(1 + k)) for k in range(1, 5)]
+    lg, vt, sent, rc = run_vt(tmp_path, steps, end_s=900)
+    assert rc == L.EXIT_STOPPED and "4x in 24 h" in (tmp_path / "STOPPED").read_text()
+    assert (tmp_path / "gaps.csv").read_text().count("bot_restart_rebaseline") == 4
 
 
 # ───────── preflight / unit / static ─────────
