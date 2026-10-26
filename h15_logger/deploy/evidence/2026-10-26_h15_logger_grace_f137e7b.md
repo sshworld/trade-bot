@@ -93,3 +93,21 @@ A first run exposed one hanging test (M3: a logger-level test looped forever whe
 8. **Start**: `systemctl start h15-logger`. Verify within 2 min: ActiveState=active, NRestarts=0, journal `watchdog baseline: live bot pid <PID> NRestarts 0 oom_kill <n>` (n must be a number — otherwise the logger stops with the marker by design), `gaps.csv` process_start + connect rows, first `liq/` minute rows, limits read-back unchanged (Nice 19, CPUQuota 25 %, MemoryMax 100M, io idle), bot untouched (same PID/NRestarts), host PSI normal. Re-check after 30 min (RSS, rows continuous, no STOPPED, `quality.csv`).
 9. **Rollback** (if anything differs or the logger misbehaves): `systemctl stop h15-logger`; `mv /opt/h15-logger/app /opt/h15-logger/app-f137e7b && mv /opt/h15-logger/app-49d347a /opt/h15-logger/app`; `echo 49d347a > /opt/h15-logger/RELEASE`; verify `logger.py` = `78fc65c5…4cc1`; `systemctl start h15-logger`. Older fallbacks: `app-77469af` (WS fix, without the quality.csv rule), `app-36653c2` (legacy URL, silent — do not use).
 10. Post-deploy evidence note appended to this folder; report to TA.
+
+## DEPLOY RESULT — 2026-10-26 10:52–11:23 KST (executed per the plan above; TA approval 10:46 KST)
+Times are KST (VPS clock is UTC; −9 h). Done via `ops@` + sudo; only `logger.py`, `README.md`, `tests/test_logger.py` installed; unit file and live bot untouched. Outside every 4 h close window (next one 12:45).
+
+| step | result |
+|---|---|
+| pre-check 10:51 | `RELEASE`=`49d347a`; `logger.py` sha256 `78fc65c5…4cc1`; unit `f2fa5230…eb4e`; no `STOPPED` (only `STOPPED.bak-20261026T012453Z`); `oom_kill 0`; MemAvailable 497 MB, CPU PSI some avg60 2.00, mem PSI 0.00; logger PID 109529 (RSS 30.6 MB, up 27 min); **bot PID 108050, NRestarts 0** |
+| staged upload | `/tmp/h15-grace-f137e7b/h15_logger/` — 3 files sha256 = `git show f137e7b:<path>` |
+| backup | `cp -a /opt/h15-logger/app /opt/h15-logger/app-49d347a` (backup `logger.py` = `78fc65c5…4cc1`) |
+| stop 10:52:28 | `systemctl stop h15-logger` → Result=success, inactive, no STOPPED marker |
+| install | `install -m 644 -o root -g root` ×3; `echo f137e7b > RELEASE` |
+| full sha256 compare | `logger.py` `0428017fb750b3e1e9f407776ca41abd99ae1b88a962fa8fd9ef337bcf3aa2a2`, `README.md` `b2773103f17ba3c8193d92f522325c3bdbc5e3b255278659d39f1e92a8aab18d`, `tests/test_logger.py` `478fbb3d5608146ffc78671277e2da62a52dedc90d29343eff3e06e662340dfa` — all equal to `git show f137e7b`; unit still `f2fa5230f93335158e0a6ebf6dd47fdac9823b453fb1242379ddc5f9abd8eb4e` |
+| start 10:52:28 | active/running, **new PID 110617**, NRestarts 0; journal `watchdog baseline: live bot pid 108050 NRestarts 0 oom_kill 0` (numeric) at 10:52:29 |
+| 2-min verification (≈10:54:34) | `gaps.csv`: `process_start,1792979549660,,pid 110617` + `connect,1792979550367,,`; liq rows: minute 01:52 UTC not written (partial connect, by design), minute 01:53 UTC row written with events (BTC buy 1434.31 / ETH buy 2432.61); read-back: Nice 19, CPUSchedulingPolicy 5 (idle), IOSchedulingClass 3 (idle), IOWeight 10, CPUWeight 10, CPUQuota 250 ms/s (cpu.max `25000 100000`), MemoryHigh 80 MiB, MemoryMax 100 MiB (104857600), MemorySwapMax 0, OOMScoreAdjust 1000 — all as before; RSS 29.6 MB; `oom_kill 0`; **bot PID 108050, NRestarts 0 (unchanged)**; no STOPPED |
+| 30-min recheck 11:22:45 | logger PID 110617 active, NRestarts 0, up 30 min 19 s, RSS 30.3 MB (MemoryCurrent 17.9 MB), journal `rows 54 / 114 / 174` at 11:02/11:12/11:22 (`msgs 22 / 38 / 71`, bad 0, oi rounds 2/4/6, skipped 0); liq minutes from 10:53 KST to 11:21 KST = **29 consecutive minutes, 0 gaps**; `quality.csv` new row `1792979549683,1792980000000,21,4,10,4,0,2,1,7,0,1` (hour 10:00 KST, events 21, valid_minutes 7, silence 0, partial 1) written at 11:00:03 KST; no `STOPPED`; `oom_kill 0`; `RELEASE`=`f137e7b`; `logger.py` sha256 `0428017f…a2a2` unchanged; **bot PID 108050, NRestarts 0 (unchanged)** |
+| rollback | **not needed**; `/opt/h15-logger/app-49d347a` kept as the rollback target |
+
+Observation: the previous process (PID 109529, 10:24:53–10:52:28 KST) was stopped by SIGTERM and wrote no `quality.csv` row for that hour fragment (documented behaviour: SIGTERM writes nothing); its liq minute rows are present and continuous.
