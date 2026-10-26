@@ -646,6 +646,92 @@ def test_engine_second_pass_open_risk_guard_boundary(offline, monkeypatch, delta
         assert not [c for c in offline.fx.calls if c[0] == "market"]
 
 
+# ───────────── orphan pre-arm after an entry rejection whose cancel FAILED (TA condition 1, 2026-10-26) ─────────────
+def _reject_entry_and_fail_cancel(offline, cancel_failures=1):
+    """Entry definitively rejected (-4164) AND the pre-arm cancel fails (`_cancel_quiet` only logs) → orphan pre-arm."""
+    eng = _eng(offline)
+
+    def reject(fn, s, side, qty, cid, reduce_only=False, **k):
+        if reduce_only:
+            return fn(s, side, qty, cid, reduce_only, **k)
+        raise OrderRejected(-4164, "Order's notional must be no smaller than 5")
+    offline.fx.inject("market", reject, times=1)
+    offline.fx.inject("cancel", "unavailable", times=cancel_failures)
+    assert not eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
+    assert eng.meta["skip_log"][-1][2] == "entry_rejected" and not eng.st["intents"]
+    orphans = [o for o in offline.inner.open_orders("DOGEUSDT") if o["client_id"].endswith("p")]
+    assert len(orphans) == 1 and orphans[0]["reduce_only"] and not orphans[0]["close_position"]    # the orphan exists
+    return eng, orphans[0]
+
+
+def test_orphan_prearm_after_failed_cancel_is_removed_by_reconcile_when_flat(offline):
+    eng, orphan = _reject_entry_and_fail_cancel(offline, cancel_failures=3)
+    mine = offline.inner.stop("DOGEUSDT", "SELL", Decimal("0.10"), "my_hedge_p", qty=Decimal(1))     # user's own order, not ours
+    eng.reconcile()                                  # cancel fails again (3 injected failures: 1 in enter, 2 here)
+    eng.reconcile()
+    eng.reconcile()                                  # API healthy again → removed
+    assert [o["id"] for o in offline.inner.open_orders("DOGEUSDT")] == [mine["id"]]      # only the orphan was removed
+    assert offline.amt("DOGEUSDT") == 0 and not eng.st["pos"] and not eng.st["intents"] and not eng.st["unknown"]
+    assert eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())      # the coin trades normally afterwards
+    offline.assert_safe()
+
+
+def test_orphan_prearm_never_becomes_the_stop_of_a_manual_position_in_the_same_coin(offline):
+    """A user opens a manual DOGE position (with his own stop) while the orphan bot pre-arm is still live: the bot's
+    orphan must be cancelled, the manual position and the manual stop must be left exactly as they are."""
+    eng, orphan = _reject_entry_and_fail_cancel(offline)
+    offline.inner.open_position_raw("DOGEUSDT", 1)                   # manual position, smaller than the orphan's qty
+    manual = offline.inner.stop("DOGEUSDT", "SELL", Decimal("0.10"), "web_manual_stop")        # his own closePosition stop
+    manual2 = offline.inner.stop("DOGEUSDT", "SELL", Decimal("0.12"), "my_hedge_p", qty=Decimal(1))   # his reduceOnly stop, id also ends in "p"
+    eng.reconcile()
+    left = {o["client_id"]: o for o in offline.inner.open_orders("DOGEUSDT")}
+    assert set(left) == {"web_manual_stop", "my_hedge_p"}, left       # orphan gone, BOTH manual orders untouched (no prefix → not ours)
+    assert left["my_hedge_p"]["id"] == manual2["id"]
+    assert left["web_manual_stop"]["id"] == manual["id"] and left["web_manual_stop"]["stop_price"] == Decimal("0.10")
+    assert offline.amt("DOGEUSDT") == 1 and not close_calls(offline)  # manual position untouched, nothing closed
+    u = eng.st["unknown"]["DOGEUSDT"]
+    assert u["stop_cid"] == "web_manual_stop" and Decimal(u["stop_px"]) == Decimal("0.10")      # protection = HIS stop
+
+
+def test_unresolved_entry_keeps_its_prearm_through_a_flat_reconcile(offline):
+    """Counter-test of the cleanup: entry outcome unknown (intent kept, order status unreadable) → the pre-arm is NOT an
+    orphan and a flat-account reconcile must leave it alone; once the intent resolves it is cleaned."""
+    eng = _eng(offline)
+    offline.fx.inject("market", "unavailable", times=1)
+    offline.fx.inject("get_order", "unavailable", times=50)
+    eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
+    assert eng.st["intents"]
+    eng.reconcile()
+    assert eng.st["intents"] and [o["client_id"] for o in offline.inner.open_orders("DOGEUSDT")] == [f"{c}p" for c in eng.st["intents"]]
+    offline.fx.clear()
+    eng.reconcile()
+    assert not eng.st["intents"] and not offline.inner.open_orders("DOGEUSDT") and offline.amt("DOGEUSDT") == 0
+
+
+def test_orphan_prearm_stays_until_the_bot_has_its_own_stop_for_an_unowned_position(offline):
+    """If the bot cannot place its own unknown-position stop yet, the orphan is not cancelled (never leave a position
+    with NO stop because of cleanup); it is removed as soon as the bot's own stop is confirmed."""
+    eng, orphan = _reject_entry_and_fail_cancel(offline)
+    offline.inner.open_position_raw("DOGEUSDT", 1)
+    offline.fx.inject("stop", "unavailable", times=1)
+    eng.reconcile()
+    assert [o["client_id"] for o in offline.inner.open_orders("DOGEUSDT")] == [orphan["client_id"]]
+    eng.reconcile()
+    left = offline.inner.open_orders("DOGEUSDT")
+    assert len(left) == 1 and left[0]["close_position"] and left[0]["client_id"].startswith("v6tDOGEu")
+
+
+def test_orphan_prearm_is_not_adopted_as_protection_of_a_manual_position_without_stop(offline):
+    eng, orphan = _reject_entry_and_fail_cancel(offline)
+    offline.inner.open_position_raw("DOGEUSDT", 1)                   # manual, no stop of his own
+    eng.reconcile()
+    left = offline.inner.open_orders("DOGEUSDT")
+    assert orphan["client_id"] not in [o["client_id"] for o in left]  # orphan cancelled, NOT adopted as "existing stop"
+    assert len(left) == 1 and left[0]["close_position"] and left[0]["client_id"].startswith("v6tDOGEu")   # bot's own unknown-position stop
+    assert eng.st["unknown"]["DOGEUSDT"]["stop_cid"] == left[0]["client_id"]
+    assert offline.amt("DOGEUSDT") == 1 and not close_calls(offline)
+
+
 def test_exit_is_one_full_reduce_only_order(offline):
     eng = _eng(offline, wallet="1000")
     assert eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())

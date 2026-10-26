@@ -906,6 +906,12 @@ class V6Engine:
         ok.sort(key=lambda o: not o["close_position"])       # closePosition preferred
         return ok[0] if ok else None
 
+    def _is_orphan_prearm(self, o) -> bool:
+        """Bot pre-arm reduceOnly stop (`<cid>p`) whose entry intent no longer exists (rejected / resolved) and that is not a journaled position's stop."""
+        cid = str(o.get("client_id") or "")
+        return (cid.startswith(self.cfg.cid_prefix) and cid.endswith("p") and bool(o.get("reduce_only"))
+                and not o.get("close_position") and cid[:-1] not in self.st["intents"])
+
     def _cancel_quiet(self, sym, o):
         try:
             self.x("cancel", sym, o)
@@ -1176,7 +1182,15 @@ class V6Engine:
                 if any(it.get("sym") == sym for it in self.st["intents"].values()):
                     mismatch.append(f"{sym} 진입 결과 확인 중 {amt}")     # our own unresolved entry (pre-arm protects it)
                     continue
-                self._unknown_position(sym, pos[sym], orders, marks.get(sym))   # TA R4: never closed
+                # TA condition 1 (2026-10-26): an orphan pre-arm (entry rejected, its cancel failed) is the BOT's own order — it must
+                # never count as protection of a position the bot does not own (it would close the user's position at the bot's
+                # stop price), so it is hidden from the unknown-position logic and cancelled once that position has its own stop.
+                orphans = [o for o in orders if self._is_orphan_prearm(o)]
+                self._unknown_position(sym, pos[sym], [o for o in orders if o not in orphans], marks.get(sym))   # TA R4: never closed
+                u = self.st["unknown"].get(sym) or {}
+                if orphans and u.get("stop_cid") and not u.get("unprotected"):
+                    for o in orphans:
+                        self._cancel_quiet(sym, o)
                 continue
             if sym in self.st["unknown"]:                    # adopted into the state file by ops meanwhile
                 self.st["unknown"].pop(sym, None)
