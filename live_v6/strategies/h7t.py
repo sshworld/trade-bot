@@ -147,13 +147,14 @@ class H7T(V6H7):
         for t, sym, reason, _ in ctx.meta.get("skip_log", []):
             if T - H4 <= int(t) < T:
                 skips[sym] = reason                          # last skip of the symbol inside the bar
+        floors = {sym for t, sym in ctx.meta.get("floor_log", []) if T - H4 <= int(t) < T}   # qty_floor entries (min qty)
         out = {}
         for sym in ctx.cfg.symbols:
             b = (before.get("bar") or {}).get(sym) or {}
             was_pos = bool(((before.get("models") or {}).get(sym) or {}).get("pos"))
             in_bar = b.get("open") == T - H4
             if in_bar and b.get("entered"):
-                out[sym] = f"skip:{skips[sym]}" if sym in skips else "entered"
+                out[sym] = (f"skip:{skips[sym]}" if sym in skips else "entered:qty_floor" if sym in floors else "entered")
                 if b.get("stopped"):
                     out[sym] += "+stopped"
             elif in_bar and b.get("missed"):

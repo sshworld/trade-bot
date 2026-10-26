@@ -1,0 +1,9 @@
+CODE: /workspace/sizing-minorder-3pct/live_v6/__init__.py
+
+### NEW_sizing_minorder_3pct
+ seen touches (model entries): [('BTCUSDT', '10-21 23:35:00', True), ('BNBUSDT', '10-22 01:39:00', True)]
+  ENTRY {'sym': 'BTCUSDT', 'entry': '10-21 23:35:00', 'entry_px': 84134.3, 'qty': '0.001', 'notional': 84.1343, 'lev': 10, 'exit': '10-22 15:26:00', 'exit_px': 82572.24966858658, 'kind': 'stop', 'net': -1.7081}
+  ENTRY {'sym': 'BNBUSDT', 'entry': '10-22 01:39:00', 'entry_px': 751.08, 'qty': '0.04', 'notional': 30.0432, 'lev': 10, 'exit': '10-22 16:12:00', 'exit_px': 737.4984715748095, 'kind': 'stop', 'net': -0.5938}
+  wallet 115.16546845901436 halted None
+pre-start touches: {'BTCUSDT': False, 'ETHUSDT': False, 'SOLUSDT': False, 'BNBUSDT': False, 'XRPUSDT': False, 'DOGEUSDT': False}
+model state: {"BTCUSDT": {"atr": 719.2789582479081, "last_open": 1792958400000, "hi55": 84875.2}, "ETHUSDT": {"atr": 33.84033823141576, "last_open": 1792958400000, "hi55": 2526.99}, "SOLUSDT": {"atr": 1.5251044665850477, "last_open": 1792958400000, "hi55": 109.18}, "BNBUSDT": {"atr": 7.857844204906361, "last_open": 1792958400000, "hi55": 752.18}, "XRPUSDT": {"atr": 0.018655101947545306, "last_open": 1792958400000, "hi55": 1.3987}, "DOGEUSDT": {"atr": 0.0012847498160783537, "last_open": 1792958400000, "hi55": 0.08378}}

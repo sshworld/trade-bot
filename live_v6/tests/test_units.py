@@ -18,7 +18,7 @@ from .conftest import TEST_SYMBOLS
 from .fakes import FakeExchange
 from live_v6.exchange import rules_from_info
 
-RULES = rules_from_info(FakeExchange().exchange_info(), ("BTCUSDT", "DOGEUSDT", "SOLUSDT"), {"BTCUSDT": "100"})
+RULES = rules_from_info(FakeExchange().exchange_info(), ("BTCUSDT", "DOGEUSDT", "SOLUSDT"))
 BR = [{"floor": 0.0, "cap": 5e4, "mmr": 0.005, "max_lev": 50}]
 
 
@@ -105,24 +105,27 @@ def test_btc_regime():
 def test_stop_rounded_toward_entry_and_qty_floor():
     r = RULES["DOGEUSDT"]
     assert stop_price(r, Decimal("0.15"), 1, Decimal("0.004567")) == Decimal("0.14544")
-    sz = size_entry(r, BR, 1000, 1000, Decimal("0.15"), Decimal("0.0045"))
+    sz = size_entry(r, BR, 1000, 1000, Decimal("0.15"), Decimal("0.0045"), mark=Decimal("0.15"))
     assert sz.skip is None and sz.qty == Decimal(int(5 / (Decimal("0.15") - sz.stop_px)))
     assert sz.risk_usdt <= Decimal(5)
 
 
 def test_skip_order_and_reasons():
     r = RULES["BTCUSDT"]
-    assert size_entry(r, BR, 100, 100, 60000, 1200).skip == "qty_zero"                # 0.4166e-3 → 0 steps (was "min_notional")
-    assert size_entry(r, BR, 300, 300, 60000, 1200).skip == "min_notional"            # qty 0.001 = 60 USDT < BTC floor 100
-    assert size_entry(RULES["DOGEUSDT"], BR, 1000, 1, Decimal("0.15"), Decimal("0.0045")).skip == "margin"
+    m = dict(mark=Decimal("0.15"))
+    z = size_entry(r, BR, 100, 100, 60000, 1200, mark=60000)                          # q0 = 0 → min qty 0.001 (no floor now)
+    assert z.skip is None and z.path == "qty_floor" and z.qty == Decimal("0.001")
+    z = size_entry(r, BR, 300, 300, 60000, 1200, mark=60000)                          # q0 0.001 = 60 USDT ≥ exchange 50
+    assert z.skip is None and z.path == "q0" and z.qty == Decimal("0.001")
+    assert size_entry(RULES["DOGEUSDT"], BR, 1000, 1, Decimal("0.15"), Decimal("0.0045"), **m).skip == "margin"
     full = [{"side": 1, "risk_frac": 0.01}, {"side": 1, "risk_frac": 0.012}]
-    assert size_entry(RULES["DOGEUSDT"], BR, 1000, 1000, Decimal("0.15"), Decimal("0.0045"), 1, full).skip == "risk_cap_portfolio"
+    assert size_entry(RULES["DOGEUSDT"], BR, 1000, 1000, Decimal("0.15"), Decimal("0.0045"), 1, full, **m).skip == "risk_cap_portfolio"
 
 
 def test_same_side_halving():
     three = [{"side": 1, "risk_frac": 0.005}] * 3
     sz = size_entry(RULES["DOGEUSDT"], BR, 1000, 1000, Decimal("0.15"), Decimal("0.0045"), 1, three,
-                    SizingParams(portfolio_risk_cap=0.05))
+                    SizingParams(portfolio_risk_cap=0.05), mark=Decimal("0.15"))
     assert sz.risk_pct_used == 0.25
 
 

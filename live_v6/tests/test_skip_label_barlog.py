@@ -10,7 +10,7 @@ from decimal import Decimal
 from live_v6 import strategy as S
 from live_v6.engine import KST
 from live_v6.rules import SymbolRules
-from live_v6.sizing import size_entry
+from live_v6.sizing import precheck_order, size_entry
 from live_v6.strategies.h7t import H7T
 
 from .test_bar_close_live import D0, H4, M1, START, Clock, make, touch
@@ -20,41 +20,39 @@ DOGE = "DOGEUSDT"
 
 
 # ───────────── 1. label ─────────────
-def test_qty_zero_label_when_step_rounding_gives_zero():
-    z = size_entry(RULES["BTCUSDT"], BR, 100, 100, 60000, 1200)            # 0.5 USDT risk / 1200 = 0.000416 → 0.000
-    assert z.skip == "qty_zero" and "qty 0 after step" in z.detail
-    z = size_entry(RULES["BTCUSDT"], BR, 117.46733957, 117.46733957, Decimal("84134.3"), Decimal("1562.0"))   # live 10/21 case
-    assert z.skip == "qty_zero"
+# (min-order rule, TA spec v2.1: q0 = 0 no longer skips by itself — the smallest exchange-allowed quantity is used when
+# its loss ≤ 3% of wallet, otherwise `min_order_risk_over_cap`; `qty_zero` stays the pure gate's label for a zero qty.)
+def test_qty_zero_is_the_label_of_a_zero_qty_and_q0_zero_goes_to_min_qty():
+    r = RULES["BTCUSDT"]
+    assert precheck_order(r, BR, 0, 60000, 10, Decimal("58800"), 100, mark=60000)[0] == "qty_zero"
+    z = size_entry(r, BR, 100, 100, 60000, 1200, mark=60000)               # 0.5 USDT risk / 1200 = 0.000416 → q0 = 0
+    assert z.skip is None and z.path == "qty_floor" and z.q0 == 0 and z.qty == Decimal("0.001")
+    z = size_entry(r, BR, 117.46733957, 117.46733957, Decimal("84134.3"), Decimal("1562.0"), mark=Decimal("84134.3"))
+    assert z.skip is None and z.path == "qty_floor" and z.qty == Decimal("0.001")         # live 10/21 23:35 BTC case
 
 
-def test_qty_zero_also_when_floor_is_lowered_to_exchange_minimum():
-    r = SymbolRules.from_exchange_info(_info_btc(), "BTCUSDT", None)       # exchange minNotional 50, no bot floor
-    assert size_entry(r, BR, 117.46733957, 117.46733957, Decimal("84134.3"), Decimal("1562.0")).skip == "qty_zero"
+def test_incomplete_exchange_filters_skip_filter_read_failed():
+    r = SymbolRules.from_exchange_info(_info_btc(), "BTCUSDT")       # no MARKET_LOT_SIZE → cannot be verified
+    assert size_entry(r, BR, 117.46733957, 117.46733957, Decimal("84134.3"), Decimal("1562.0")).skip == "filter_read_failed"
 
 
-def test_min_notional_kept_for_real_notional_below_floor():
-    r = RULES["BTCUSDT"]                                                     # BTC floor 100
-    z = size_entry(r, BR, 300, 300, 60000, 1200)                            # qty 0.001 (> 0) = 60 USDT < 100
-    assert z.skip == "min_notional" and "qty 0.001" in z.detail
+def test_no_btc_floor_effective_minimum_is_exchange_minnotional():
+    r = RULES["BTCUSDT"]                                                     # exchange minNotional 50 (no bot floor)
+    z = size_entry(r, BR, 300, 300, 60000, 1200, mark=60000)                # qty 0.001 = 60 USDT ≥ 50
+    assert z.skip is None and z.qty == Decimal("0.001") and z.path == "q0"
 
 
-def test_min_notional_kept_when_qty_positive_but_below_exchange_min_qty_notional():
-    r = RULES["ETHUSDT"] if "ETHUSDT" in RULES else RULES["BTCUSDT"]
-    z = size_entry(r, BR, 120, 120, 2300, 65.9)                              # 0.6/65.9 = 0.0091 → 0.009 × 2300 = 20.7 ≥ 20 (ok path)
-    assert z.skip in (None, "min_notional", "qty_zero")
-
-
-def test_engine_records_qty_zero_in_skip_log_and_daily_summary(offline):
+def test_engine_records_min_order_risk_over_cap_in_skip_log_and_daily_summary(offline):
     eng = offline.engine()
     eng.startup()
     T = int(eng.clock() * 1000)
-    assert not eng.enter(DOGE, Decimal("1000"), T)                           # stop distance 1000 → qty 0
+    assert not eng.enter(DOGE, Decimal("1000"), T)                           # stop distance 1000 → q0 0, min qty loses ≫ 3%
     day = eng.now_ms()
     last = eng.meta["skip_log"][-1]
-    assert last[1] == DOGE and last[2] == "qty_zero", last
+    assert last[1] == DOGE and last[2] == "min_order_risk_over_cap" and "q0=0" in last[3], last
     from datetime import datetime
     d = datetime.fromtimestamp(day / 1000, KST).strftime("%Y-%m-%d")
-    assert "qty_zero 1" in eng.daily_summary(d) and "min_notional" not in eng.daily_summary(d)
+    assert "min_order_risk_over_cap 1" in eng.daily_summary(d) and "min_notional" not in eng.daily_summary(d)
 
 
 def _info_btc():
@@ -112,10 +110,10 @@ def test_bar_close_line_reports_sizing_skip_with_reason(offline, caplog):
     eng.tick(force_reconcile=False)
     strat.state["models"][DOGE]["atr"] = 1000.0                              # absurd stop distance → qty 0 at the touch
     touch(eng, DOGE, trig * 1.0005, clk.ms)
-    assert DOGE not in eng.st["pos"] and eng.meta["skip_log"][-1][2] == "qty_zero"
+    assert DOGE not in eng.st["pos"] and eng.meta["skip_log"][-1][2] == "min_order_risk_over_cap"
     clk.ms = D0 + 16 * 3600_000 + 5000
     eng.tick(force_reconcile=False)
-    assert f"{DOGE}=skip:qty_zero" in _bar_lines(caplog)[-1]
+    assert f"{DOGE}=skip:min_order_risk_over_cap" in _bar_lines(caplog)[-1]
 
 
 def test_decisions_hook_in_position_and_m20_exit_words():

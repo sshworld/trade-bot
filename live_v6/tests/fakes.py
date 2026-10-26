@@ -20,6 +20,15 @@ FILTERS = {  # tick, step, minQty, minNotional (Binance exchangeInfo 2026-10-20)
     "SOLUSDT": ("0.01", "0.01", "0.01", "5"), "BNBUSDT": ("0.01", "0.01", "0.01", "5"),
     "XRPUSDT": ("0.0001", "0.1", "0.1", "5"), "DOGEUSDT": ("0.00001", "1", "1", "5"),
 }
+# LOT_SIZE maxQty, MARKET_LOT_SIZE (min, step, max), PERCENT_PRICE (up, down) — exchangeInfo 2026-10-26 (real values)
+EXTRA = {
+    "BTCUSDT": ("1000", ("0.001", "0.001", "120"), ("1.03", "0.97")),
+    "ETHUSDT": ("10000", ("0.001", "0.001", "2000"), ("1.03", "0.97")),
+    "SOLUSDT": ("1000000", ("0.01", "0.01", "80000"), ("1.03", "0.97")),
+    "BNBUSDT": ("100000", ("0.01", "0.01", "2000"), ("1.05", "0.95")),
+    "XRPUSDT": ("10000000", ("0.1", "0.1", "2000000"), ("1.05", "0.95")),
+    "DOGEUSDT": ("300000000", ("1", "1", "30000000"), ("1.10", "0.90")),
+}
 BRACKETS = {s: [{"floor": 0.0, "cap": 5e4, "mmr": m, "max_lev": 50}, {"floor": 5e4, "cap": 1e9, "mmr": 0.05, "max_lev": 10}]
             for s, m in {"BTCUSDT": 0.004, "ETHUSDT": 0.004, "SOLUSDT": 0.005, "BNBUSDT": 0.005, "XRPUSDT": 0.005,
                          "DOGEUSDT": 0.0065}.items()}
@@ -51,7 +60,12 @@ class FakeExchange:
     # reads
     def exchange_info(self):
         return {"symbols": [{"symbol": s, "filters": [{"filterType": "PRICE_FILTER", "tickSize": t},
-                                                       {"filterType": "LOT_SIZE", "stepSize": st, "minQty": mq},
+                                                       {"filterType": "LOT_SIZE", "stepSize": st, "minQty": mq,
+                                                        "maxQty": EXTRA[s][0]},
+                                                       {"filterType": "MARKET_LOT_SIZE", "minQty": EXTRA[s][1][0],
+                                                        "stepSize": EXTRA[s][1][1], "maxQty": EXTRA[s][1][2]},
+                                                       {"filterType": "PERCENT_PRICE", "multiplierUp": EXTRA[s][2][0],
+                                                        "multiplierDown": EXTRA[s][2][1]},
                                                        {"filterType": "MIN_NOTIONAL", "notional": mn}]}
                             for s, (t, st, mq, mn) in FILTERS.items()]}
 
@@ -70,6 +84,9 @@ class FakeExchange:
 
     def mark_prices(self):
         return dict(self.price)
+
+    def mark_price(self, s):
+        return self.price[s]
 
     def book(self, s):
         return {"bid": self.price[s], "ask": self.price[s]}
@@ -118,8 +135,18 @@ class FakeExchange:
             if cur == 0 or (cur > 0) == (signed > 0):
                 raise OrderRejected(-2022, "ReduceOnly Order is rejected.")
             signed = max(-abs(cur), min(abs(cur), signed)) if cur > 0 else min(abs(cur), signed)
-        elif qty * px < Decimal(FILTERS[s][3]):
-            raise OrderRejected(-4164, "Order's notional must be no smaller than min notional (unless reduce only).")
+        else:                                             # exchange-side filters of a MARKET entry (real exchangeInfo)
+            _t, step, mq, mn = FILTERS[s]
+            _lot_max, (m_min, m_step, m_max), _pp = EXTRA[s]
+            if qty % Decimal(step) or qty % Decimal(m_step) or qty < Decimal(mq) or qty < Decimal(m_min):
+                raise OrderRejected(-1013, "Filter failure: LOT_SIZE")
+            if qty > Decimal(m_max) or qty > Decimal(_lot_max):
+                raise OrderRejected(-1013, "Filter failure: MARKET_LOT_SIZE")
+            if qty * px < Decimal(mn):
+                raise OrderRejected(-4164, "Order's notional must be no smaller than min notional (unless reduce only).")
+            avail = self.wallet - sum(p_["margin"] for p_ in self.pos.values())
+            if qty * px / self.lev[s] > avail:
+                raise OrderRejected(-2019, "Margin is insufficient.")
         if fill_qty is not None:
             signed = (fill_qty if signed > 0 else -fill_qty)
         oid = str(next(self._id))

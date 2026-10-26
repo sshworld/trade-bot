@@ -221,6 +221,11 @@ class BinanceREST:
     def mark_prices(self) -> dict[str, Decimal]:
         return {d["symbol"]: Decimal(d["markPrice"]) for d in self._req("GET", "/fapi/v1/premiumIndex", signed=False)}
 
+    def mark_price(self, symbol) -> Decimal:
+        """Mark price of ONE symbol (weight 1) — for the PERCENT_PRICE check right before an entry."""
+        d = self._req("GET", "/fapi/v1/premiumIndex", {"symbol": symbol}, signed=False)
+        return Decimal(d["markPrice"])
+
     def book(self, symbol) -> dict:
         d = self._req("GET", "/fapi/v1/ticker/bookTicker", {"symbol": symbol}, signed=False)
         return {"bid": Decimal(d["bidPrice"]), "ask": Decimal(d["askPrice"])}
@@ -366,5 +371,5 @@ class BinanceREST:
                 raise
 
 
-def rules_from_info(info: dict, symbols, floors: dict) -> dict[str, SymbolRules]:
-    return {s: SymbolRules.from_exchange_info(info, s, floors.get(s)) for s in symbols}
+def rules_from_info(info: dict, symbols) -> dict[str, SymbolRules]:
+    return {s: SymbolRules.from_exchange_info(info, s) for s in symbols}

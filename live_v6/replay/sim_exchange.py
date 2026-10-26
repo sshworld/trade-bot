@@ -182,6 +182,9 @@ class SimExchange:
     def mark_prices(self):
         return {s: Decimal(repr(v)) for s, v in self.px.items()}
 
+    def mark_price(self, s):
+        return Decimal(repr(self.px[s]))
+
     def book(self, s):
         v = Decimal(repr(self.px[s]))
         return {"bid": v, "ask": v}

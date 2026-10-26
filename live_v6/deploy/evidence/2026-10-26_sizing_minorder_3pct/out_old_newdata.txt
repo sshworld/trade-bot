@@ -1,0 +1,20 @@
+
+### A_old_4d8d16c_live_floor_ON_BTC100
+ seen touches (model entries): [('BTCUSDT', '10-21 23:35:00', True), ('BNBUSDT', '10-22 01:39:00', True)]
+  ENTRY {'sym': 'BNBUSDT', 'entry': '10-22 01:39:00', 'entry_px': 751.08, 'qty': '0.04', 'notional': 30.0432, 'lev': 10, 'exit': '10-22 16:12:00', 'exit_px': 737.4984715748095, 'kind': 'stop', 'net': -0.5938}
+  SKIP {'t': '10-21 23:35:00', 'sym': 'BTCUSDT', 'reason': 'qty_zero', 'detail': 'qty 0 after step 0.001 rounding (risk 0.5873 / stop distance 1562.0 = 0.00037602); exchange min qty 0.001'}
+  wallet 116.87354825412937 halted None
+
+### B_old_floor_OFF
+ seen touches (model entries): [('BTCUSDT', '10-21 23:35:00', True), ('BNBUSDT', '10-22 01:39:00', True)]
+  ENTRY {'sym': 'BNBUSDT', 'entry': '10-22 01:39:00', 'entry_px': 751.08, 'qty': '0.04', 'notional': 30.0432, 'lev': 10, 'exit': '10-22 16:12:00', 'exit_px': 737.4984715748095, 'kind': 'stop', 'net': -0.5938}
+  SKIP {'t': '10-21 23:35:00', 'sym': 'BTCUSDT', 'reason': 'qty_zero', 'detail': 'qty 0 after step 0.001 rounding (risk 0.5873 / stop distance 1562.0 = 0.00037602); exchange min qty 0.001'}
+  wallet 116.87354825412937 halted None
+
+### E_old_hyp_rule3
+ seen touches (model entries): [('BTCUSDT', '10-21 23:35:00', True), ('BNBUSDT', '10-22 01:39:00', True)]
+  ENTRY {'sym': 'BNBUSDT', 'entry': '10-22 01:39:00', 'entry_px': 751.08, 'qty': '0.04', 'notional': 30.0432, 'lev': 10, 'exit': '10-22 16:12:00', 'exit_px': 737.4984715748095, 'kind': 'stop', 'net': -0.5938}
+  SKIP {'t': '10-21 23:35:00', 'sym': 'BTCUSDT', 'reason': 'qty_zero', 'detail': 'qty 0 after step 0.001 rounding (risk 0.5873 / stop distance 1562.0 = 0.00037602); exchange min qty 0.001'}
+  wallet 116.87354825412937 halted None
+pre-start touches: {'BTCUSDT': False, 'ETHUSDT': False, 'SOLUSDT': False, 'BNBUSDT': False, 'XRPUSDT': False, 'DOGEUSDT': False}
+model state: {"BTCUSDT": {"atr": 719.2789582479081, "last_open": 1792958400000, "hi55": 84875.2}, "ETHUSDT": {"atr": 33.84033823141576, "last_open": 1792958400000, "hi55": 2526.99}, "SOLUSDT": {"atr": 1.5251044665850477, "last_open": 1792958400000, "hi55": 109.18}, "BNBUSDT": {"atr": 7.857844204906361, "last_open": 1792958400000, "hi55": 752.18}, "XRPUSDT": {"atr": 0.018655101947545306, "last_open": 1792958400000, "hi55": 1.3987}, "DOGEUSDT": {"atr": 0.0012847498160783537, "last_open": 1792958400000, "hi55": 0.08378}}

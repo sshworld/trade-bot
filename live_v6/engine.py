@@ -36,7 +36,7 @@ from .events import MARKET_EVENTS, AccountUpdate, Kline, Mark, OrderUpdate, Stre
 from .strategies.base import DataNotReady
 from .exchange import ExchangeError, ExchangeUnavailable, OrderRejected, WouldTrigger, rules_from_info
 from .notify import Notifier
-from .rules import D, stop_price
+from .rules import D, SymbolRules, stop_price
 from .sizing import SizingParams, size_entry
 
 log = logging.getLogger("live_v6.engine")
@@ -65,7 +65,6 @@ class Settings:
     symbols: tuple = SIX
     entry_order: tuple = ENTRY_ORDER    # FROZEN tie order of simultaneous signals (README); live refuses anything else
     regime_symbol: str = "BTCUSDT"
-    min_notional_floor: dict = field(default_factory=lambda: {"BTCUSDT": "100"})   # v6: BTC min order 100 (PM/TA)
     sizing: SizingParams = field(default_factory=SizingParams)
     params: S.Params = field(default_factory=S.Params)
     max_positions: int = 6              # v6 H7 has no extra cap (one per symbol); enforced at placement anyway
@@ -288,7 +287,7 @@ class V6Engine:
 
     def load_rules(self):
         info = self.x("exchange_info")
-        self.rules = rules_from_info(info, self.cfg.symbols, self.cfg.min_notional_floor)
+        self.rules = rules_from_info(info, self.cfg.symbols)
         for s in self.cfg.symbols:
             try:
                 self.brackets[s] = self.x("brackets", s)
@@ -651,6 +650,34 @@ class V6Engine:
             return ""
         return f"read-back {pr_lev}x, {cfg_txt} (set response {echoed}x)"
 
+    def _size_fresh(self, sym, stop_dist: Decimal, book: list, fixed_lev: int | None = None):
+        """Read EVERYTHING the order depends on right now (exchangeInfo filters, leverage bracket, book, mark price,
+        wallet/available) and size from it. Nothing is taken from the startup cache or an earlier pass. Any failed
+        read → skip `filter_read_failed`, no order. Returns (Sized, account, ref) or None (skip already recorded)."""
+        try:
+            rules = SymbolRules.from_exchange_info(self.x("exchange_info"), sym)
+            brk = self.x("brackets", sym)
+            bk = self.x("book", sym)
+            ref, bid = D(bk["ask"]), D(bk["bid"])
+            mark = D(self.x("mark_price", sym)) if rules.pct_up is not None else None
+            acct = self.x("account")
+        except (ExchangeError, KeyError, ArithmeticError, TypeError, ValueError, AttributeError) as e:
+            self.skip(sym, "filter_read_failed", f"{type(e).__name__}: {str(e)[:100]}")
+            return None
+        self.rules[sym], self.brackets[sym] = rules, brk
+        # §8e-2 capital: sizing on C0 + realised PnL since start (= the full wallet when capital_fraction = 1, transfers
+        # excluded); margin guard: margin in use + new margin never exceeds strategy equity (incl. unrealised)
+        cap = self.strategy_equity(acct["wallet"])
+        room = self.strategy_equity(acct.get("equity", acct["wallet"])) - D(acct.get("margin_used", 0))
+        sz = size_entry(rules, brk, cap, min(D(acct["available"]), room), ref, stop_dist, 1, book, self.cfg.sizing,
+                        bid=bid, mark=mark, fixed_lev=fixed_lev)
+        if sz.skip:
+            self.skip(sym, sz.skip, sz.detail)
+            if sz.skip == "margin":
+                self.alert("증거금 부족으로 진입 건너뜀 — 잔고/계산 점검 필요", f"{sym} {sz.detail}")
+            return None
+        return sz, acct, ref
+
     def enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None) -> bool:
         if not self.entries_allowed():
             self.skip(sym, "safety_block", str(self.meta.get("halted") or self.blocks))
@@ -676,23 +703,14 @@ class V6Engine:
             if pos[sym]["margin_type"] != "ISOLATED" and not self.ensure_isolated(sym):
                 self.skip(sym, "margin_mode", "ISOLATED read-back failed")
                 return False
-            acct = self.x("account")
-            ref = self.x("book", sym)["ask"]
         except ExchangeError as e:
             log.error("entry %s pre-check failed: %s", sym, e)
             return False
         book = self._open_book(pos)
-        # §8e-2 capital: sizing on C0 + realised PnL since start (= the full wallet when capital_fraction = 1, transfers
-        # excluded); margin guard: margin in use + new margin never exceeds strategy equity (incl. unrealised)
-        cap = self.strategy_equity(acct["wallet"])
-        room = self.strategy_equity(acct.get("equity", acct["wallet"])) - D(acct.get("margin_used", 0))
-        sz = size_entry(self.rules[sym], self.brackets.get(sym, []), cap, min(D(acct["available"]), room), ref, stop_dist, 1,
-                        book, self.cfg.sizing)
-        if sz.skip:
-            self.skip(sym, sz.skip, sz.detail)
-            if sz.skip == "margin":
-                self.alert("증거금 부족으로 진입 건너뜀 — 잔고/계산 점검 필요", f"{sym} {sz.detail}")
+        got = self._size_fresh(sym, stop_dist, book)
+        if got is None:
             return False
+        sz, acct, ref = got
         # leverage set + read-back; the same fresh positions read is the FINAL gate right before the order:
         # no averaging, ISOLATED, max positions, total open risk ≤ 2.5% (TA: enforced at order placement)
         try:
@@ -719,14 +737,21 @@ class V6Engine:
         if len(book) >= self.cfg.max_positions:
             self.skip(sym, "max_positions", f"{len(book)} open")
             return False
-        if sum(b["risk_frac"] for b in book) + sz.risk_frac > self.cfg.sizing.portfolio_risk_cap + 1e-12:
-            self.skip(sym, "risk_cap_portfolio", f"open {sum(b['risk_frac'] for b in book):.4%} + {sz.risk_frac:.4%}")
+        # SECOND PASS right before the order: price, ATR-based stop distance (as passed in), wallet, available balance,
+        # exchangeInfo and brackets are read again and qty / minNotional / margin / bracket are recomputed with the
+        # CONFIRMED leverage; nothing computed before the leverage call is reused.
+        got = self._size_fresh(sym, stop_dist, book, fixed_lev=sz.lev)
+        if got is None:
+            return False
+        sz, acct, ref = got
+        if sum(b["risk_frac"] for b in book) + sz.risk_frac > sz.cap_frac + 1e-12:
+            self.skip(sym, sz.cap_label, f"open {sum(b['risk_frac'] for b in book):.4%} + {sz.risk_frac:.4%}")
             return False
         cid = self.cid(sym, T)
         intent = {"sym": sym, "cid": cid, "T": T, "model_id": model_id if model_id is not None else T,
                   "signal_px": str(signal_px) if signal_px is not None else None, "stop_dist": str(stop_dist), "ref": str(ref), "qty": str(sz.qty),
                   "lev": sz.lev, "mmr": sz.mmr, "risk_frac": sz.risk_frac, "risk_pct_used": sz.risk_pct_used,
-                  "wallet": str(acct["wallet"])}
+                  "wallet": str(acct["wallet"]), "path": sz.path, "q0": str(sz.q0), "loss_frac": sz.loss_frac}
         # PRE-ARM: a reduceOnly STOP_MARKET for the planned qty is live on the exchange BEFORE the entry is sent, so
         # there is no instant between fill and stop without exchange-side protection (closePosition stops cannot be
         # placed without a position: -4509). Not confirmed → no entry.
@@ -739,6 +764,13 @@ class V6Engine:
         self.save()                                         # journal the intent BEFORE sending
         try:
             o = self.submit_market(sym, "BUY", sz.qty, cid, reduce_only=False)
+        except OrderRejected as e:                          # DEFINITIVE rejection: nothing was opened → undo everything
+            self.st["intents"].pop(cid, None)
+            self.save()
+            self._cancel_quiet(sym, pre)                    # pre-armed stop must not outlive the rejected entry
+            self.skip(sym, "entry_rejected", f"{sz.qty} @ {ref}: {str(e)[:120]}")
+            self.alert("진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음", f"{sym} {sz.qty}: {str(e)[:100]}")
+            return False
         except ExchangeError as e:
             self.alert("진입 주문 결과 불명", f"{cid} {sz.qty} {sym}: {str(e)[:100]} · 선행 손절 유지 · 대조 루프가 정리")
             return False
@@ -750,7 +782,7 @@ class V6Engine:
         j = self._journal_entry(sym, intent, o)
         self.st["intents"].pop(cid, None)
         self.save()
-        self._upgrade_stop(sym, j, pre)                     # closePosition at the fill-based stop, THEN cancel pre-arm
+        up = self._upgrade_stop(sym, j, pre)                # closePosition at the fill-based stop, THEN cancel pre-arm
         try:                                                 # late fills after a partial: exchange qty is the truth
             amt = self.x("positions", self.cfg.symbols)[sym]["amt"]
             if amt != 0 and abs(amt) != D(j["qty"]):
@@ -758,12 +790,34 @@ class V6Engine:
                 self.save()
         except ExchangeError:
             pass
+        if up == "rejected":                                # filled, exchange stop rejected → flatten NOW, never hold it
+            self.alert("진입 체결 후 손절 거절 — 전량 청산", f"{sym} {j['qty']} · 손절 {j['stop_px']} 거절/즉시발동 → reduceOnly 전량 청산")
+            if not self.close(sym, "stop_rejected_after_fill"):
+                log.error("%s flatten after rejected stop not complete — close() keeps retrying via reconcile", sym)
+            return False
+        if up != "ok":                                      # pre-arm kept: it must be CONFIRMED live, else protect/flatten
+            try:
+                shielded = self.find_stop(D(j["qty"]), self.x("open_orders", sym)) is not None
+            except ExchangeError:
+                shielded = True                             # unknown → reconcile (dirty) verifies right away
+            if not shielded:
+                self.protect(sym, D(j["qty"]), D(j["stop_px"]), j["cid"])
+                return False
         # partial fill: the unfilled rest is NOT chased; a filled part below min notional is closed at once (no dust)
         if D(j["qty"]) * D(j["entry_px"]) < self.rules[sym].min_notional:
             self.notify(f"⚪ {sym} 부분 체결 {j['qty']} (최소 주문금액 미만) → 즉시 정리")
             self.close(sym, "dust_entry")
             return False
         part = f" (부분 체결 {o['executed_qty']}/{sz.qty}, 나머지 취소·추격 안 함)" if o["executed_qty"] < sz.qty else ""
+        if sz.path == "qty_floor":
+            fl = (f"qty_floor {sym}: q0 {sz.q0} < 거래소 최소 → 최소수량 {sz.qty} · 손절+수수료+슬리피지 위험 "
+                  f"{sz.loss_frac:.2%} (지갑 대비, 한도 {self.cfg.sizing.min_order_loss_cap:.0%})")
+            log.info(fl)
+            part += f"\n⚠️ {fl}"
+            fm = self.meta.setdefault("floor_log", [])
+            fm.append([self.now_ms(), sym])
+            del fm[:-200]
+            self.save()
         self.notify(f"🟢 진입 {sym} 롱 · 수량 {j['qty']} · 체결가 {j['entry_px']}{part}\n"
                      f"손절 {j['stop_px']} · {sz.lev}x · 위험 {D(j['risk_usdt']):.4f} USDT ({sz.risk_pct_used}%)",
                      kind="entry", event_ms=intent.get("model_id") or intent.get("T"))
@@ -865,6 +919,7 @@ class V6Engine:
         """After the fill: closePosition stop at the fill-based price; the pre-arm is cancelled only once the new stop
         is confirmed (new before old). If it cannot be placed the pre-arm (qty ≥ filled) stays as the stop."""
         amt = D(j["qty"])
+        rejected = False
         for attempt in range(self.cfg.stop_attempts):
             seq = int(j.get("stop_seq", 0))
             j["stop_seq"] = seq + 1
@@ -872,7 +927,11 @@ class V6Engine:
             try:
                 self.x("stop", sym, "SELL", D(j["stop_px"]), f"{j['cid']}s{seq}")
             except WouldTrigger:
+                rejected = True
                 break
+            except OrderRejected as e:
+                rejected = True
+                log.error("%s closePosition stop attempt %d rejected: %s", sym, attempt + 1, e)
             except ExchangeError as e:
                 log.error("%s closePosition stop attempt %d: %s", sym, attempt + 1, e)
             try:
@@ -882,15 +941,18 @@ class V6Engine:
                     j["stop_px"] = str(cp["stop_price"])
                     self._cancel_quiet(sym, pre)
                     self.save()
-                    return
+                    return "ok"
             except ExchangeError:
                 pass
             if attempt + 1 < self.cfg.stop_attempts:
                 self.sleep(self.cfg.stop_retry_delay_s)
+        if rejected:                                        # exchange stop DEFINITIVELY rejected: caller flattens (🚨)
+            return "rejected"
         log.warning("%s keeps the pre-armed reduceOnly stop %s", sym, pre["stop_price"])
         j["stop_px"] = str(pre["stop_price"])
         self.save()
         self._dirty = True                                  # reconcile re-verifies (qty ≥ position) right away
+        return "kept"
 
     def ensure_stop(self, sym, amt: Decimal, stop_px: Decimal, cid_base: str) -> str:
         """§8c L1: make sure a protective stop is CONFIRMED on the exchange, re-placing up to stop_attempts times

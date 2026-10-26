@@ -24,13 +24,46 @@ def fmt(d) -> str:
     return format(D(d), "f")
 
 
+def _lcm_step(a: Decimal, b: Decimal) -> Decimal:
+    """Smallest positive Decimal that is a multiple of both steps (exact, decimal arithmetic)."""
+    scale = 10 ** max(-a.as_tuple().exponent, -b.as_tuple().exponent, 0)
+    ia, ib = int(a * scale), int(b * scale)
+    return Decimal(math.lcm(ia, ib)) / scale
+
+
 @dataclass(frozen=True)
 class SymbolRules:
+    """Exchange filters of ONE symbol exactly as read from GET /fapi/v1/exchangeInfo (nothing is fixed in the bot).
+    LOT_SIZE → step_size/min_qty/max_qty; MARKET_LOT_SIZE → mkt_*; PERCENT_PRICE → pct_up/pct_down (None = absent)."""
     symbol: str
     tick_size: Decimal        # PRICE_FILTER.tickSize
     step_size: Decimal        # LOT_SIZE.stepSize
     min_qty: Decimal          # LOT_SIZE.minQty
-    min_notional: Decimal     # MIN_NOTIONAL.notional
+    min_notional: Decimal     # MIN_NOTIONAL.notional (effective minimum = the exchange value, no bot floor)
+    max_qty: Decimal | None = None          # LOT_SIZE.maxQty
+    mkt_min_qty: Decimal | None = None      # MARKET_LOT_SIZE.minQty  (used for MARKET orders)
+    mkt_step_size: Decimal | None = None    # MARKET_LOT_SIZE.stepSize
+    mkt_max_qty: Decimal | None = None      # MARKET_LOT_SIZE.maxQty
+    pct_up: Decimal | None = None           # PERCENT_PRICE.multiplierUp
+    pct_down: Decimal | None = None         # PERCENT_PRICE.multiplierDown
+
+    @property
+    def has_market_lot(self) -> bool:
+        return None not in (self.mkt_min_qty, self.mkt_step_size, self.mkt_max_qty)
+
+    @property
+    def order_step(self) -> Decimal:
+        """Quantity granularity of a MARKET order: a multiple of the LOT_SIZE and the MARKET_LOT_SIZE step."""
+        return _lcm_step(self.step_size, self.mkt_step_size) if self.mkt_step_size else self.step_size
+
+    @property
+    def order_min_qty(self) -> Decimal:
+        return max(self.min_qty, self.mkt_min_qty) if self.mkt_min_qty is not None else self.min_qty
+
+    @property
+    def order_max_qty(self) -> Decimal | None:
+        caps = [c for c in (self.max_qty, self.mkt_max_qty) if c is not None]
+        return min(caps) if caps else None
 
     def floor_qty(self, q) -> Decimal:
         return floor_to(q, self.step_size)
@@ -39,16 +72,22 @@ class SymbolRules:
         return floor_to(p, self.tick_size) if toward == "down" else ceil_to(p, self.tick_size)
 
     @classmethod
-    def from_exchange_info(cls, info: dict, symbol: str, min_notional_floor=None) -> "SymbolRules":
+    def from_exchange_info(cls, info: dict, symbol: str) -> "SymbolRules":
+        """Every limit comes from the exchangeInfo just read; the bot adds no minimum of its own."""
         for s in info.get("symbols", []):
             if s.get("symbol") != symbol:
                 continue
             f = {x["filterType"]: x for x in s.get("filters", [])}
             mn = Decimal(f["MIN_NOTIONAL"].get("notional") or f["MIN_NOTIONAL"].get("minNotional"))
-            if min_notional_floor is not None:
-                mn = max(mn, D(min_notional_floor))
+            lot, ml, pp = f["LOT_SIZE"], f.get("MARKET_LOT_SIZE"), f.get("PERCENT_PRICE")
             return cls(symbol, Decimal(f["PRICE_FILTER"]["tickSize"]).normalize(),
-                       Decimal(f["LOT_SIZE"]["stepSize"]).normalize(), Decimal(f["LOT_SIZE"]["minQty"]), mn)
+                       Decimal(lot["stepSize"]).normalize(), Decimal(lot["minQty"]), mn,
+                       max_qty=Decimal(lot["maxQty"]) if lot.get("maxQty") is not None else None,
+                       mkt_min_qty=Decimal(ml["minQty"]) if ml else None,
+                       mkt_step_size=Decimal(ml["stepSize"]).normalize() if ml else None,
+                       mkt_max_qty=Decimal(ml["maxQty"]) if ml else None,
+                       pct_up=Decimal(pp["multiplierUp"]) if pp else None,
+                       pct_down=Decimal(pp["multiplierDown"]) if pp else None)
         raise KeyError(f"symbol {symbol} not in exchangeInfo")
 
 
