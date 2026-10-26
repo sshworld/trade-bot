@@ -708,15 +708,26 @@ def test_unresolved_entry_keeps_its_prearm_through_a_flat_reconcile(offline):
     assert not eng.st["intents"] and not offline.inner.open_orders("DOGEUSDT") and offline.amt("DOGEUSDT") == 0
 
 
-def test_orphan_prearm_stays_until_the_bot_has_its_own_stop_for_an_unowned_position(offline):
-    """If the bot cannot place its own unknown-position stop yet, the orphan is not cancelled (never leave a position
-    with NO stop because of cleanup); it is removed as soon as the bot's own stop is confirmed."""
+def test_orphan_prearm_is_cancelled_even_when_the_position_has_no_stop(offline):
+    """TA R4: the orphan is cancelled right away even if the unowned position has NO stop yet (the bot's own stop
+    placement fails): left alive it could close the user's position at the bot's price. The 'unprotected' state and
+    its 🚨 alert are separate and keep going out; the position is never closed."""
     eng, orphan = _reject_entry_and_fail_cancel(offline)
     offline.inner.open_position_raw("DOGEUSDT", 1)
     offline.fx.inject("stop", "unavailable", times=1)
     eng.reconcile()
-    assert [o["client_id"] for o in offline.inner.open_orders("DOGEUSDT")] == [orphan["client_id"]]
-    eng.reconcile()
+    assert offline.inner.open_orders("DOGEUSDT") == []                       # orphan gone although there is no stop at all
+    u = eng.st["unknown"]["DOGEUSDT"]
+    assert u.get("unprotected") and not u.get("stop_cid")                    # still flagged unprotected, retrying
+    found = [a for a in alerts(eng) if "기록 없는 포지션 발견" in a and "등록 재시도 중" in a]
+    assert len(found) == 1                                                   # 🚨 once, says: no stop, retrying
+    assert offline.amt("DOGEUSDT") == 1 and not close_calls(offline)         # never closed
+    offline.fx.inject("stop", "unavailable", times=eng.cfg.exit_alert_every)  # stop keeps failing → periodic 🚨 continues
+    for _ in range(eng.cfg.exit_alert_every):
+        eng.reconcile()
+    assert [a for a in alerts(eng) if "손절 미확인" in a]
+    assert offline.inner.open_orders("DOGEUSDT") == [] and offline.amt("DOGEUSDT") == 1 and not close_calls(offline)
+    eng.reconcile()                                                          # API healthy → the bot's own stop is placed
     left = offline.inner.open_orders("DOGEUSDT")
     assert len(left) == 1 and left[0]["close_position"] and left[0]["client_id"].startswith("v6tDOGEu")
 

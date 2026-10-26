@@ -1182,15 +1182,14 @@ class V6Engine:
                 if any(it.get("sym") == sym for it in self.st["intents"].values()):
                     mismatch.append(f"{sym} 진입 결과 확인 중 {amt}")     # our own unresolved entry (pre-arm protects it)
                     continue
-                # TA condition 1 (2026-10-26): an orphan pre-arm (entry rejected, its cancel failed) is the BOT's own order — it must
-                # never count as protection of a position the bot does not own (it would close the user's position at the bot's
-                # stop price), so it is hidden from the unknown-position logic and cancelled once that position has its own stop.
+                # TA condition 1 (2026-10-26): an orphan pre-arm (entry definitively rejected, its cancel failed, no intent) is the BOT's own
+                # order protecting nothing. It must never count as protection of a position the bot does not own, and it is cancelled
+                # right away (after _unknown_position, whether or not that position has a stop): left alive it could close the user's
+                # position at the bot's price (R4: the bot never closes a position it did not open). The unprotected alert is separate.
                 orphans = [o for o in orders if self._is_orphan_prearm(o)]
                 self._unknown_position(sym, pos[sym], [o for o in orders if o not in orphans], marks.get(sym))   # TA R4: never closed
-                u = self.st["unknown"].get(sym) or {}
-                if orphans and u.get("stop_cid") and not u.get("unprotected"):
-                    for o in orphans:
-                        self._cancel_quiet(sym, o)
+                for o in orphans:
+                    self._cancel_quiet(sym, o)
                 continue
             if sym in self.st["unknown"]:                    # adopted into the state file by ops meanwhile
                 self.st["unknown"].pop(sym, None)
