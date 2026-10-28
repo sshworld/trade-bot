@@ -1,6 +1,7 @@
-"""Portfolio layer on top of core.step: per-rule books (own wallet, own R ledger, own 5% KST cap = the locked per-rule semantics) plus
+"""Portfolio layer on top of core.step: per-rule books (own R ledger, own 5% KST cap = the locked per-rule semantics) plus
 the TA v1.1 limits that apply across rules: one position per coin, max 3 concurrent, open risk <= 6%, one stop <= 2%, portfolio daily
-confirmed loss 5%. A signal blocked by a limit is logged as a skipped record and is never entered later. Pure stdlib, no I/O."""
+confirmed loss 5% measured on ONE shared wallet (every rule's closed-trade loss ratio compounds into it; the day's loss is the
+shared wallet's change since the KST day-start wallet). A signal blocked by a limit is logged as a skipped record and is never entered later. Pure stdlib, no I/O."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,7 +18,7 @@ class Limits:
     max_concurrent: int = 3
     max_open_risk: float = 0.06      # sum over open positions of size_mult * (stop + cost)  (= 2% each at the locked sizing)
     one_stop_loss: float = 0.02
-    daily_loss_cap: float = 0.05     # portfolio: confirmed loss of all rules on one KST day (sum of pnl / wallet_entry fractions)
+    daily_loss_cap: float = 0.05     # portfolio: confirmed loss on the SHARED wallet in one KST day (wallet / day-start wallet - 1 <= -cap)
 
     @classmethod
     def off(cls):
@@ -38,18 +39,31 @@ class Engine:
         self.winding_down = set()                  # rules switched off that still hold a position: managed to exit, no new entries
         self.off_names = list(off_names)
         self.dormant = {}                          # saved state of rules switched off with no open position (wallet kept for re-enable)
+        self.wallet0 = wallet0
+        self.wallet = wallet0                      # ONE shared wallet for the portfolio daily cap: all rules' trade ratios compound into it
         self.pday = None
-        self.pday_pnl = 0.0
+        self.pday_start_wallet = wallet0
         self.counters = {"signals_skipped_limit": 0}
 
     # ---- limits ------------------------------------------------------------------------------------------------------
     def open_positions(self):
         return [p for b in self.books for p in b.pos.values()]
 
+    @property
+    def pday_pnl(self):
+        """confirmed result of the current KST day on the shared wallet, as a fraction of the day-start wallet (compounded)."""
+        return self.wallet / self.pday_start_wallet - 1.0
+
     def _roll(self, ts_ms):
         d = kst_day(ts_ms)
         if d != self.pday:
-            self.pday, self.pday_pnl = d, 0.0
+            self.pday, self.pday_start_wallet = d, self.wallet
+
+    def _apply_closed_trade(self, rec):
+        """a closed trade's ratio (pnl / its own wallet at entry = size_mult * net return, independent of wallet size) compounds
+        into the shared wallet; rolls the KST day on the exit time first."""
+        self._roll(rec["exit_ms"])
+        self.wallet *= 1.0 + rec["pnl_wallet_frac"]
 
     def gate(self, book, pos, t_close):
         """None = allowed, else a dict with the limit that blocked the entry."""
@@ -69,15 +83,15 @@ class Engine:
             return {"reason": "limit_open_risk", "open_risk": r_open, "new_risk": r_new, "max": L.max_open_risk}
         self._roll(t_close)
         if self.pday_pnl <= -L.daily_loss_cap:
-            return {"reason": "limit_portfolio_daily_5pct_kst", "day_pnl": self.pday_pnl, "max": L.daily_loss_cap}
+            return {"reason": "limit_portfolio_daily_5pct_kst", "day_pnl": self.pday_pnl, "wallet": self.wallet,
+                    "day_start_wallet": self.pday_start_wallet, "max": L.daily_loss_cap}
         return None
 
     # ---- stepping ----------------------------------------------------------------------------------------------------
     def process(self, T, data, daily, emit, recorded_at_ms=None):
         def wrapped(kind, key, rec):
             if kind == "trade":
-                self._roll(rec["exit_ms"])
-                self.pday_pnl += rec["pnl_wallet_frac"]
+                self._apply_closed_trade(rec)
             elif rec.get("event") == "signal_skipped" and str(rec.get("reason", "")).startswith(("limit_", "rule_off")):
                 self.counters["signals_skipped_limit"] += 1
             emit(kind, key, rec)
@@ -90,7 +104,8 @@ class Engine:
 
     # ---- restart safety ----------------------------------------------------------------------------------------------
     def to_state(self):
-        return {"books": {**self.dormant, **{b.strategy: b.to_state() for b in self.books}}, "pday": self.pday, "pday_pnl": self.pday_pnl,
+        return {"books": {**self.dormant, **{b.strategy: b.to_state() for b in self.books}}, "wallet": self.wallet, "pday": self.pday,
+                "pday_start_wallet": self.pday_start_wallet,
                 "winding_down": sorted(self.winding_down), "counters": self.counters}
 
     @classmethod
@@ -111,6 +126,11 @@ class Engine:
             elif name not in by_name:
                 eng.dormant[name] = bs
         eng.winding_down |= set(st.get("winding_down", [])) & {b.strategy for b in eng.books}
-        eng.pday, eng.pday_pnl = st.get("pday"), st.get("pday_pnl", 0.0)
+        eng.pday = st.get("pday")
+        if "wallet" in st:
+            eng.wallet, eng.pday_start_wallet = st["wallet"], st.get("pday_start_wallet", st["wallet"])
+        else:                                       # legacy state (summed per-rule fractions): start the shared wallet at 1 + day pnl
+            eng.pday_start_wallet = eng.wallet0
+            eng.wallet = eng.wallet0 * (1.0 + st.get("pday_pnl", 0.0))
         eng.counters = st.get("counters", eng.counters)
         return eng

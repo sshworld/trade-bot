@@ -41,8 +41,9 @@ python3 tools/ledger_score.py --dir /var/lib/h34_paper                          
   grace the signal is logged as `next_bar_missing` instead of guessed. A still-forming bar is only ever read for its open.
 * Rule parameters are **not** configurable (RSI 30/70, 0.5%/0.5%, 16 bars, costs 0.15%/0.30%, size 2%/(stop+0.15%)): they live in
   `core.py`, copied from TA's lock. The config holds rule on/off, the portfolio limits and the lock time only.
-* Each rule keeps its own wallet and per-rule 5% KST cap (what the screen judged); the portfolio daily cap sums the rules'
-  wallet-fraction losses (approximation, see the build note's open issues).
+* Each rule keeps its own book wallet and per-rule 5% KST cap (what the screen judged). The portfolio daily 5% cap uses ONE shared
+  wallet: every rule's closed-trade ratio (size multiple x net return) compounds into it, and new entries are blocked when
+  shared wallet / KST day-start wallet - 1 <= -5% (state keys `wallet`, `pday_start_wallet`; a legacy `pday_pnl` state is converted).
 * Switching a rule off with a position open winds that position down to its exit, with no new entries; its wallet is kept.
 
 ## Adding a rule (H32, H34-A, H35, H36, H31, H38 …)
