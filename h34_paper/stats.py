@@ -100,7 +100,7 @@ def screen(trades, seed, min_trades, min_months=6, n_boot=10_000, crit_q=0.002):
     if not trades:
         return out
     out["S1-1"] = (b["mean_r_c015"] > 0, b["mean_r_c015"])
-    lbs = bootstrap_lowers(r15, seed, n_boot, qs=(0.01, 0.002, 0.001))
+    lbs = bootstrap_lowers(r15, seed, n_boot, qs=tuple(sorted({0.01, 0.002, 0.001, crit_q}, reverse=True)))   # crit_q bound comes from the SAME resamples
     out["S1-2_99"] = (lbs[0.01] > 0, lbs[0.01])
     out["S1-2_998"] = (lbs[0.002] > 0, lbs[0.002])
     out["S1-2_999"] = (lbs[0.001] > 0, lbs[0.001])

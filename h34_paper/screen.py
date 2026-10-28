@@ -115,8 +115,24 @@ def run_engine(sym, B, desired, exit_fn, reverse, stop_cost, tick, long_only_cap
             d, si = pend_entry
             px = B.o[i] + d["side"] * tick
             sld = d["sl_pct"] * px if "sl_pct" in d else (d["side"] * (px - d["sl_px"]) if "sl_px" in d else d["sl_dist"])
-            tpd = (d["tp_pct"] * px if "tp_pct" in d else (d["side"] * (d["tp_px"] - px) if "tp_px" in d else d["tp_dist"]))
-            if tpd is not None and tpd <= 0:      # H39-H42 price-level TP already at/behind the fill: no valid TP order, entry skipped + counted
+            tpd = (d["tp_pct"] * px if "tp_pct" in d else (d["side"] * (d["tp_px"] - px) if "tp_px" in d else
+                   (d["tp_r"] * sld if "tp_r" in d else d["tp_dist"])))
+            if d.get("stop_first"):                # H43-H45: min-stop rule is checked FIRST (also catches stop at/beyond the fill: D<=0); then TP gates
+                if sld / px < d["min_stop_pct"]:
+                    skipped += 1
+                    if counters is not None and sld <= 0:
+                        counters["stop_not_beyond_entry"] = counters.get("stop_not_beyond_entry", 0) + 1
+                elif d.get("min_tp_pct") is not None and tpd / px < d["min_tp_pct"]:
+                    if counters is not None:
+                        counters["tp_dist_lt_min_pct"] = counters.get("tp_dist_lt_min_pct", 0) + 1
+                elif d.get("min_tp_r") is not None and tpd < d["min_tp_r"] * sld:
+                    if counters is not None:
+                        counters["tp_dist_lt_min_r"] = counters.get("tp_dist_lt_min_r", 0) + 1
+                else:
+                    pos = dict(side=d["side"], entry_i=i, entry_ms=int(B.ts[i]), px=px, open=B.o[i], sl=px - d["side"] * sld,
+                               tp=None if tpd is None else px + d["side"] * tpd, stop_pct=sld / px,
+                               max_bars=d["max_bars"], mode=d.get("mode", ""), sig_ms=int(B.ts[si]), sig_close=int(B.ts[si] + B.tf), seen=0)
+            elif tpd is not None and tpd <= 0:      # H39-H42 price-level TP already at/behind the fill: no valid TP order, entry skipped + counted
                 if counters is not None:
                     counters["tp_not_beyond_entry"] = counters.get("tp_not_beyond_entry", 0) + 1
             elif sld / px < d["min_stop_pct"]:
