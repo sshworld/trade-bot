@@ -96,7 +96,7 @@ def funding_ret(fund, side, entry_ms, exit_ms):
 
 
 # ------------------------------------------------------------------ generic bar engine
-def run_engine(sym, B, desired, exit_fn, reverse, stop_cost, tick, long_only_cap=None):
+def run_engine(sym, B, desired, exit_fn, reverse, stop_cost, tick, long_only_cap=None, counters=None):
     """Closed-bar signals -> entry at NEXT bar open +/-1 tick adverse; stop (and optional TP) intrabar, same bar -> stop first
     (stop fills at the bar open when the bar opens beyond it); signal exits and reversals execute at the next bar open; time exit
     at the close of the max_bars-th bar. desired(i) -> None | dict(side, sl_dist, tp_dist|None, min_stop_pct, max_bars, mode).
@@ -114,9 +114,12 @@ def run_engine(sym, B, desired, exit_fn, reverse, stop_cost, tick, long_only_cap
         if pend_entry is not None and pos is None:
             d, si = pend_entry
             px = B.o[i] + d["side"] * tick
-            sld = d["sl_pct"] * px if "sl_pct" in d else d["sl_dist"]
-            tpd = (d["tp_pct"] * px if "tp_pct" in d else d["tp_dist"])
-            if sld / px < d["min_stop_pct"]:
+            sld = d["sl_pct"] * px if "sl_pct" in d else (d["side"] * (px - d["sl_px"]) if "sl_px" in d else d["sl_dist"])
+            tpd = (d["tp_pct"] * px if "tp_pct" in d else (d["side"] * (d["tp_px"] - px) if "tp_px" in d else d["tp_dist"]))
+            if tpd is not None and tpd <= 0:      # H39-H42 price-level TP already at/behind the fill: no valid TP order, entry skipped + counted
+                if counters is not None:
+                    counters["tp_not_beyond_entry"] = counters.get("tp_not_beyond_entry", 0) + 1
+            elif sld / px < d["min_stop_pct"]:
                 skipped += 1
             else:
                 pos = dict(side=d["side"], entry_i=i, entry_ms=int(B.ts[i]), px=px, open=B.o[i], sl=px - d["side"] * sld,
@@ -412,3 +415,97 @@ def run_h34a(sym, B4, daily, short, m1):
     if pos is not None:
         out.append(_raw(sym, pos, B4.c[n - 1], "end_of_data", int(B4.ts[n - 1] + MS4H), False, False))
     return out, skip_small
+
+
+# ------------------------------------------------------------------ H39-H42 (hypotheses_h39_h42.md, QR sha 30448b878b44; lock prereg-lock-h39-h42.md)
+MS_FUND_H = MS1H
+
+
+def _bb(B):
+    """Bollinger(20, 2.0) on 1h closes, population std (ddof=0, Bollinger's definition). Returns sma, upper, lower, width/sma."""
+    c = pd.Series(B.c)
+    sma = c.rolling(20).mean()
+    sd = c.rolling(20).std(ddof=0)
+    up, lo = sma + 2.0 * sd, sma - 2.0 * sd
+    return sma.to_numpy(), up.to_numpy(), lo.to_numpy(), ((up - lo) / sma).to_numpy()
+
+
+def make_h39(B, B4, short):
+    """Range fade: only when the last 4h bar CLOSED by the signal close has ADX14 < 20. LONG close < lower band, SHORT close > upper.
+    Stop 1.5*ATR14(1h) (signal bar); TP = SMA20(1h) of the signal bar (last closed bar at entry), fixed level; 24 bars."""
+    sma, up, lo, _ = _bb(B)
+    k4 = B4.idx_closed_at(B.ts + B.tf)
+    nan = np.isnan
+
+    def desired(i):
+        if B.run[i] < INTEG or nan(sma[i]) or nan(B.atr[i]):
+            return None
+        k = k4[i]
+        if k < 0 or nan(B4.adx[k]) or B4.run[k] < INTEG or not B4.adx[k] < 20:
+            return None
+        if short and B.c[i] > up[i]:
+            return dict(side=-1, sl_dist=1.5 * B.atr[i], tp_px=sma[i], min_stop_pct=0.004, max_bars=24)
+        if not short and B.c[i] < lo[i]:
+            return dict(side=1, sl_dist=1.5 * B.atr[i], tp_px=sma[i], min_stop_pct=0.004, max_bars=24)
+        return None
+    return desired
+
+
+def make_h40(B, short):
+    """Squeeze breakout: width/SMA20 of the PREVIOUS closed bar is the minimum of the last 120 closed bars (incl. itself, ties count);
+    the last closed close is beyond the band of that last bar. Stop 1.5*ATR; exit = 1h close back across SMA20 (next open) or 48 bars."""
+    sma, up, lo, w = _bb(B)
+    minw = pd.Series(w).rolling(120).min().to_numpy()
+    nan = np.isnan
+    need = max(INTEG, 121)
+
+    def desired(i):
+        if i < 1 or B.run[i] < need or nan(minw[i - 1]) or nan(up[i]) or nan(B.atr[i]):
+            return None
+        if not w[i - 1] <= minw[i - 1]:
+            return None
+        if (not short and B.c[i] > up[i]) or (short and B.c[i] < lo[i]):
+            return dict(side=-1 if short else 1, sl_dist=1.5 * B.atr[i], tp_dist=None, min_stop_pct=0.004, max_bars=48)
+        return None
+
+    def exit_fn(i, side):
+        return (B.c[i] < sma[i]) if side > 0 else (B.c[i] > sma[i])
+    return desired, exit_fn
+
+
+def make_h41(B, fund, short, thr=0.0003):
+    """Funding crowd fade: a settlement stamp T (8h) with rate >= +0.03% (SHORT) / <= -0.03% (LONG); the signal bar is the 1h bar that
+    OPENS at T, so entry is the first 1h open strictly after the settlement (T+1h). Stop and TP 1.5*ATR, 24 bars. One entry per settlement."""
+    fts, fr = fund
+    trig = {}
+    for t, r in zip(fts.tolist(), fr.tolist()):
+        if (short and r >= thr - 1e-12) or (not short and r <= -thr + 1e-12):
+            trig[int(t)] = r
+    nan = np.isnan
+
+    def desired(i):
+        if int(B.ts[i]) not in trig or B.run[i] < INTEG or nan(B.atr[i]):
+            return None
+        return dict(side=-1 if short else 1, sl_dist=1.5 * B.atr[i], tp_dist=1.5 * B.atr[i], min_stop_pct=0.004, max_bars=24)
+    return desired, len(trig)
+
+
+def make_h42(B, short):
+    """Failed-breakout fade. Range = max high / min low of the 24 closed bars BEFORE the last two (bars i-25..i-2). SHORT: bar i-1 closed
+    above the range high and bar i (last closed) closed back <= range high; LONG mirror. Stop = extreme (high/low) of bars i-1 and i;
+    TP = range midpoint (fixed at signal); 24 bars."""
+    hh = pd.Series(B.h).rolling(24).max().shift(2).to_numpy()
+    ll = pd.Series(B.l).rolling(24).min().shift(2).to_numpy()
+    nan = np.isnan
+    need = max(INTEG, 26)
+
+    def desired(i):
+        if i < 2 or B.run[i] < need or nan(hh[i]):
+            return None
+        mid = (hh[i] + ll[i]) / 2.0
+        if short and B.c[i - 1] > hh[i] and B.c[i] <= hh[i]:
+            return dict(side=-1, sl_px=max(B.h[i - 1], B.h[i]), tp_px=mid, min_stop_pct=0.004, max_bars=24)
+        if not short and B.c[i - 1] < ll[i] and B.c[i] >= ll[i]:
+            return dict(side=1, sl_px=min(B.l[i - 1], B.l[i]), tp_px=mid, min_stop_pct=0.004, max_bars=24)
+        return None
+    return desired

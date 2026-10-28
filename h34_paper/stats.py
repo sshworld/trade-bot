@@ -87,7 +87,7 @@ def basic(trades):
         final_wallet=trades[-1]["wallet_after"] if n else 1.0, break_even=be)
 
 
-def screen(trades, seed, min_trades, min_months=6, n_boot=10_000):
+def screen(trades, seed, min_trades, min_months=6, n_boot=10_000, crit_q=0.002):
     """Stage-1 criteria S1-0..S1-6 (prereg-h34-stage1-screen.md). `trades` sorted by exit time with wallet_after."""
     out = OrderedDict()
     out["n"] = len(trades)
@@ -100,9 +100,11 @@ def screen(trades, seed, min_trades, min_months=6, n_boot=10_000):
     if not trades:
         return out
     out["S1-1"] = (b["mean_r_c015"] > 0, b["mean_r_c015"])
-    lbs = bootstrap_lowers(r15, seed, n_boot)
+    lbs = bootstrap_lowers(r15, seed, n_boot, qs=(0.01, 0.002, 0.001))
     out["S1-2_99"] = (lbs[0.01] > 0, lbs[0.01])
-    out["S1-2"] = (lbs[0.002] > 0, lbs[0.002])       # family-v1: 99.8% bound is the criterion; 99% reported alongside
+    out["S1-2_998"] = (lbs[0.002] > 0, lbs[0.002])
+    out["S1-2_999"] = (lbs[0.001] > 0, lbs[0.001])
+    out["S1-2"] = (lbs[crit_q] > 0, lbs[crit_q])     # crit_q 0.002 (family-v1, 99.8%) by default; H39-H42 lock uses 0.001 (99.9%); 99/99.8/99.9 all reported
     out["S1-3"] = (b["mean_r_c030"] > 0, b["mean_r_c030"])
     # halves: chronological by entry time, equal trade counts (primary); calendar-midpoint split reported as information
     h = len(ts) // 2
