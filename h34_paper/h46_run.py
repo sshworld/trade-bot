@@ -171,7 +171,8 @@ def render(res):
     spec, sc, led = res["spec"], res["sc"], res["ledger"]
     now = dt.datetime.now(dt.timezone(dt.timedelta(hours=9))).strftime("%Y-%m-%d %H:%M KST")
     g = git_state()
-    L = [f"# {spec} screen result ({res['intrabar']} intrabar) -- {now}", "",
+    L = ["gap_all 새 코인에도 끔(TA 결정, 17:3x)", "",
+         f"# {spec} screen result ({res['intrabar']} intrabar) -- {now}", "",
          f"Runner: branch {g['branch']} @ {g['head'][:10]}{' (DIRTY TREE)' if g['dirty'] else ''}; locks: "
          + ", ".join(f"{Path(p).name} {sha(p, 12)}" for p in LOCK_FILES) + f"; membership sha {sha(D.MEMBERSHIP, 12)}.",
          "", f"## Verdict: {res['verdict']}", "",

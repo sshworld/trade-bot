@@ -417,3 +417,32 @@ def test_lock_files_list_v1_3_and_final_refuses_1h(capsys):
     with pytest.raises(SystemExit) as e:
         cli.main(["--final", "--spec", "h46", "--intrabar", "1h", "--out", "/nonexistent-never-created"])
     assert "1m bars only" in str(e.value)
+
+
+# ---------------------------------------------------------------- D4 gap_all is OFF for every coin (TA 17:3x, option A)
+@needs_research
+@pytest.mark.parametrize("sym", ["TESTUSDT", "BTCUSDT"])
+def test_engine_raw_never_sets_gap_all(sym, monkeypatch):
+    import pandas as pd
+    v8 = D.research()
+    seen = {}
+    idx = pd.date_range("2022-06-01", periods=48, freq="1h")
+    k1h = pd.DataFrame(dict(open=1.0, high=1.0, low=1.0, close=1.0, volume=1.0), index=idx)
+    f = pd.Series([0.0001], index=[idx[0]])
+    class FakeP:
+        def __init__(self, *a, **k):
+            self.b = k1h.resample("4h").last()
+            self.crowd = pd.Series([False], index=[idx[0]])
+    monkeypatch.setattr(v8, "SymPrep", FakeP)
+    monkeypatch.setattr(v8, "engine", lambda s, k, P, tick, opts: seen.update(opts=dict(opts)) or pd.DataFrame())
+    monkeypatch.setattr(D, "tick_info", lambda *a: 0.01)
+    monkeypatch.setattr(v8, "delisted", lambda s: False)
+    D.engine_raw(sym, 1, None, "1m", k1h=k1h, f=f, k1=k1h, coverage=False)
+    assert "opts" in seen and not seen["opts"].get("gap_all", False)
+
+
+def test_result_file_starts_with_gap_all_line():
+    import inspect
+    from h34_paper import h46_run as R
+    src = inspect.getsource(R.render)
+    assert 'L = ["gap_all 새 코인에도 끔(TA 결정, 17:3x)", ""' in src

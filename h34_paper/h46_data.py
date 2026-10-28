@@ -221,8 +221,7 @@ def engine_raw(sym, side, months_ok, intrabar, k1h=None, f=None, k1=None, blacko
     allow = np.array([(x in ok_m) or (pre_ok and x < "2021-01") for x in bt.strftime("%Y-%m")])
     step = H1N if intrabar == "1h" else M1N
     opts = dict(allow=allow)
-    if sym not in v8.SIX and intrabar == "1m":
-        opts["gap_all"] = True                                # D4 as in H16 (partial 1m gaps); six coins: reference path
+    # D4 gap_all stays OFF for every coin (TA 17:3x, lock v1.3 item 7 literal: same setting as the H7-T replay, six and new coins alike)
     vol = k1.volume.to_numpy()
     pos = np.flatnonzero(vol > 0)
     if sym not in v8.SIX and len(pos):
