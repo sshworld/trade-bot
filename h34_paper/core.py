@@ -277,11 +277,29 @@ def trade_record(pos, exit_px, reason, exit_ms, gap_through, wallet_after, pnl_w
     }
 
 
+# ---- rule plug-in point -----------------------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Rule:
+    """What step() needs to know about one entry rule: its side, its bar-level detector and its exit parameters.
+    `detect(side, sd, daily, i) -> (signal_dict | None, reason_if_none)` must be pure and use CLOSED bars only.
+    The H34-B values are the locked ones; a new rule is added by registering another Rule (see h34_paper/rules.py)."""
+    name: str
+    side: int
+    detect: object
+    target: float = TARGET
+    stop: float = STOP
+    max_bars: int = MAX_BARS
+
+
+H34B_RULES = {1: Rule("H34-B", 1, detect), -1: Rule("H34-B-S", -1, detect)}
+
+
 # ---- book: wallet, sizing, daily cap (one per direction; long and short are judged separately) ----------------------
 class Book:
-    def __init__(self, side, wallet0=1.0, strategy=None, risk=RISK, daily_cap=DAILY_CAP, max_mult=MAX_MULT):
+    def __init__(self, side, wallet0=1.0, strategy=None, risk=RISK, daily_cap=DAILY_CAP, max_mult=MAX_MULT, rule=None):
         self.side = side
         self.strategy = strategy or STRATEGY[side]
+        self.rule = rule or H34B_RULES[side]
         self.wallet = wallet0
         self.risk, self.daily_cap, self.max_mult = risk, daily_cap, max_mult
         self.day = None
@@ -338,7 +356,7 @@ def _pos_to_dict(p):
 
 
 # ---- one global step per closed-bar time T -------------------------------------------------------------------------
-def step(T, books, data, daily, emit, recorded_at_ms=None):
+def step(T, books, data, daily, emit, recorded_at_ms=None, gate=None, coins=COINS):
     """Process the closed 15m bar that OPENED at T for every book/coin. Deterministic: same inputs -> same outputs.
 
     phase 1: manage open positions with bar T (exit at its close). phase 2: detect on bar T, enter at the NEXT bar's open
@@ -354,19 +372,19 @@ def step(T, books, data, daily, emit, recorded_at_ms=None):
                      {"event": "missing_bar_while_position_open", "strategy": b.strategy, "symbol": sym, "bar_open_ms": T,
                       "trade_id": pos.key()})
                 continue                       # never guess the exit: position stays open, flagged
-            r = manage_bar(pos, data[sym].s15.bars[i])
+            r = manage_bar(pos, data[sym].s15.bars[i], b.rule.max_bars)
             if r is not None:
                 rec = b.close(pos, *r[:3], r[3])
                 emit("trade", rec["id"], rec)
     for b in books:
-        for sym in COINS:
+        for sym in coins:
             sd = data[sym]
             i = sd.s15.idx(T)
             if i is None:
                 emit("event", f"gap_bar|{b.strategy}|{sym}|{T}",
                      {"event": "missing_signal_bar", "strategy": b.strategy, "symbol": sym, "bar_open_ms": T})
                 continue
-            sig, why = detect(b.side, sd, daily, i)
+            sig, why = b.rule.detect(b.side, sd, daily, i)
             if sig is None:
                 if why and why.startswith(("gap", "regime_un", "trend_un")):
                     emit("event", f"skip|{b.strategy}|{sym}|{T}|{why}",
@@ -391,9 +409,16 @@ def step(T, books, data, daily, emit, recorded_at_ms=None):
             o = sd.s15.bars[j][1]
             tick = TICK[sym]
             px = o + b.side * tick                       # next-bar open, 1 tick adverse (TA lock)
-            tp, sl = px * (1 + b.side * TARGET), px * (1 - b.side * STOP)
-            pos = Pos(b.strategy, sym, b.side, T, t_close, o, px, tp, sl, STOP, b.size_mult(STOP), b.wallet, 0, sig,
+            tp, sl = px * (1 + b.side * b.rule.target), px * (1 - b.side * b.rule.stop)
+            pos = Pos(b.strategy, sym, b.side, T, t_close, o, px, tp, sl, b.rule.stop, b.size_mult(b.rule.stop), b.wallet, 0, sig,
                       None if recorded_at_ms is None else (recorded_at_ms - t_close) / 1000.0)
+            if gate is not None:                       # portfolio limits (engine layer); None = screen behaviour
+                why = gate(b, pos, t_close)
+                if why is not None:
+                    emit("event", f"skip|{b.strategy}|{sym}|{T}|{why['reason']}",
+                         {**base, "event": "signal_skipped", "reason": why["reason"], "limit": why, "would_be_entry_px": px,
+                          "would_be_size_mult": pos.size_mult})
+                    continue
             b.open(pos)
             emit("event", f"entry|{b.strategy}|{sym}|{T}",
                  {**base, "event": "paper_entry", "entry_bar_open_ms": t_close, "entry_open": o, "entry_px": px, "tp": tp,

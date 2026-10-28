@@ -1,0 +1,56 @@
+# /etc/systemd/system/h34-paper-recorder.service — NOT deployed. Install only after TA/성헌 OK (see RUNBOOK.md).
+# Paper (virtual-fill) recorder: public market data only, no API key, no order endpoint. Separate user, separate directory,
+# never touches live_v6 or the h15 logger. Lowest priority on the 1 CPU / 1 GB box: it yields to everything else.
+[Unit]
+Description=H34 paper recorder (virtual fills, public data only, low priority)
+After=network-online.target
+Wants=network-online.target
+# deliberately NO Requires/After on live_v6.service or the h15 logger: neither may depend on this unit, and it must not on them.
+
+[Service]
+Type=simple
+User=h34paper
+Group=h34paper
+WorkingDirectory=/opt/h34-paper
+# stdlib only: system python3 (>= 3.10; the VPS has 3.12), no venv, no pip, no EnvironmentFile (there is nothing secret to load)
+ExecStart=/usr/bin/python3 -m h34_paper.recorder run --config /opt/h34-paper/h34_paper/deploy/h34_paper.json --state-dir /var/lib/h34_paper
+Environment=PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+Restart=always
+RestartSec=30
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# ---- lower than the bot: CPU / IO / memory / OOM ------------------------------------------------------------------------
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+CPUWeight=1
+CPUQuota=15%
+MemoryHigh=80M
+MemoryMax=128M
+MemorySwapMax=0
+TasksMax=16
+LimitNOFILE=64
+OOMScoreAdjust=900
+# the kernel OOM killer picks this process before live_v6 (their OOMScoreAdjust is lower)
+
+# ---- sandbox: read-only system, writes only to its own state dir, outbound IP only ---------------------------------------
+StateDirectory=h34_paper
+UMask=0027
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+CapabilityBoundingSet=
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

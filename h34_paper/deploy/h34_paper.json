@@ -1,0 +1,21 @@
+{
+  "_comment": "Paper (virtual-fill) recorder config. Rule values (RSI 30/70, 0.5%/0.5%, 16 bars, costs, sizing) are LOCKED in code (h34_paper/core.py) and are deliberately NOT configurable here. Only on/off per rule, the portfolio limits (TA v1.1) and the lock time are.",
+  "lock_ts_ms": 1793167380000,
+  "coins": ["BTCUSDT", "ETHUSDT"],
+  "limits": {"per_coin": 1, "max_concurrent": 3, "max_open_risk": 0.06, "one_stop_loss": 0.02, "daily_loss_cap": 0.05},
+  "rules": [
+    {"name": "H34-B",     "enabled": true},
+    {"name": "H34-B-S",   "enabled": true},
+    {"name": "H34-A",     "enabled": false},
+    {"name": "H34-A-S",   "enabled": false},
+    {"name": "H32",       "enabled": false},
+    {"name": "H32-S",     "enabled": false},
+    {"name": "H31",       "enabled": false},
+    {"name": "H31-S",     "enabled": false},
+    {"name": "H35",       "enabled": false},
+    {"name": "H36",       "enabled": false},
+    {"name": "H38-SHORT", "enabled": false},
+    {"name": "H38-MID",   "enabled": false},
+    {"name": "H38-LONG",  "enabled": false}
+  ]
+}
