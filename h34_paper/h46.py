@@ -1,5 +1,5 @@
 """H46/H47 one-time screen -- PURE part (no research imports): constants, limits book, date-block bootstrap, S1/U clauses, verdict.
-Locks: /workspace/specs/prereg-lock-h46-h47-v1_2.md (TA, on top of v1.1 prereg-lock-h46-h47.md) + QR /workspace/quant/hypotheses_h46_h47.md.
+Locks: /workspace/specs/prereg-lock-h46-h47-v1_3.md (TA interpretation, 1m-only fills) + prereg-lock-h46-h47-v1_2.md (TA, on top of v1.1 prereg-lock-h46-h47.md) + QR /workspace/quant/hypotheses_h46_h47.md.
 Every reading of an ambiguous lock sentence is in INTERP (copied to the top of the result file) and in the Developer's numbered questions."""
 from __future__ import annotations
 

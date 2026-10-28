@@ -23,6 +23,7 @@ MEMBERSHIP = RESEARCH_ROOT / "results/ops/universe_h46_membership_mean_2026-10-2
 MEMBERSHIP_SHA = "d5eb81db7c9d8cec09a281a8b5ae3502338534d2437fae9d097fce96bb7c80ad"
 H16_UNIVERSE = RESEARCH_ROOT / "results/v8/universe/universe_top20_monthly_v1_1.csv"
 H1_FILES = ["v7_um_1h.parquet", "h12h13_extra_1h.parquet", "h16_um_1h.parquet", "h46_um_1h.parquet"]
+M1_FILES = ["h16_um_1m.parquet", "h46_um_1m.parquet"]          # non-six coins; the six use research v7_six_1m (v8.load_1m)
 FUND_FILES = ["v7_um_funding.parquet", "h12h13_extra_funding.parquet", "h16_um_funding.parquet", "h16_d1_funding.parquet",
               "h46_um_funding.parquet"]
 MONTHS = [f"{y}-{m:02d}" for y in range(2021, 2027) for m in range(1, 13) if (y, m) <= (2026, 9)]
@@ -71,11 +72,22 @@ def load_funding(sym):
 
 
 def load_1m(sym):
+    """1m bars. Six coins: v8.load_1m (v7_six_1m). Other coins: M1_FILES (h16 + h46 downloads), symbol-filtered reads, concatenated in
+    file order, duplicate ts dropped (first file wins), clipped at v8.END (2026-09-30 end clip). None when there is no data."""
     v8 = research()
-    try:
-        k = v8.load_1m(sym)
-    except Exception:
+    if sym in v8.SIX:
+        try:
+            k = v8.load_1m(sym)
+        except Exception:
+            return None
+        return k if len(k) else None
+    cols = ["ts", "open", "high", "low", "close", "volume"]
+    t = v8._cat(M1_FILES, sym, cols)             # symbol-filtered per file (v8._cat reads PQ = research data/parquet)
+    if not len(t):
         return None
+    k = t.drop_duplicates("ts").set_index("ts").sort_index()
+    k.index = pd.DatetimeIndex(k.index).astype("datetime64[ns]")
+    k = k[k.index < v8.END]
     return k if len(k) else None
 
 

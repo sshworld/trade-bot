@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""One-time H46 / H47 screen (locks: prereg-lock-h46-h47-v1_2.md over v1.1 + QR hypotheses_h46_h47.md).
+"""One-time H46 / H47 screen (locks: prereg-lock-h46-h47-v1_3.md over v1_2 over v1.1 + QR hypotheses_h46_h47.md).
 
 Use /workspace/.venv-live6/bin/python (symbol-filtered parquet reads only; a full load is OOM-killed).
 
@@ -94,6 +94,8 @@ def main(argv=None):
         ap.error("nothing to do: pass --replay-check, --coverage or --final (the one-time run; not to be passed without the PM/TA go)")
     if not (a.spec and a.intrabar):
         ap.error("--spec and --intrabar required with --final")
+    if a.intrabar != "1m":
+        raise SystemExit("REFUSED: lock v1.3 item 1: fills and stops are computed on 1m bars only (1h substitute not allowed)")
     from h34_paper import h46_run as R
     bad = R.check_locks()
     if bad:

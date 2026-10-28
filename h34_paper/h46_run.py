@@ -16,6 +16,7 @@ from . import h46_data as D
 from . import stats
 
 LOCK_FILES = OrderedDict([
+    ("/workspace/specs/prereg-lock-h46-h47-v1_3.md", "ebb1c3678c93"),
     ("/workspace/specs/prereg-lock-h46-h47-v1_2.md", "043e534d6a0f"),
     ("/workspace/specs/prereg-lock-h46-h47.md", "62eb0051d347"),
     ("/workspace/quant/hypotheses_h46_h47.md", "316b0e192d72"),

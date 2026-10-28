@@ -380,3 +380,40 @@ def test_h7t_six_coin_replay_reproduces_355_trades(tmp_path):
     r = json.loads((tmp_path / "replay_check_1m.json").read_text())
     assert r["trades"] == 355
     assert r["mean_R"] == pytest.approx(1.69, abs=0.006)
+
+
+# ---------------------------------------------------------------- 1m loader reads the h46 download too
+@needs_research
+def test_load_1m_concats_h16_and_h46_files_dedups_and_clips(tmp_path, monkeypatch):
+    import pandas as pd
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    v8 = D.research()
+    def wr(name, rows):
+        df = pd.DataFrame(rows, columns=["ts", "sym", "close"])
+        df["ts"] = pd.to_datetime(df["ts"]).astype("datetime64[ms]")
+        for c in ("open", "high", "low"):
+            df[c] = df["close"]
+        df["volume"], df["quote_volume"] = 1.0, 1.0
+        pq.write_table(pa.Table.from_pandas(df, preserve_index=False), tmp_path / name)
+    wr("h16_um_1m.parquet", [("2025-01-01 00:00", "AAAUSDT", 1.0), ("2025-01-01 00:01", "AAAUSDT", 2.0), ("2025-01-01 00:00", "OTHERUSDT", 9.0)])
+    wr("h46_um_1m.parquet", [("2025-01-01 00:01", "AAAUSDT", 99.0), ("2025-01-01 00:02", "AAAUSDT", 3.0), ("2025-01-01 00:03", "NEWUSDT", 5.0),
+                             ("2026-09-30 23:59", "NEWUSDT", 6.0), ("2026-10-01 00:00", "NEWUSDT", 7.0)])
+    monkeypatch.setattr(v8, "PQ", tmp_path)
+    a = D.load_1m("AAAUSDT")
+    assert list(a.close) == [1.0, 2.0, 3.0]                                  # rows from both files, duplicate (sym, ts): first file wins
+    assert a.index.is_monotonic_increasing and str(a.index.dtype) == "datetime64[ns]"
+    n = D.load_1m("NEWUSDT")                                                 # only in the new file
+    assert list(n.close) == [5.0, 6.0]                                       # 2026-10-01 clipped at END
+    assert D.load_1m("MISSINGUSDT") is None
+
+
+def test_lock_files_list_v1_3_and_final_refuses_1h(capsys):
+    from h34_paper import h46_run as R
+    assert R.LOCK_FILES["/workspace/specs/prereg-lock-h46-h47-v1_3.md"] == "ebb1c3678c93"
+    assert D.MEMBERSHIP_SHA.startswith("d5eb81db7c9d")
+    sys.path.insert(0, str(ROOT / "tools"))
+    import run_screen_h46_h47 as cli
+    with pytest.raises(SystemExit) as e:
+        cli.main(["--final", "--spec", "h46", "--intrabar", "1h", "--out", "/nonexistent-never-created"])
+    assert "1m bars only" in str(e.value)
