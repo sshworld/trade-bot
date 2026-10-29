@@ -1,6 +1,7 @@
 """Full-entry sizing FE-v2 (prereg-lock-fullentry-v2.md 539c7585353b + H61-H71 addendum 9bc7869cd811), replay mode, BUILD ONLY.
 notional = min(f*L*W, target_loss*W / (stop_dist + fee_rt)) floored to step; 10x; <=3 concurrent, 1 per coin, sum of open stop-losses <= 6% of wallet.
 Synthetic ledgers only; never run on the 355 ledger here. Written BEFORE h34_paper/sizing_full.py (TA procedure)."""
+import dataclasses as dc
 import subprocess
 from decimal import Decimal as Dc
 from pathlib import Path
@@ -26,6 +27,7 @@ COINS = ("AAAUSDT", "BBBUSDT", "CCCUSDT", "DDDUSDT")
 RULES = {c: _rules() for c in COINS}
 RULES.update(BIGUSDT=_rules("100"), MAXUSDT=_rules(mkt_max="10"), LOWUSDT=_rules(), MINQ=_rules(min_qty="1"))
 BR = {s: [{"floor": 0.0, "cap": 1e9, "mmr": 0.004, "max_lev": 50}] for s in RULES}
+BR0 = {k: [dict(v[0], mmr=0.0)] for k, v in BR.items()}   # mmr 0: isolates stop_too_wide from the v2.1 stop-vs-liquidation guard
 BR["LOWUSDT"] = [{"floor": 0.0, "cap": 1e9, "mmr": 0.004, "max_lev": 5}]
 T0 = pd.Timestamp("2024-01-01")
 A = F.fe2_params("A", min_stop_dist=0.004)
@@ -51,11 +53,12 @@ def test_fe2_variants_carry_lock_values():
         p = F.fe2_params(v, min_stop_dist=0.004)
         assert (p.f, p.lev, p.target_loss_pct, p.fee_rt) == (f, 10, 5.0, 0.0017)
         assert (p.max_positions, p.per_coin, p.open_loss_cap_pct, p.min_stop_dist, p.min_notional_wallet) == (3, 1, 6.0, 0.004, 0.5)
+        assert p.liq_guard == 0.7                           # FE-v2.1 Q7
     assert F.fe2_params("A", min_stop_dist=0.006).min_stop_dist == 0.006
     with pytest.raises(TypeError):
         F.fe2_params("A")                                   # min stop distance is candidate-specific: required
     with pytest.raises(ValueError):
-        F.fe2_params("C", min_stop_dist=0.004)
+        F.fe2_params("D", min_stop_dist=0.004)
 
 
 def test_fullparams_has_no_defaults():
@@ -67,10 +70,10 @@ def test_fullparams_has_no_defaults():
 
 def test_param_validation():
     base = dict(f=0.1, lev=10, target_loss_pct=5.0, fee_rt=0.0017, min_stop_dist=0.004, max_positions=3, per_coin=1, open_loss_cap_pct=6.0,
-                min_notional_wallet=0.5)
+                min_notional_wallet=0.5, liq_guard=0.7)
     F.FullParams(**base)
     for k, v in (("f", 0), ("f", 1.01), ("lev", 0), ("lev", 11), ("target_loss_pct", 0), ("target_loss_pct", 101), ("fee_rt", -0.1),
-                 ("min_stop_dist", -1), ("max_positions", 0), ("per_coin", 0), ("open_loss_cap_pct", 0), ("min_notional_wallet", -1)):
+                 ("min_stop_dist", -1), ("liq_guard", 0), ("liq_guard", 1.01), ("max_positions", 0), ("per_coin", 0), ("open_loss_cap_pct", 0), ("min_notional_wallet", -1)):
         with pytest.raises(ValueError):
             F.FullParams(**{**base, k: v})
     F.FullParams(**{**base, "f": 0.25, "lev": 5})
@@ -110,7 +113,8 @@ def test_variants_differ_where_between_caps():
 @pytest.mark.parametrize("stop", [0.004, 0.0057, 0.01, 0.02, 0.0317, 0.05, 0.0817, 0.09])
 @pytest.mark.parametrize("px", [37.3, 100.0, 3.37, 61.111])
 def test_margin_and_loss_never_exceed_limits(params, stop, px):
-    t = sim(led(row(px=px, stop=stop)), params)["trades"]
+    params = dc.replace(params, liq_guard=1.0)          # isolate sizing from the v2.1 stop-vs-liquidation rule (tested in the v2.1 file)
+    t = sim(led(row(px=px, stop=stop)), params, brackets=BR0)["trades"]
     assert len(t) == 1
     assert t.margin[0] <= params.f * 1000 + 1e-9
     assert t.loss_at_stop_incl_fee_rt_frac[0] <= 0.05 + 1e-12
@@ -125,7 +129,7 @@ def test_step_floors_never_rounds_up():
 
 def test_leverage_param_scales_cap_and_is_hard_max_10():
     p = F.FullParams(f=0.10, lev=5, target_loss_pct=5.0, fee_rt=0.0017, min_stop_dist=0.004, max_positions=3, per_coin=1,
-                     open_loss_cap_pct=6.0, min_notional_wallet=0.5)
+                     open_loss_cap_pct=6.0, min_notional_wallet=0.5, liq_guard=0.7)
     t = sim(led(row(stop=0.01)), p)["trades"]
     assert t.lev[0] == 5 and t.notional[0] == 500 and t.margin[0] == 100
     with pytest.raises(ValueError):
@@ -148,12 +152,12 @@ def test_stop_plus_fee_over_10pct_skipped():
     s = sim(led(row(stop=0.10)), A)                      # 0.10 + 0.0017 > 0.10 -> notional < 0.5 W
     assert s["entered"] == 0 and s["skips"] == {"stop_too_wide": 1}
     assert "0.1017" in s["skip_log"][0]["detail"] or "10.17" in s["skip_log"][0]["detail"]
-    assert sim(led(row(stop=0.098)), A)["entered"] == 1  # 0.0997 <= 0.10: notional 501.5 >= 0.5 W
+    assert sim(led(row(stop=0.098)), dc.replace(A, liq_guard=1.0), brackets=BR0)["entered"] == 1  # 0.0997 <= 0.10: notional 501.5 >= 0.5 W
 
 
 def test_notional_below_half_wallet_boundary_uses_param():
-    p = F.FullParams(**{**A.__dict__, "min_notional_wallet": 0.0})
-    assert sim(led(row(stop=0.10)), p)["entered"] == 1
+    p = F.FullParams(**{**A.__dict__, "min_notional_wallet": 0.0, "liq_guard": 1.0})
+    assert sim(led(row(stop=0.10)), p, brackets=BR0)["entered"] == 1      # mmr 0: liquidation distance exactly 10%
 
 
 def test_min_stop_distance_skip_and_param():
