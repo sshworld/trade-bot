@@ -141,9 +141,21 @@ def test_checker_flags_violations(kw, frag):
 
 
 def test_checker_flags_missing_same_side_halving():
+    # only when halving is configured (pre-6440290 rule); in memory only
     book = _book(3)
     late = _e(sym="Z", entry_time=9, open_syms=("A", "B", "C"), risk_pct_used=0.5)           # must be 0.25 with 3 open
-    assert any("risk_pct_used" in b for b in check_entries(book + [late]))
+    assert any("risk_pct_used" in b for b in check_entries(book + [late], SizingParams(same_side_halving_at=3)))
+
+
+def test_checker_live_default_has_no_halving():
+    # live default (6440290): no same-side halving, so a 4th entry at full 0.5 % is fine and a halved one is flagged
+    assert SizingParams().same_side_halving_at is None
+    book = _book(3)
+    full = _e(sym="Z", entry_time=9, open_syms=("A", "B", "C"), risk_pct_used=0.5)
+    assert not any("risk_pct_used" in b for b in check_entries(book + [full]))
+    halved = _e(sym="Z", entry_time=9, open_syms=("A", "B", "C"), risk_pct_used=0.25,
+                qty=Decimal("0.0625"), q0=Decimal("0.0625"))
+    assert any("risk_pct_used" in b for b in check_entries(book + [halved]))
 
 
 def test_checker_flags_open_risk_over_cap():
