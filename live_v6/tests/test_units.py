@@ -125,7 +125,7 @@ def test_skip_order_and_reasons():
 def test_same_side_halving():
     three = [{"side": 1, "risk_frac": 0.005}] * 3
     sz = size_entry(RULES["DOGEUSDT"], BR, 1000, 1000, Decimal("0.15"), Decimal("0.0045"), 1, three,
-                    SizingParams(portfolio_risk_cap=0.05), mark=Decimal("0.15"))
+                    SizingParams(portfolio_risk_cap=0.05, same_side_halving_at=3), mark=Decimal("0.15"))
     assert sz.risk_pct_used == 0.25
 
 

@@ -8,6 +8,9 @@ Two paths:
              price-drop buffer): the smallest exchange-allowed quantity (multiple of step, ≥ minQty, notional ≥
              minNotional at 0.98·ref). Entered only if (stop loss + fees + slippage) ≤ 3% of wallet
              (`min_order_risk_over_cap` otherwise) and the open-risk sum incl. it ≤ 5% (`total_risk_cap`).
+Same-side halving (risk_pct / 2 when >= N same-side positions are open) is OFF by default (`same_side_halving_at=None`;
+TA verdict-sizing-nohalf-2026-10-29): every entry gets the full risk_pct. The code path stays behind `same_side_halving_at=N`.
+Every other limit is unchanged and still binds: max_risk_pct 1% incl. fees, open-risk Σ 2.5% (q0) / 5% (qty_floor), 10x, margin 90%.
 Nothing in this module is a price or a symbol constant: every limit is a ratio or comes from the exchange filters
 passed in. Single market entry, single exit: this module never splits an order.
 
@@ -36,7 +39,7 @@ class SizingParams:
     max_leverage: int = 10
     mmr_fallback: float = 0.004
     liq_ratio: float = 0.7
-    same_side_halving_at: int = 3
+    same_side_halving_at: int | None = None   # None = same-side halving OFF (TA verdict-sizing-nohalf-2026-10-29); N = risk_pct/2 when >= N same-side positions are open
     portfolio_risk_cap: float = 0.025   # fraction of wallet (q0 trades)
     min_order_loss_cap: float = 0.03    # qty_floor: (stop loss + fees + slippage) / wallet
     total_risk_cap: float = 0.05        # qty_floor: Σ open risk + new
@@ -126,7 +129,7 @@ def size_entry(rules: SymbolRules, brackets: list[dict], wallet, available, ref,
     if wallet <= 0:
         return Sized("risk_cap", f"wallet {wallet} <= 0")
     same = sum(1 for o in open_positions if o["side"] == side)
-    rp = p.risk_pct / 2 if same >= p.same_side_halving_at else p.risk_pct
+    rp = p.risk_pct / 2 if p.same_side_halving_at is not None and same >= p.same_side_halving_at else p.risk_pct
     est_stop = stop_price(rules, ref, side, stop_dist)
     risk_dist = abs(ref - est_stop)
     if risk_dist <= 0:
