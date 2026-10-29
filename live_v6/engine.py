@@ -37,7 +37,7 @@ from .strategies.base import DataNotReady
 from .exchange import ExchangeError, ExchangeUnavailable, OrderRejected, WouldTrigger, rules_from_info
 from .notify import Notifier
 from .rules import D, SymbolRules, stop_price
-from .sizing import SizingParams, size_entry
+from .sizing import TAKER_FEE, SizingParams, size_entry
 
 log = logging.getLogger("live_v6.engine")
 
@@ -827,8 +827,12 @@ class V6Engine:
             fm.append([self.now_ms(), sym])
             del fm[:-200]
             self.save()
+        # display only: ACTUAL risk = loss to the stop incl. fees/slippage (sizing.py loss model) ÷ wallet at entry
+        qf, pf = D(j["qty"]), D(j["entry_px"])
+        act = ((pf - D(j["stop_px"])) * qf + qf * pf * (2 * TAKER_FEE + D(self.cfg.sizing.entry_slippage)
+                                                        + D(self.cfg.sizing.stop_slippage))) / D(j["wallet_at_entry"]) * 100
         self.notify(f"🟢 진입 {sym} 롱 · 수량 {j['qty']} · 체결가 {j['entry_px']}{part}\n"
-                     f"손절 {j['stop_px']} · {sz.lev}x · 위험 {D(j['risk_usdt']):.4f} USDT ({sz.risk_pct_used}%)",
+                     f"손절 {j['stop_px']} · {sz.lev}x · 위험 {D(j['risk_usdt']):.4f} USDT ({act:.2f}%)",
                      kind="entry", event_ms=intent.get("model_id") or intent.get("T"))
         log.info("entered %s long qty %s fill %s stop %s lev %sx risk %s USDT (%s%%)", sym, j["qty"], j["entry_px"], j["stop_px"],
                  sz.lev, f"{D(j['risk_usdt']):.4f}", sz.risk_pct_used)
