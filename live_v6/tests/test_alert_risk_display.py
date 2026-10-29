@@ -4,11 +4,15 @@ actual % = (loss to the stop incl. fees) ÷ wallet at entry × 100, with the siz
 (sizing.py qty_floor loss: qty·stop distance + notional·(2·taker fee + entry slippage + stop slippage)), applied to the
 filled entry: qty, fill price and the stop re-placed from the fill. Same formula on the q0 and the qty_floor path.
 Expected values are recomputed here from the journal, independently of engine.py."""
+import logging
 from decimal import Decimal
+
+import pytest
 
 from live_v6.sizing import TAKER_FEE
 
-from .conftest import unique_T
+from .conftest import Backend, unique_T
+from .fakes import FakeExchange
 from .test_sizing_minorder import _eng
 
 
@@ -48,3 +52,33 @@ def test_rest_of_entry_alert_unchanged(offline):
     j, a = eng.st["pos"]["DOGEUSDT"], _alert(eng)
     head = f"🟢 진입 DOGEUSDT 롱 · 수량 {j['qty']} · 체결가 {j['entry_px']}\n손절 {j['stop_px']} · {j['lev']}x · 위험 "
     assert head in a and a.endswith(f"{Decimal(j['risk_usdt']):.4f} USDT ({_expected_pct(eng, 'DOGEUSDT')}%)"), a
+
+
+@pytest.mark.parametrize("bad", ["0", None], ids=["wallet_0", "wallet_missing"])
+def test_alert_falls_back_to_configured_label_when_actual_risk_fails(offline, tmp_path_factory, caplog, bad):
+    """TA deploy condition: the display can never stop or delay the trade. wallet_at_entry 0 / missing → the entry and
+    its exchange stop proceed unchanged, the alert is still sent with the old configured `(0.5%)`, one warning logged."""
+    ref = _eng(Backend("offline", FakeExchange(), tmp=tmp_path_factory.mktemp("ctl")))   # control: same signal, untampered
+    assert ref.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
+    jr = ref.st["pos"]["DOGEUSDT"]
+    eng = _eng(offline)
+    orig = eng._journal_entry
+
+    def tamper(sym, intent, o):
+        j = orig(sym, intent, o)
+        if bad is None:
+            j.pop("wallet_at_entry")
+        else:
+            j["wallet_at_entry"] = bad
+        return j
+    eng._journal_entry = tamper
+    with caplog.at_level(logging.WARNING, logger="live_v6.engine"):
+        assert eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T()) is True
+    j = eng.st["pos"]["DOGEUSDT"]
+    assert (j["qty"], j["stop_px"], j["entry_px"]) == (jr["qty"], jr["stop_px"], jr["entry_px"])
+    assert eng.find_stop(Decimal(j["qty"]), offline.inner.open_orders("DOGEUSDT")) is not None   # exchange stop live
+    assert not eng.st["intents"]
+    a = _alert(eng)
+    assert a.endswith(" USDT (0.5%)"), a
+    warns = [r for r in caplog.records if r.levelno == logging.WARNING and "actual risk" in r.getMessage()]
+    assert len(warns) == 1, [r.getMessage() for r in caplog.records]

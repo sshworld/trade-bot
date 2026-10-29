@@ -827,12 +827,20 @@ class V6Engine:
             fm.append([self.now_ms(), sym])
             del fm[:-200]
             self.save()
-        # display only: ACTUAL risk = loss to the stop incl. fees/slippage (sizing.py loss model) ÷ wallet at entry
-        qf, pf = D(j["qty"]), D(j["entry_px"])
-        act = ((pf - D(j["stop_px"])) * qf + qf * pf * (2 * TAKER_FEE + D(self.cfg.sizing.entry_slippage)
-                                                        + D(self.cfg.sizing.stop_slippage))) / D(j["wallet_at_entry"]) * 100
+        # display only: ACTUAL risk = loss to the stop incl. fees/slippage (sizing.py loss model) ÷ wallet at entry.
+        # Any failure → the configured label + one warning; the display never stops or delays the trade flow.
+        try:
+            qf, pf, wf = D(j["qty"]), D(j["entry_px"]), D(j["wallet_at_entry"])
+            if not wf > 0:
+                raise ValueError(f"wallet_at_entry {wf}")
+            loss = (pf - D(j["stop_px"])) * qf + qf * pf * (2 * TAKER_FEE + D(self.cfg.sizing.entry_slippage)
+                                                             + D(self.cfg.sizing.stop_slippage))
+            act = f"{loss / wf * 100:.2f}"
+        except Exception as e:  # noqa: BLE001  display only: must never stop or delay the entry
+            act = f"{sz.risk_pct_used}"
+            log.warning("entry alert %s: actual risk display failed (%r) → configured %s%%", sym, e, act)
         self.notify(f"🟢 진입 {sym} 롱 · 수량 {j['qty']} · 체결가 {j['entry_px']}{part}\n"
-                     f"손절 {j['stop_px']} · {sz.lev}x · 위험 {D(j['risk_usdt']):.4f} USDT ({act:.2f}%)",
+                     f"손절 {j['stop_px']} · {sz.lev}x · 위험 {D(j['risk_usdt']):.4f} USDT ({act}%)",
                      kind="entry", event_ms=intent.get("model_id") or intent.get("T"))
         log.info("entered %s long qty %s fill %s stop %s lev %sx risk %s USDT (%s%%)", sym, j["qty"], j["entry_px"], j["stop_px"],
                  sz.lev, f"{D(j['risk_usdt']):.4f}", sz.risk_pct_used)
