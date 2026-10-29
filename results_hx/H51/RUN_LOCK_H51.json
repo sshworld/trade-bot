@@ -1,0 +1,13 @@
+{
+ "spec": "H51",
+ "started": "2026-10-29T10:47:45.870221+09:00",
+ "git": {
+  "head": "00db36fc63975c27b3b0f216c89fd8c9b5271d8a",
+  "branch": "h48-screen",
+  "dirty": false
+ },
+ "seeds": {
+  "H51-six": 74,
+  "H51-new": 77
+ }
+}
