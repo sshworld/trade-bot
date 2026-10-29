@@ -94,19 +94,134 @@ def test_trailing_exit_stop_cancel_fails_once_reconcile_cleans(sticky):
     assert len(close_calls(sticky)) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="GAP vs TA R3 'on failure: 🚨 alert and retry': a failing stop cancel at trade "
-                   "end is only log.error'd (engine._after_flat L1127-1128) or silently passed (engine.reconcile "
-                   "L1402-1405). Retry happens every reconcile, but no 🚨 names the residual order.")
 def test_persistent_cancel_failure_raises_alert(sticky):
+    """TA R3 (approved 2026-10-29): a stop cancel that keeps failing on a flat coin → ONE 🚨, retry continues."""
     eng = ready(sticky)
     opened(sticky, eng)
-    before = len(alerts(eng))
     sticky.fx.inject("cancel", "reject", times=99)
     assert eng.close(DOGE, "signal_exit")
     for _ in range(5):
         eng.reconcile()
     assert orders(sticky, DOGE)                                 # still residual (cancel keeps failing)
-    assert len(alerts(eng)) > before                            # R3 wants a 🚨 here
+    assert len(r3_alerts(eng)) == 1 and DOGE in r3_alerts(eng)[0]
+
+
+# ───────────── R3 alert: persistent cancel failure on a flat coin (TA spec 2026-10-29) ─────────────
+R3_FAIL, R3_CLEAR, FOREIGN = "남은 주문 취소 실패", "남은 주문 정리 완료", "봇이 걸지 않은 주문"
+
+
+def r3_alerts(eng):
+    return [m for m in alerts(eng) if R3_FAIL in m]
+
+
+def r3_clears(eng):
+    return [m for m in eng.tg.sent if R3_CLEAR in m]
+
+
+def foreign_alerts(eng):
+    return [m for m in alerts(eng) if FOREIGN in m]
+
+
+def _flat_with_bot_stop(sticky):
+    """Position closed by hand → the bot's closePosition stop stays (StickyFake) on a flat coin."""
+    eng = ready(sticky)
+    opened(sticky, eng)
+    sticky.inner.market(DOGE, "SELL", sticky.amt(DOGE), "manualflat3", True)
+    assert sticky.amt(DOGE) == 0 and len(orders(sticky, DOGE)) == 1
+    return eng
+
+
+@pytest.mark.parametrize("n", [1, 2])
+def test_r3_no_alert_on_one_or_two_failures(sticky, n):
+    eng = _flat_with_bot_stop(sticky)
+    sticky.fx.inject("cancel", "reject", times=n)
+    for _ in range(n):
+        eng.reconcile()
+    assert orders(sticky, DOGE) and r3_alerts(eng) == []
+    eng.reconcile()                                             # cancel succeeds now
+    assert_no_residual(sticky, eng, DOGE)
+    assert r3_alerts(eng) == [] and r3_clears(eng) == []        # nothing was alerted → nothing to clear
+
+
+def test_r3_exactly_one_alert_after_three_no_repeat_to_ten(sticky):
+    eng = _flat_with_bot_stop(sticky)
+    sticky.fx.inject("cancel", "reject", times=99)
+    c0 = len(sticky.fx.calls)
+    seen = []
+    for _ in range(10):
+        eng.reconcile()
+        seen.append(len(r3_alerts(eng)))
+    assert seen == [0, 0, 1, 1, 1, 1, 1, 1, 1, 1], seen
+    assert orders(sticky, DOGE)                                 # retried every pass, still there
+    assert sum(1 for c in sticky.fx.calls[c0:] if c[0] == "cancel") == 10
+
+
+def test_r3_one_clear_after_success_then_fresh_episode_alerts_again(sticky):
+    eng = _flat_with_bot_stop(sticky)
+    sticky.fx.inject("cancel", "reject", times=99)
+    for _ in range(4):
+        eng.reconcile()
+    assert len(r3_alerts(eng)) == 1
+    sticky.fx.clear()
+    eng.reconcile()                                             # cleanup succeeds
+    assert_no_residual(sticky, eng, DOGE)
+    assert len(r3_clears(eng)) == 1 and DOGE in r3_clears(eng)[0]
+    for _ in range(3):
+        eng.reconcile()
+    assert len(r3_clears(eng)) == 1 and len(r3_alerts(eng)) == 1   # no repeats
+    # fresh episode: another bot stop stuck on the flat coin
+    sticky.inner.stop(DOGE, "SELL", Decimal("0.1"), "v6tDOGE1700000002s0", qty=Decimal("100"))
+    sticky.fx.inject("cancel", "reject", times=99)
+    for _ in range(3):
+        eng.reconcile()
+    assert len(r3_alerts(eng)) == 2
+    sticky.fx.clear()
+    eng.reconcile()
+    assert_no_residual(sticky, eng, DOGE)
+    assert len(r3_clears(eng)) == 2
+
+
+def test_r3_counter_is_per_symbol(sticky):
+    eng = ready(sticky)
+    for s in (DOGE, SOL):
+        opened(sticky, eng, s)
+        sticky.inner.market(s, "SELL", sticky.amt(s), f"manualflat{s}", True)
+    sticky.fx.inject("cancel", "reject", times=99, match=lambda s, o: s == DOGE)
+    for _ in range(5):
+        eng.reconcile()
+    assert len(r3_alerts(eng)) == 1 and DOGE in r3_alerts(eng)[0]
+    assert_no_residual(sticky, eng, SOL)
+
+
+def test_r3_non_bot_order_on_flat_coin_one_alert_never_cancelled(sticky):
+    sticky.inner.stop(DOGE, "SELL", Decimal("0.1"), "manual_stop_1", qty=Decimal("100"))
+    eng = sticky.engine()
+    eng.startup()
+    for _ in range(10):
+        eng.reconcile()
+    assert [o["client_id"] for o in orders(sticky, DOGE)] == ["manual_stop_1"]
+    assert not [c for c in sticky.fx.calls if c[0] == "cancel"]
+    fa = foreign_alerts(eng)
+    assert len(fa) == 1 and DOGE in fa[0] and "manual_stop_1" in fa[0], fa
+    # a second hand-placed order = its own episode (one more alert, then silent)
+    sticky.inner.stop(DOGE, "SELL", Decimal("0.2"), "manual_stop_2", qty=Decimal("100"))
+    for _ in range(5):
+        eng.reconcile()
+    assert len(foreign_alerts(eng)) == 2
+    assert r3_alerts(eng) == [] and eng.started
+
+
+def test_r3_non_bot_order_on_coin_with_position_no_alert(sticky):
+    """Existing behaviour kept: a hand-placed reduceOnly stop next to the bot's own position is neither cancelled
+    nor alerted (R3 alert scope = flat coins only)."""
+    eng = ready(sticky)
+    opened(sticky, eng)
+    sticky.inner.stop(DOGE, "SELL", _stop_px(eng) - eng.rules[DOGE].tick_size * 20, "manual_stop_3", qty=Decimal("1"))
+    before = list(alerts(eng))
+    for _ in range(5):
+        eng.reconcile()
+    assert alerts(eng) == before
+    assert "manual_stop_3" in [o["client_id"] for o in orders(sticky, DOGE)]
 
 
 def test_partial_fill_on_exit_remainder_closed_in_one_order(sticky):

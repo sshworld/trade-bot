@@ -104,6 +104,7 @@ class Settings:
     market_stale_s: float = 60.0        # TA: no mark / kline / aggTrade (per feed) for > 60 s → block entries + alert
     stream_stale_s: float = 15.0        # no market event for this long → entries blocked (markPrice@1s)
     reconcile_s: float = 5.0            # REST safety net cadence (always on)
+    residual_alert_n: int = 3           # TA R3: flat coin, bot-order cancel failed this many reconciles in a row → one 🚨
     heartbeat_s: float = 4 * 3600       # 💓 Telegram heartbeat cadence
     slip_review_n: int = 30             # §8d entry-slippage review over the first N entries (alert only)
     slip_assumed_bp: float = 2.0        # model: entry = trigger (level + 1 tick) + 2 bp
@@ -162,6 +163,9 @@ class V6Engine:
         self._cache: dict = {}
         self._own_cancels: dict[str, float] = {}           # client ids WE cancelled → not a "stop lost" event
         self._queued: dict[str, str] = {}                  # 418 ban: sym → "stop" | "close", sent the moment it ends
+        self._r3_fail: dict[str, int] = {}                 # TA R3: flat coin → reconciles in a row with a failed bot cancel
+        self._r3_alerted: set = set()                      # flat coins whose residual 🚨 is out (cleared by one ✅)
+        self._foreign_seen: set = set()                    # (sym, order id) of non-bot orders on a flat coin already 🚨'd
         inner = getattr(ex, "inner", ex)
         if hasattr(inner, "on_rate_limit"):
             inner.on_rate_limit = self._on_rate_limit
@@ -1128,6 +1132,28 @@ class V6Engine:
             log.error("%s stale stop cancel failed (reconcile retries): %s", sym, e)
         self.record_close(sym, reason)
 
+    def _residual_watch(self, sym, failed, foreign):
+        """TA R3 alert (2026-10-29), flat coin only, alerts only: which orders get cancelled is unchanged. Counters live
+        in memory (a restart starts a fresh count; at most one repeat per restart)."""
+        if failed:
+            n = self._r3_fail[sym] = self._r3_fail.get(sym, 0) + 1
+            if n >= self.cfg.residual_alert_n and sym not in self._r3_alerted:
+                self._r3_alerted.add(sym)
+                self.alert(f"남은 주문 취소 실패 — {sym} 포지션 0 · 계속 재시도",
+                           f"봇 주문 {', '.join(c for c, _ in failed)} · {n}회 연속 실패: {str(failed[0][1])[:80]}")
+        else:
+            self._r3_fail.pop(sym, None)
+            if sym in self._r3_alerted:
+                self._r3_alerted.discard(sym)
+                self.notify(f"✅ 남은 주문 정리 완료 — {sym} 포지션 0 · 봇 주문 0", kind="recovery")
+        live = {(sym, str(o["id"])) for o in foreign}
+        self._foreign_seen = {k for k in self._foreign_seen if k[0] != sym or k in live}
+        for o in foreign:
+            if (sym, str(o["id"])) not in self._foreign_seen:
+                self._foreign_seen.add((sym, str(o["id"])))
+                self.alert(f"봇이 걸지 않은 주문 있음 — {sym} 포지션 0 · 자동 취소 안 함",
+                           f"{o.get('type')} {o.get('side')} {o['client_id']} · 확인 후 직접 정리")
+
     def emergency_flatten_all(self, reason):
         """§8c L3 only: equity ≤ halt_fraction × C0 (−25 %), a position that stays unprotected after L1, or API dead > 5 min with an
         unprotected position → close ALL positions (reduceOnly MARKET) + halt."""
@@ -1396,15 +1422,19 @@ class V6Engine:
                     self.save()
                     self.notify(f"✅ 기록 없는 포지션 해소 — {sym} {u.get('amt')} 거래소에서 0 · 이 코인 신규 진입 재개", kind="recovery")
                 pending = tuple(f"{c}p" for c in self.st["intents"])        # pre-arm of an unresolved entry stays
+                failed, foreign = [], []
                 for o in orders:
                     if (str(o["client_id"]).startswith(self.cfg.cid_prefix) and (o["close_position"] or o["reduce_only"])
                             and str(o["client_id"]) not in pending):
                         try:
                             self.x("cancel", sym, o)                 # our own stale stop, position flat
-                        except ExchangeError:
-                            pass
+                        except ExchangeError as e:
+                            failed.append((str(o["client_id"]), e))  # retried next reconcile; R3 alert below
                     elif not (o["close_position"] or o["reduce_only"]) and str(o["client_id"]).startswith(self.cfg.cid_prefix):
                         mismatch.append(f"{sym} 예상 밖 진입 주문 {o['client_id']}")
+                    elif not str(o["client_id"]).startswith(self.cfg.cid_prefix):
+                        foreign.append(o)                            # TA R4: never cancelled
+                self._residual_watch(sym, failed, foreign)
                 if f"{MARGIN}:{sym}" in self.blocks:
                     self.ensure_isolated(sym)
                 continue
