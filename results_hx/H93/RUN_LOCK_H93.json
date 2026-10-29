@@ -1,0 +1,13 @@
+{
+ "spec": "H93",
+ "started": "2026-10-29T14:01:58.939903+09:00",
+ "git": {
+  "head": "b91fd39a4410e626cc56172a25db476626b3f26a",
+  "branch": "h48-screen",
+  "dirty": false
+ },
+ "seeds": {
+  "H93-six": 97,
+  "H93-new": 97
+ }
+}
