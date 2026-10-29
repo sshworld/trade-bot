@@ -1,5 +1,5 @@
 """FE-v2.1 addendum (prereg-lock-fullentry-v2_1-addendum.md a5852ccbc9b0), replace-losers RP-v1 (prereg-lock-replace-losers-v1.md 31619c1507f2),
-variant C (per-coin margin fraction, PROVISIONAL until TA locks it). Synthetic ledgers only; nothing is run on the 355 ledger. Written BEFORE the code."""
+variant C (per-coin margin fraction, locked by TA (03a2d0898830)). Synthetic ledgers only; nothing is run on the 355 ledger. Written BEFORE the code."""
 import dataclasses as dc
 from decimal import Decimal as Dc
 
@@ -278,7 +278,7 @@ def test_rp_stats_report_fields():
     assert F.rp_stats(sim(four(), A))["replaced_n"] == 0 and F.rp_stats(sim(four(), A))["replaced_mean_R"] is None
 
 
-# ================================================================ variant C: per-coin margin fraction (PROVISIONAL)
+# ================================================================ variant C: per-coin margin fraction (locked)
 def test_variant_c_map_and_uniform_maps_for_a_b():
     assert C.f_for("BTCUSDT") == 0.5 and all(C.f_for(c) == 0.1 for c in COINS6[1:])
     assert all(A.f_for(c) == 0.10 and B.f_for(c) == 0.25 for c in COINS6)
@@ -370,3 +370,85 @@ def test_simulate_all_variants_subset_and_min_stop_per_candidate():
     assert set(out) == {"A_off", "A_on"} and out["A_off"]["skips"] == {"stop_too_tight": 1}
     with pytest.raises(ValueError):
         F.simulate_all(lg, RULES, BR, min_stop_dist=0.006, price_at=lambda s, t: 100.0, variants=("Z",))
+
+
+def test_variant_c_is_locked_not_provisional():
+    """TA locked variant C (prereg-lock-fullentry-v2_2-variantC.md, sha256 03a2d0898830): no PROVISIONAL mark remains."""
+    assert F.LOCK_VARIANT_C_SHA12 == "03a2d0898830"
+    assert not hasattr(F, "PROVISIONAL_VARIANTS")
+    import inspect
+    assert "PROVISIONAL" not in inspect.getsource(F)
+
+
+# ================================================================ RP gate (R10): RP verdict only for candidates whose base (switch-off) ledger passes S1-1..S1-6
+def _gate_ledger(R, years=("2021", "2022", "2023", "2024"), per_year=30, stop=0.04):
+    n = len(years) * per_year
+    et = []
+    for y in years:
+        et += [pd.Timestamp(f"{y}-01-01") + pd.Timedelta(days=3 * k) for k in range(per_year)]
+    Rv = np.asarray(R(n) if callable(R) else R, dtype=float)
+    return pd.DataFrame(dict(entry_time=et, R=Rv, stop_dist=stop))
+
+
+def _wallet(dd=0.0):
+    return dict(wallet=[100.0, 100.0 * (1 - dd), 120.0])
+
+
+def test_gate_passes_for_a_clearly_positive_ledger():
+    g = F.s1_gate(_gate_ledger(lambda n: np.tile([2.0, -0.5, 1.0], n // 3 + 1)[:n]), _wallet(0.05), seed=88)
+    assert [g[k]["pass"] for k in ("S1-1", "S1-2", "S1-3", "S1-4", "S1-5", "S1-6")] == [True] * 6
+    assert g["gate_pass"] is True
+
+
+def test_gate_s1_1_fails_for_negative_mean():
+    g = F.s1_gate(_gate_ledger(lambda n: np.tile([-1.0, 0.5], n // 2)[:n]), _wallet(), seed=88)
+    assert g["S1-1"]["pass"] is False and g["gate_pass"] is False
+
+
+def test_gate_s1_3_cost_2x_uses_extra_0p15pct_over_stop():
+    # stop 4%: each trade loses 0.0015/0.04 = 0.0375 R at double cost; mean R +0.02 -> 2x-cost mean negative
+    g = F.s1_gate(_gate_ledger(lambda n: np.full(n, 0.02)), _wallet(), seed=88)
+    assert g["S1-1"]["pass"] is True and g["S1-3"]["pass"] is False
+    assert g["S1-3"]["value"] == pytest.approx(0.02 - 0.0015 / 0.04)
+    assert g["gate_pass"] is False
+
+
+def test_gate_s1_4_needs_both_halves_positive():
+    R = lambda n: np.r_[np.full(n // 2, 3.0), np.full(n - n // 2, -1.0)]       # mean 1.0 > 0 overall; second half negative
+    g = F.s1_gate(_gate_ledger(R), _wallet(), seed=88)
+    assert g["S1-1"]["pass"] is True and g["S1-4"]["pass"] is False
+
+
+def test_gate_s1_5_variant_max_drawdown_over_20pct_fails():
+    L = _gate_ledger(lambda n: np.tile([2.0, -0.5, 1.0], n // 3 + 1)[:n])
+    assert F.s1_gate(L, _wallet(0.19), seed=88)["S1-5"]["pass"] is True
+    assert F.s1_gate(L, _wallet(0.21), seed=88)["S1-5"]["pass"] is False
+    assert F.s1_gate(L, _wallet(0.21), seed=88)["gate_pass"] is False
+
+
+def test_gate_s1_5_top5pct_removed_mean_must_be_positive():
+    R = lambda n: np.r_[np.full(n - 6, -0.1), np.full(6, 60.0)]        # 120 trades, top ceil(5%) = 6 removed -> rest negative
+    g = F.s1_gate(_gate_ledger(R), _wallet(), seed=88)
+    assert g["S1-1"]["pass"] is True and g["S1-5"]["pass"] is False
+    assert g["S1-5"]["top5_removed_n"] == 6
+
+
+def test_gate_s1_6_one_year_over_60pct_of_total_fails():
+    R = lambda n: np.r_[np.full(30, 8.0), np.full(n - 30, 0.1)]         # all the profit in 2021
+    g = F.s1_gate(_gate_ledger(R), _wallet(), seed=88)
+    assert g["S1-6"]["pass"] is False and g["S1-6"]["value"] > 0.6
+
+
+def test_gate_flags_mark_rp_on_ledgers_by_variant():
+    good = dict(gate_pass=True)
+    bad = dict(gate_pass=False)
+    fl = F.rp_gate_flags({"A": good, "B": bad, "C": good})
+    assert fl == {"A_on": True, "B_on": False, "C_on": True}
+
+
+def test_gate_input_not_modified_and_s1_2_is_date_block_bootstrap():
+    L = _gate_ledger(lambda n: np.tile([2.0, -0.5, 1.0], n // 3 + 1)[:n])
+    before = L.copy()
+    g = F.s1_gate(L, _wallet(), seed=88, n_candidates=74)
+    pd.testing.assert_frame_equal(L, before)
+    assert g["S1-2"]["q"] == pytest.approx(0.05 / 74) and g["S1-2"]["seed"] == 88 and g["S1-2"]["n_boot"] == 10_000

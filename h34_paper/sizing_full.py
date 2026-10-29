@@ -42,10 +42,10 @@ LOCK_FE2_SHA12 = "539c7585353b"
 LOCK_H61_ADDENDUM_SHA12 = "9bc7869cd811"
 LOCK_FE21_SHA12 = "a5852ccbc9b0"          # prereg-lock-fullentry-v2_1-addendum.md: Q3 Z3 realised, Q7 stop-vs-liquidation guard, Q9 first -25% touch, Q12 annual n
 LOCK_RP_SHA12 = "31619c1507f2"            # prereg-lock-replace-losers-v1.md
-# Variant C (BTC 50%, other coins 10% margin cap) is PROVISIONAL: requested by the user/PM, not yet locked by TA. Do not run before it is locked.
+# Variant C (BTC 50%, other coins 10% margin cap): locked by TA, prereg-lock-fullentry-v2_2-variantC.md (sha256 03a2d0898830).
 VARIANT_F = {"A": 0.10, "B": 0.25,
              "C": {"BTCUSDT": 0.50, "ETHUSDT": 0.10, "SOLUSDT": 0.10, "BNBUSDT": 0.10, "XRPUSDT": 0.10, "DOGEUSDT": 0.10}}
-PROVISIONAL_VARIANTS = ("C",)
+LOCK_VARIANT_C_SHA12 = "03a2d0898830"
 FE_Z_THRESH = dict(z1=0.20, z2_share=0.05, z2_dd=0.25, z3=0.055)
 FE_Z2_SEED = 88
 BELOW_MIN_SIZE = ("qty_zero", "below_min_qty", "below_min_notional")
@@ -106,7 +106,7 @@ class FullParams:
 
 
 def fe2_params(variant, *, min_stop_dist):
-    """The FE-v2(.1) lock values for variant 'A' (10% margin cap) or 'B' (25%); 'C' = per-coin map (PROVISIONAL, not locked). `min_stop_dist` is candidate-specific and therefore required."""
+    """The FE-v2(.1) lock values for variant 'A' (10% margin cap) or 'B' (25%); 'C' = per-coin map (locked, 03a2d0898830). `min_stop_dist` is candidate-specific and therefore required."""
     if variant not in VARIANT_F:
         raise ValueError(f"variant {variant!r} is not one of {tuple(VARIANT_F)}")
     f = dict(VARIANT_F[variant]) if isinstance(VARIANT_F[variant], dict) else VARIANT_F[variant]
@@ -307,7 +307,7 @@ def simulate_full(ledger, rules, brackets, params, init=S.INIT_WALLET, replace=N
 
 def simulate_all(ledger, rules, brackets, *, min_stop_dist, price_at, init=S.INIT_WALLET, variants=("A", "B", "C")):
     """One call -> RP switch OFF and ON for every variant from the SAME trade list: {'A_off', 'A_on', 'B_off', 'B_on', 'C_off', 'C_on'}.
-    The input ledger is not modified; no file is written. (C is provisional until TA locks it.)"""
+    The input ledger is not modified; no file is written."""
     for v in variants:
         if v not in VARIANT_F:
             raise ValueError(f"variant {v!r} is not one of {tuple(VARIANT_F)}")
@@ -369,3 +369,49 @@ def fe_clauses(sim, runs=10_000):
     return dict(entered=sim["entered"], trades_per_year=tpy, boot_n=boot_n, z9_first_touch_init=touch_init, z9_first_touch_peak=touch_peak, span_years=span, trade_count_tier=trade_count_tier(sim["entered"]),
                 z1_max_dd=dd, z1_pass=dd <= FE_Z_THRESH["z1"] + 1e-12, z2_share=boot["share"], z2_pass=boot["share"] <= FE_Z_THRESH["z2_share"] + 1e-12,
                 z2_seed=FE_Z2_SEED, z2_detail=boot, z3_worst_loss_frac=z3, z3_pass=z3 <= FE_Z_THRESH["z3"] + 1e-12)
+
+
+# ------------------------------------------------------------------ RP gate (answers R10): RP verdict only for candidates whose base ledger passes S1-1..S1-6
+RP_GATE_N_CANDIDATES = 74           # H61-H71 lock: N = 74, S1-2 lower bound q = 0.05 / N (date-block bootstrap, UTC entry dates)
+S1_COST_2X_EXTRA = 0.0015           # S1-3: the second 0.15% of round-trip cost, in R units over the stop distance
+
+
+def s1_gate(ledger, off_sim, *, n_candidates=RP_GATE_N_CANDIDATES, seed=FE_Z2_SEED, n_boot=10_000):
+    """Mechanical S1-1..S1-6 numbers on the base (switch-off) ledger of one variant; `gate_pass` = all six pass (S1-0 trade-count tier is reported by fe_clauses, not gated here).
+    Variant-independent clauses (R units of the candidate ledger, `ledger` columns entry_time, R, stop_dist): S1-1 mean R > 0; S1-2 date-block bootstrap
+    (UTC entry dates, numpy default_rng(seed), n_boot resamples, lower bound = sorted means[floor(q*n_boot)], q = 0.05/n_candidates) > 0; S1-3 mean of R - 0.0015/stop_dist > 0;
+    S1-4 both halves (equal counts, entry order) mean > 0; S1-6 no entry year holds > 60% of total R (when total R > 0).
+    Variant-specific: S1-5 = the variant's off-ledger wallet max drawdown <= 20% AND mean R with the top ceil(5%) trades removed > 0."""
+    from . import h46
+    L = ledger.reset_index(drop=True)
+    R = L.R.to_numpy(float)
+    n = len(R)
+    out = {}
+    out["S1-1"] = dict(pass_=bool(R.mean() > 0), value=float(R.mean()))
+    q = 0.05 / n_candidates
+    dates = L.entry_time.dt.strftime("%Y-%m-%d").to_numpy()
+    lb = h46.date_block_bounds(R, dates, seed, (q,), n_boot)[q]
+    out["S1-2"] = dict(pass_=bool(lb > 0), value=float(lb), q=q, seed=int(seed), n_boot=int(n_boot), n_candidates=int(n_candidates))
+    r2 = R - S1_COST_2X_EXTRA / L.stop_dist.to_numpy(float)
+    out["S1-3"] = dict(pass_=bool(r2.mean() > 0), value=float(r2.mean()))
+    o = np.lexsort((np.arange(n), L.entry_time.to_numpy()))
+    h = n // 2
+    a, b = R[o][:h], R[o][h:]
+    out["S1-4"] = dict(pass_=bool(a.mean() > 0 and b.mean() > 0), value=(float(a.mean()), float(b.mean())), n=(int(len(a)), int(len(b))))
+    dd = S.max_drawdown(off_sim["wallet"])
+    k = int(math.ceil(0.05 * n))
+    rest = np.sort(R)[:-k] if k else R
+    out["S1-5"] = dict(pass_=bool(dd <= FE_Z_THRESH["z1"] + 1e-12 and len(rest) and rest.mean() > 0), value=dict(max_dd=float(dd), top5_removed_mean=float(rest.mean()) if len(rest) else None),
+                       top5_removed_n=int(k))
+    yr = pd.Series(R).groupby(L.entry_time.dt.year.to_numpy()).sum()
+    tot = float(R.sum())
+    share = float(yr.max() / tot) if tot > 0 else float("nan")
+    out["S1-6"] = dict(pass_=bool(not (tot > 0 and share > 0.60)), value=share, year=int(yr.idxmax()))
+    out = {k_: {("pass" if kk == "pass_" else kk): vv for kk, vv in v.items()} for k_, v in out.items()}
+    out["gate_pass"] = all(out[k_]["pass"] for k_ in ("S1-1", "S1-2", "S1-3", "S1-4", "S1-5", "S1-6"))
+    return out
+
+
+def rp_gate_flags(gates):
+    """{'A': gate dict, ...} -> {'A_on': True/False}: True = the RP verdict applies to this variant's switch-on ledger, False = reference only."""
+    return {f"{v}_on": bool(g["gate_pass"]) for v, g in gates.items()}
