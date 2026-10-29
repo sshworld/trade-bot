@@ -298,9 +298,8 @@ def exchange_rules():
 
 
 # ------------------------------------------------------------------ H7-T six-coin replay through the SAME engine call (no H46/H47 data)
-def replay_h7t(intrabar="1m", blackout=True, init=100.0):
-    """The reference H7-T replay (research/h7t_replay_0d82b19: live rules/sizing at $100): engine_raw() -> cost_book -> portfolio.
-    Expected 355 trades, mean R about +1.69 with intrabar='1m'. Touches only the six existing coins' H7-T long rule."""
+def replay_ledger(intrabar="1m", blackout=True, init=100.0):
+    """The reference H7-T replay trades (the portfolio output `t` of replay_h7t, one row per trade, columns kept) + per-coin raw counts/holes."""
     v8 = research(replay=True)
     rp = importlib.import_module("research.h7t_replay_0d82b19")
     from research.v3 import END, OOS_START, closes_all
@@ -315,5 +314,12 @@ def replay_h7t(intrabar="1m", blackout=True, init=100.0):
     book = pd.concat(parts, ignore_index=True)
     book = book[(book.entry_time >= OOS_START) & (book.entry_time < END)].reset_index(drop=True)
     t = v8.portfolio(book, closes_all(), init, rules=rules)[0]
+    return t, nraw, holes
+
+
+def replay_h7t(intrabar="1m", blackout=True, init=100.0):
+    """The reference H7-T replay (research/h7t_replay_0d82b19: live rules/sizing at $100): engine_raw() -> cost_book -> portfolio.
+    Expected 355 trades, mean R about +1.69 with intrabar='1m'. Touches only the six existing coins' H7-T long rule."""
+    t, nraw, holes = replay_ledger(intrabar, blackout, init)
     return dict(intrabar=intrabar, blackout=blackout, trades=int(len(t)), mean_R=float(t.R.mean()) if len(t) else float("nan"),
                 raw_per_coin=nraw, holes=holes)
