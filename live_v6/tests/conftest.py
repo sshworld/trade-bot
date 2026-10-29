@@ -142,3 +142,17 @@ def backend(request, tmp_path):
 @pytest.fixture
 def offline(tmp_path):
     return Backend("offline", FakeExchange(), tmp=tmp_path)
+
+
+def resolve_reports_dir(default: "Path"):
+    """Where tests write evidence JSON: LIVE_V6_REPORTS_DIR if set (deliberate evidence regeneration), else `default`
+    (a tmp dir). Never the committed live_v6/reports/ unless that is explicitly the override."""
+    from pathlib import Path
+    d = Path(os.environ.get("LIVE_V6_REPORTS_DIR") or default)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+@pytest.fixture
+def reports_dir(tmp_path_factory):
+    return resolve_reports_dir(tmp_path_factory.mktemp("reports"))

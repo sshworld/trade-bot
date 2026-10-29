@@ -168,12 +168,7 @@ def test_pf_review_is_alert_only(offline):
 DATA = Path("/workspace/v6replay_data")
 
 
-@pytest.mark.slow
-@pytest.mark.skipif(not (DATA / "research_T_H7.csv").exists(), reason="replay data not exported")
-def test_replay_matches_research_trades():
-    from live_v6.replay.replay import compare, run
-    r = compare(*run(str(DATA), order="research", stop_fill="research"))
-    assert r["exact_match"], {k: r[k] for k in ("missing", "extra") if k in r}
+# the two slow replay tests moved to test_replay_v21.py (v2.1 invariants + exact match under the pre-v2.1 skip rule)
 
 
 # ── §8e-2: S0, equity halt at halt_fraction (0.75) × S0, deposits / withdrawals excluded ──
@@ -271,15 +266,6 @@ def test_margin_guard_never_exceeds_strategy_equity(offline):
 def test_single_source_of_truth_for_halt_threshold():
     src = "\n".join(p.read_text() for p in Path(__file__).resolve().parents[1].rglob("*.py") if "tests" not in p.parts)
     assert "0.85" not in src and "dd_halt_pct" not in src
-
-
-@pytest.mark.slow
-@pytest.mark.skipif(not (DATA / "DOGEUSDT_1m.npz").exists(), reason="1m replay data not exported")
-def test_replay_h7t_matches_research_trades():
-    from live_v6.replay import replay_h7t as RH
-    eng, ex, _ = RH.run(str(DATA))
-    r = RH.compare(eng, ex)
-    assert r["exact_match"], {k: r[k] for k in ("missing", "extra")}
 
 
 def test_tie_order_is_frozen_research_list():
