@@ -31,8 +31,9 @@ H4_OK = (DATA / "research_T_H7.csv").exists()
 M1_OK = (DATA / "DOGEUSDT_1m.npz").exists()
 
 DEFAULT = SizingParams()
-OLD_RULE = SizingParams(min_order_loss_cap=0.0, price_buffer=0.0)     # in memory only; never the live setting
-CAP0_ONLY = SizingParams(min_order_loss_cap=0.0)
+# research trades compared below were produced with same-side halving at 3 (pre-no-halving rule)
+OLD_RULE = SizingParams(min_order_loss_cap=0.0, price_buffer=0.0, same_side_halving_at=3)     # in memory only; never the live setting
+CAP0_ONLY = SizingParams(min_order_loss_cap=0.0, same_side_halving_at=3)
 
 _cache: dict = {}
 
