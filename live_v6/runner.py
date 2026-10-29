@@ -78,6 +78,8 @@ def build(network: str | None = None):
     eng = V6Engine(rest, cfg, store=JsonStore(state), notifier=make_notifier(network), strategy=strat)
     from .deadman import DeadMan
     eng.deadman = DeadMan()                              # env HEARTBEAT_URL; no-op when unset
+    from .tradelog import EventLog
+    eng.events = EventLog(os.getenv("LIVE_V6_LOG_DIR") or os.path.dirname(state) or ".", network)   # live log v1 JSONL
     return rest, eng
 
 

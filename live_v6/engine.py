@@ -38,6 +38,7 @@ from .exchange import ExchangeError, ExchangeUnavailable, OrderRejected, WouldTr
 from .notify import Notifier
 from .rules import D, SymbolRules, stop_price
 from .sizing import TAKER_FEE, SizingParams, size_entry
+from .tradelog import kst
 
 log = logging.getLogger("live_v6.engine")
 
@@ -111,6 +112,10 @@ class Settings:
     trade_until_ms: int = 1 << 62
 
 
+LOG_INTENT_KEYS = ("signal_px", "path", "risk_pct_used", "order_ms", "prearm_ms", "open_risk_after", "same_side_open")
+EXIT_KIND = {"stop_loss": "exchange_close", "signal_exit": "exit_rule", "model_sync": "exit_rule"}   # live log exit_reason
+
+
 class V6Engine:
     def __init__(self, ex, settings: Settings | None = None, store=None, notifier: Notifier | None = None,
                  clock=None, sleep=None, strategy=None):
@@ -136,6 +141,8 @@ class V6Engine:
         self._breach_seen: dict = {}
         self._last_ok_reconcile = -1e18
         self.deadman = None                                 # runner attaches deadman.DeadMan (HEARTBEAT_URL)
+        self.events = None                                  # runner attaches tradelog.EventLog (live log v1); None = off
+        self._sig = None                                    # live log: (sym, signal_px, signal_ms) of the entry in progress
         self._last_market_ev = self.clock()
         self._feed_last: dict = {}                          # feed ("mark" / "kline" / "trade") → last event (clock s)
         self._dirty = False
@@ -173,6 +180,7 @@ class V6Engine:
     def alert(self, title, detail="", event_ms=None):
         log.critical("🚨 %s | %s", title, detail)
         self.tg.alert(title, detail, event_ms=event_ms, decision_ms=self.now_ms())
+        self._day_count("incidents")
 
     def notify(self, text, kind=None, event_ms=None):
         """Every Telegram message goes through here (event time vs decision time → alerts log, §TA timeliness)."""
@@ -243,7 +251,7 @@ class V6Engine:
         self.meta.pop("halted", None)
         self.save()
 
-    def skip(self, sym, reason, detail=""):
+    def skip(self, sym, reason, detail="", signal_px=None, signal_ms=None):
         day = datetime.fromtimestamp(self.now_ms() / 1000, KST).strftime("%Y-%m-%d")
         sk = self.meta.setdefault("skips", {})
         for d in sorted(sk)[:-14]:
@@ -254,6 +262,7 @@ class V6Engine:
         del self.meta["skip_log"][:-2000]
         self.save()
         log.warning("skip %s %s: %s", sym, reason, detail)
+        self._log_skip(sym, reason, detail, signal_px, signal_ms, t=self.meta["skip_log"][-1][0])
 
     def cid(self, sym, t_ms) -> str:
         return f"{self.cfg.cid_prefix}{sym.removesuffix('USDT')}{t_ms // 1000}"
@@ -431,7 +440,8 @@ class V6Engine:
                     continue
                 max_age = min(self.cfg.act_window_s, it.get("max_age_s", self.cfg.act_window_s))
                 if self.now_ms() - t > max_age * 1000:
-                    self.skip(sym, "late", f"signal {(self.now_ms() - t) / 1000:.1f}s old > {max_age}s")
+                    self.skip(sym, "late", f"signal {(self.now_ms() - t) / 1000:.1f}s old > {max_age}s",
+                              signal_px=it.get("signal_px"), signal_ms=it.get("model_id") or t)
                     continue
                 self.enter(sym, it["stop_dist"], t, model_id=it.get("model_id"), signal_px=it.get("signal_px"))
 
@@ -452,6 +462,7 @@ class V6Engine:
             self._feed_last[self._feed_of(ev)] = now
             if isinstance(ev, Mark):
                 self.marks[ev.sym] = ev.price
+                self._track_mark(ev)
                 j = self.st["pos"].get(ev.sym)
                 if j and j.get("stop_lost") and not j.get("closing") and ev.price <= D(j["stop_lost"]["px"]):
                     self.lost_stop_breach(ev.sym, ev.price)  # no exchange stop + price through it → reduceOnly close
@@ -463,6 +474,7 @@ class V6Engine:
                     self.breach_check(ev.sym, ev.price, "mark stream")
         elif isinstance(ev, (OrderUpdate, AccountUpdate)):
             self.stop_monitor(ev)                           # TA: stop CANCELED/EXPIRED → replace now (no REST read)
+            self._note_exit_order(ev)
             self._dirty = True                              # fills / position change → reconcile from REST now
         if self.started:
             intents = self.strategy.on_event(ev, self)
@@ -679,6 +691,14 @@ class V6Engine:
         return sz, acct, ref
 
     def enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None) -> bool:
+        """Entry flow (`_enter`); remembers the signal so a skip on the way is logged with its signal price."""
+        self._sig = (sym, signal_px, model_id or T)
+        try:
+            return self._enter(sym, stop_dist, T, model_id=model_id, signal_px=signal_px)
+        finally:
+            self._sig = None
+
+    def _enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None) -> bool:
         if not self.entries_allowed():
             self.skip(sym, "safety_block", str(self.meta.get("halted") or self.blocks))
             return False
@@ -760,6 +780,9 @@ class V6Engine:
             self.skip(sym, "stop_prearm", f"protective stop {sz.stop_px} not confirmed → entry not sent")
             return False
         intent["prearm"] = pre["id"]
+        intent.update(prearm_ms=self.now_ms(), order_ms=self.now_ms(),       # live log only (sent right after the save)
+                      open_risk_after=sum(b["risk_frac"] for b in book) + sz.risk_frac,
+                      same_side_open=sum(1 for b in book if b["side"] == 1))
         self.st["intents"][cid] = intent
         self.save()                                         # journal the intent BEFORE sending
         try:
@@ -876,6 +899,8 @@ class V6Engine:
              "lev": intent["lev"], "mmr": intent["mmr"], "model_entry_open": intent.get("model_id", intent["T"]), "opened_ms": self.now_ms(),
              "entry_order_id": o["id"], "entry_ref": intent["ref"], "wallet_at_entry": intent["wallet"],
              "planned_qty": intent["qty"], "stop_seq": 0, "exit_seq": 0}
+        j.update({k: intent.get(k) for k in LOG_INTENT_KEYS},                 # live log only: copied at entry
+                 signal_ms=intent.get("model_id", intent["T"]), entry_fill_ms=o.get("update_time") or None)
         self.st["pos"][sym] = j
         self.save()
         return j
@@ -966,6 +991,7 @@ class V6Engine:
                 cp = next((o for o in oo if o["close_position"] and o["side"] == "SELL"), None)
                 if cp:
                     j["stop_px"] = str(cp["stop_price"])
+                    j.update(stop_confirmed_ms=self.now_ms(), stop_px_entry=j["stop_px"])   # live log only
                     self._cancel_quiet(sym, pre)
                     self.save()
                     return "ok"
@@ -977,6 +1003,7 @@ class V6Engine:
             return "rejected"
         log.warning("%s keeps the pre-armed reduceOnly stop %s", sym, pre["stop_price"])
         j["stop_px"] = str(pre["stop_price"])
+        j.update(stop_confirmed_ms=j.get("prearm_ms"), stop_px_entry=j["stop_px"])       # live log only
         self.save()
         self._dirty = True                                  # reconcile re-verifies (qty ≥ position) right away
         return "kept"
@@ -1112,6 +1139,196 @@ class V6Engine:
             self.alert("비상청산 대상 아님 — 기록 없는 포지션은 그대로 둠 (손절 유지, 수동 처리)",
                        ", ".join(f"{s} {u.get('amt')} 손절 {u.get('stop_px')}" for s, u in self.st["unknown"].items()))
 
+    # ───────────────────────── live log v1 (recording only; never raises, never sleeps, no REST) ─────────────────────────
+    def _emit(self, kind, build):
+        """Build and append one log line. Any failure (unwritable path, disk full, writer bug, bad field) is caught here:
+        journald error + daily `log_write_fail` count — trading code never sees it."""
+        if self.events is None:
+            return
+        try:
+            self.events.write(kind, build())
+        except Exception as e:  # noqa: BLE001  a log write must never block or delay trading
+            log.error("%s log write failed (trading unaffected): %r", kind, e)
+            self._day_count("log_write_fail")
+
+    def _day_count(self, key):
+        """Per-UTC-day counters for the daily line (meta.log_day, last 3 days); persisted by the next state save."""
+        if self.events is None:
+            return
+        try:
+            day = datetime.fromtimestamp(self.now_ms() / 1000, timezone.utc).strftime("%Y-%m-%d")
+            ld = self.meta.setdefault("log_day", {})
+            for d in sorted(ld)[:-3]:
+                ld.pop(d, None)
+            c = ld.setdefault(day, {})
+            c[key] = c.get(key, 0) + 1
+        except Exception as e:  # noqa: BLE001
+            log.error("log day count failed: %r", e)
+
+    def _open_risk_pct(self) -> float:
+        dflt = self.cfg.sizing.risk_pct / 100 * 2                    # same default as _open_book for unseen positions
+        js = list(self.st["pos"].values()) + list(self.st["unknown"].values())
+        return sum(float(j.get("risk_frac", dflt)) for j in js if isinstance(j, dict)) * 100
+
+    def _log_skip(self, sym, reason, detail, signal_px=None, signal_ms=None, t=None):
+        if self.events is None:
+            return
+        self._day_count("skips")
+        sig = self._sig
+        if signal_px is None and sig and sig[0] == sym:
+            signal_px, signal_ms = sig[1], sig[2]
+
+        def build():
+            now = self.now_ms() if t is None else t
+            return {"time": now, "time_kst": kst(now), "coin": sym, "side": "long",
+                    "signal_price": None if signal_px is None else str(signal_px), "signal_time": signal_ms,
+                    "reason": reason, "detail": str(detail)[:500],
+                    "open_positions": len(self.st["pos"]) + len(self.st["unknown"]), "open_risk_sum": round(self._open_risk_pct(), 6),
+                    "code_commit": self.events.commit}
+        self._emit("skips", build)
+
+    def skip_note(self, sym, reason, detail="", signal_px=None):
+        """Log-only skip (strategy-side reasons such as h7t `missed` / `bar_not_in_model`): skips file + daily count only —
+        no skip_log, no KST skip counts, no alert, no state change."""
+        log.info("log-only skip %s %s: %s", sym, reason, detail)
+        self._log_skip(sym, reason, detail, signal_px)
+
+    def _track_mark(self, ev):
+        """MAE/MFE from the mark stream the bot already receives (in memory in the position journal; the regular state
+        save persists it, so a restart resumes). A silence > stream_stale_s (incl. downtime) is recorded as a gap."""
+        if self.events is None:
+            return
+        try:
+            j = self.st["pos"].get(ev.sym)
+            if not j:
+                return
+            t, last = int(ev.t), j.get("mk_last")
+            if last is not None and t - int(last) > self.cfg.stream_stale_s * 1000:
+                g = j.setdefault("mark_gaps", [])
+                g.append([int(last), t])
+                del g[:-50]
+            if j.get("mk_lo") is None or ev.price < D(j["mk_lo"]):
+                j["mk_lo"] = str(ev.price)
+            if j.get("mk_hi") is None or ev.price > D(j["mk_hi"]):
+                j["mk_hi"] = str(ev.price)
+            j["mk_last"] = max(t, int(last or 0))
+        except Exception as e:  # noqa: BLE001
+            log.error("mark tracking failed: %r", e)
+
+    def _note_exit_order(self, ev):
+        """Exit order type + raw order id from ORDER_TRADE_UPDATE fills the stream already delivers."""
+        if self.events is None or not isinstance(ev, OrderUpdate):
+            return
+        try:
+            r, j = ev.raw, self.st["pos"].get(ev.sym)
+            if j and r.get("x") == "TRADE" and r.get("S") == ("SELL" if int(j.get("side", 1)) > 0 else "BUY"):
+                xs = j.setdefault("exit_orders", [])
+                xs.append({"id": str(r.get("i")), "client_id": r.get("c"), "type": r.get("o"), "orig_type": r.get("ot"),
+                           "status": r.get("X"), "time": r.get("T")})
+                del xs[:-20]
+        except Exception as e:  # noqa: BLE001
+            log.error("exit order note failed: %r", e)
+
+    def _loss_to_stop(self, qty, fill, stop):
+        """Same loss model as sizing.py / the entry alert: stop distance + round-trip taker fees + both slippages."""
+        sz = self.cfg.sizing
+        return qty * (fill - stop) + qty * fill * (2 * TAKER_FEE + D(sz.entry_slippage) + D(sz.stop_slippage))
+
+    def _trade_line(self, j, rec, entry_fills, exit_fills, t_x) -> dict:
+        q = lambda x, e: None if x is None else str(x.quantize(Decimal(e)))   # noqa: E731
+        s = int(j.get("side", 1))
+        qty, fill = D(j["qty"]), D(j["entry_px"])
+        stop0 = D(j.get("stop_px_entry") or j["stop_px"])
+        w = D(j.get("wallet_at_entry") or "0")
+        loss = self._loss_to_stop(qty, fill, stop0)
+        sig = D(j["signal_px"]) if j.get("signal_px") is not None else None
+        raw = rec["reason"].split(" ")[0]
+        kind = EXIT_KIND.get(raw, "halt" if raw.startswith("emergency") else "other")
+        xpx = D(rec["exit_px"])
+        ref = D(j["stop_px"]) if kind == "exchange_close" else D(j["exit_ref"]) if j.get("exit_ref") else None
+        t_in = max((f["time"] for f in entry_fills), default=None) or j.get("entry_fill_ms")
+        t_out = t_x if exit_fills else None
+        xs = j.get("exit_orders") or []
+        lo, hi = j.get("mk_lo"), j.get("mk_hi")
+        adv, fav = (lo, hi) if s > 0 else (hi, lo)
+        mae = s * (fill - D(adv)) / fill if adv is not None else None
+        mfe = s * (D(fav) - fill) / fill if fav is not None else None
+        per_r = loss / qty / fill if loss > 0 else None               # 1 R as a fraction of the entry price
+        net = D(rec["net"])
+        return {
+            "trade_id": j["cid"], "coin": rec["sym"], "side": "long" if s > 0 else "short",
+            "path": {"q0": "normal"}.get(j.get("path"), j.get("path")),
+            "signal_time": j.get("signal_ms"), "signal_time_kst": kst(j.get("signal_ms")),
+            "signal_price": None if sig is None else str(sig),
+            "entry_order_time": j.get("order_ms"), "entry_fill_time": t_in, "entry_fill_time_kst": kst(t_in),
+            "entry_fill_price": str(fill), "entry_slip_bp": q(s * (fill - sig) / sig * 10000, "0.01") if sig else None,
+            "qty": str(qty), "notional": str(qty * fill), "leverage": j.get("lev"), "wallet_at_entry": j.get("wallet_at_entry"),
+            "stop_price": str(stop0), "stop_dist_frac": q(s * (fill - stop0) / fill, "0.000001"),
+            "stop_confirmed_time": j.get("stop_confirmed_ms"), "stop_confirmed_time_kst": kst(j.get("stop_confirmed_ms")),
+            "planned_risk_pct": j.get("risk_pct_used"),
+            "actual_risk_pct": q(loss / w * 100, "0.0001") if w > 0 else None,
+            "open_risk_sum_after_entry": None if j.get("open_risk_after") is None else round(float(j["open_risk_after"]) * 100, 6),
+            "same_side_open_count": j.get("same_side_open"),
+            "exit_time": t_out, "exit_time_kst": kst(t_out), "exit_price": str(xpx),
+            "exit_reason": kind, "exit_reason_raw": rec["reason"],
+            "exit_order_type": (xs[-1].get("orig_type") or xs[-1].get("type")) if xs else None,
+            "exit_order_ids": [x["id"] for x in xs],
+            "exit_slip_bp": q(s * (ref - xpx) / ref * 10000, "0.01") if ref and xpx > 0 else None,
+            "fee_entry": str(sum((f["commission"] for f in entry_fills), Decimal(0))),
+            "fee_exit": str(sum((f["commission"] for f in exit_fills), Decimal(0))),
+            "funding_sum": rec["funding"], "pnl_gross": rec["gross"], "pnl_net": rec["net"],
+            "R_net": q(net / loss, "0.0001") if loss > 0 else None,
+            "hold_minutes": round(((t_out or rec["closed_ms"]) - (t_in or rec["opened_ms"])) / 60000, 2),
+            "MFE_frac": q(mfe, "0.000001") if mfe is not None else None,
+            "MAE_frac": q(mae, "0.000001") if mae is not None else None,
+            "MFE_R": q(mfe / per_r, "0.0001") if mfe is not None and per_r else None,
+            "MAE_R": q(mae / per_r, "0.0001") if mae is not None and per_r else None,
+            "mae_mfe_source": "mark", "mark_gaps": j.get("mark_gaps", []),
+            "fills_source": rec["source"], "code_commit": self.events.commit}
+
+    def _daily_line(self):
+        """One line per UTC day, written on the first tick after 00:00 UTC for the day that just ended (the 📊 summary
+        stays on KST). Peak wallet is sampled from the reconciled wallet."""
+        if self.events is None:
+            return
+        try:
+            now = self.now_ms()
+            day = datetime.fromtimestamp(now / 1000, timezone.utc).strftime("%Y-%m-%d")
+            w = self.meta.get("wallet")
+            if w is not None and (self.meta.get("peak_wallet") is None or D(w) > D(self.meta["peak_wallet"])):
+                self.meta["peak_wallet"] = str(w)
+            last = self.meta.get("log_daily_utc")
+            self.meta["log_daily_utc"] = day
+            if last is None or last == day:
+                return
+        except Exception as e:  # noqa: BLE001
+            log.error("daily log failed: %r", e)
+            return
+        self._emit("daily", lambda: self._daily_rec(last, now))
+
+    def _daily_rec(self, day, now) -> dict:
+        c = self.meta.get("log_day", {}).get(day, {})
+        w, pk = self.meta.get("wallet"), self.meta.get("peak_wallet")
+        try:
+            _, eq, thr = self.drawdown_breached()
+            dist = str(((eq - thr) / eq * 100).quantize(Decimal("0.01"))) if eq and thr is not None else None
+        except Exception:  # noqa: BLE001
+            eq, dist = self.meta.get("equity"), None
+        ops = []
+        for sym, j in list(self.st["pos"].items()) + list(self.st["unknown"].items()):
+            m, e, n = self.marks.get(sym), j.get("entry_px"), j.get("qty") or j.get("amt")
+            u = (D(m) - D(e)) * D(n) * int(j.get("side", 1)) if m is not None and e and n else None
+            ops.append({"coin": sym, "side": "long" if int(j.get("side", 1)) > 0 else "short", "qty": n,
+                        "uPnL": None if u is None else str(u), "known": sym in self.st["pos"]})
+        trades = sum(1 for r in self.meta.get("trades", [])
+                     if datetime.fromtimestamp(int(r.get("closed_ms", 0)) / 1000, timezone.utc).strftime("%Y-%m-%d") == day)
+        return {"date": day, "time": now, "time_kst": kst(now), "wallet": w, "equity": self.meta.get("equity"),
+                "open_positions": ops, "open_risk_sum": round(self._open_risk_pct(), 6),
+                "drawdown_from_peak": str(((D(pk) - D(w)) / D(pk) * 100).quantize(Decimal("0.01"))) if w and pk and D(pk) > 0 else None,
+                "distance_to_halt": dist, "trades_today": trades, "skips_today": c.get("skips", 0),
+                "incidents": c.get("incidents", 0), "log_write_fail": c.get("log_write_fail", 0),
+                "code_commit": self.events.commit}
+
     def record_close(self, sym, reason):
         j = self.st["pos"].pop(sym, None)
         self.save()
@@ -1151,6 +1368,7 @@ class V6Engine:
                      f"수량 {j['qty']} · {j['entry_px']} → {xpx:.8g} · 손절 {j['stop_px']}\n"
                      f"순손익 {net:+.4f} USDT" + (f" · {rec['R']}R" if rec["R"] else "")
                      + f" (수수료 {fees:.4f} · 펀딩 {funding:+.4f})", kind="exit", event_ms=t_x)
+        self._emit("trades", lambda: self._trade_line(j, rec, entry_fills, exit_fills, t_x))
         self.check_halts()
 
     # ───────────────────────── reconcile (exchange → local) ─────────────────────────
@@ -1471,6 +1689,7 @@ class V6Engine:
 
     # ───────────────────────── Telegram reports ─────────────────────────
     def reports(self):
+        self._daily_line()
         now = self.now_ms()
         day = datetime.fromtimestamp(now / 1000, KST).strftime("%Y-%m-%d")
         last = self.meta.get("settled_day")

@@ -38,6 +38,7 @@ class H7T(V6H7):
         self._gap = set()                  # symbols whose current bar must be re-checked (start / stream gap)
         self._last_trade: dict = {}
         self._bar_ctx: dict = {}
+        self._noted: set = set()           # live log: (sym, bar_open, reason) already written (once per bar)
 
     # ── helpers ──
     def _bar(self, sym, bar_open):
@@ -76,6 +77,30 @@ class H7T(V6H7):
             b["missed"] = True
             log.warning("%s breakout already touched in bar %s while not watching → no entry this bar", sym, b["open"])
 
+    def _note(self, ctx, sym, bar_open, reason, px, detail):
+        """Log-only skip line (live log v1) via ctx.skip_note: no state, no skip_log / counts / alert. Never raises."""
+        key = (sym, bar_open, reason)
+        note = getattr(ctx, "skip_note", None)
+        if note is None or key in self._noted:
+            return
+        try:
+            self._noted = {k for k in self._noted if k[1] >= bar_open} | {key}
+            note(sym, reason, detail, signal_px=f"{px:.12g}")         # float trigger → no binary noise
+        except Exception as e:  # noqa: BLE001  recording only
+            log.error("%s log-only skip %s failed: %r", sym, reason, e)
+
+    def _note_unstepped(self, ctx, sym, bar_open, px, d):
+        """Trade at/above the (not yet stepped) model's trigger while the previous 4h bar is not in the model."""
+        if (sym, bar_open, "bar_not_in_model") in self._noted or getattr(ctx, "skip_note", None) is None:
+            return
+        try:
+            trig = self.trigger(sym, ctx)
+            if trig is not None and px >= trig - 1e-12 and not S.Model.from_dict(d).pos:
+                self._note(ctx, sym, bar_open, "bar_not_in_model", trig,
+                           f"trade {px:.12g} >= trigger {trig:.12g}: model last_open {d['last_open']} != {bar_open - H4} (not stepped yet)")
+        except Exception as e:  # noqa: BLE001  recording only
+            log.error("%s log-only skip bar_not_in_model failed: %r", sym, e)
+
     # ── engine hooks ──
     def on_start(self, ctx):
         super().on_start(ctx)
@@ -97,6 +122,7 @@ class H7T(V6H7):
         bar_open = now // H4 * H4
         d = self.state["models"][sym]
         if d["last_open"] != bar_open - H4:
+            self._note_unstepped(ctx, sym, bar_open, px, d)
             return []                                     # previous bar not stepped yet → no decision
         b = self._bar(sym, bar_open)
         m = S.Model.from_dict(d)
@@ -118,6 +144,7 @@ class H7T(V6H7):
                 log.error("%s missed-check failed (%s) → bar skipped", sym, e)
                 b["missed"] = True
             if b["missed"]:
+                self._note(ctx, sym, bar_open, "missed", trig, f"bar {bar_open}: touched while not watching or not provable")
                 return []
         if px < trig - 1e-12:
             return []
