@@ -90,11 +90,11 @@ def simulate_book(raws, strategy, limits=True, wallet0=1.0):
     book = Book46(1, wallet0=wallet0, strategy=strategy, risk=RISK, daily_cap=DAILY_CAP if limits else float("inf"))
     ev = []
     for k, r in enumerate(raws):
-        ev.append((r["entry_ms"], 1, r["sym"], k))
-        ev.append((r["exit_ms"], 0 if r["entry_ms"] < r["exit_ms"] else 2, r["sym"], k))
+        ev.append((r["entry_ms"], 1, r.get("rank", 0.0), r["sym"], k))        # rank: ascending = first (default: symbol order, as before)
+        ev.append((r["exit_ms"], 0 if r["entry_ms"] < r["exit_ms"] else 2, 0.0, r["sym"], k))
     ev.sort()
     live, ledger, skips = {}, [], []
-    for t, kind, _, k in ev:
+    for t, kind, _rk, _, k in ev:
         r = raws[k]
         if kind == 1:
             why = None
@@ -118,7 +118,7 @@ def simulate_book(raws, strategy, limits=True, wallet0=1.0):
                 continue
             pos.bars_seen = r.get("bars", 0)
             rec = book.close(pos, r["exit_px"], r["reason"], r["exit_ms"], r.get("gap", False), r["fund"])
-            for key in ("sig_ms", "month", "in_h16", "hole_cross", "gap", "entry_ms", "group"):
+            for key in ("sig_ms", "month", "in_h16", "hole_cross", "gap", "entry_ms", "group", "slip_r", "rank"):
                 if key in r:
                     rec[key] = r[key]
             rec["entry_bar_open_ms"] = r["entry_ms"]       # stats.* use this key for months / halves / years
