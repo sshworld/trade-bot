@@ -1,0 +1,6 @@
+- 2026-10-29 15:13:07 KST H100 one-shot start; lock 89752618a943, QR 088ddd8c5c68, safety 48ef505e19a6 verified
+- 2026-10-29 15:13:10 KST data built: {"BTCUSDT": "2020-01-01 00:00:00", "ETHUSDT": "2020-01-01 00:00:00", "BNBUSDT": "2020-02-10 08:00:00", "SOLUSDT": "2020-09-14 07:00:00", "XRPUSDT": "2020-01-06 08:00:00", "DOGEUSDT": "2020-07-10 09:00:00"}
+- 2026-10-29 15:13:12 KST sim done cost x1: final equity 1.276600
+- 2026-10-29 15:13:14 KST sim done cost x2: final equity 1.044684
+- 2026-10-29 15:13:14 KST bootstrap done: LB -1.020e-04
+- 2026-10-29 15:13:14 KST results written

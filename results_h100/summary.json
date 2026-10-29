@@ -1,0 +1,179 @@
+{
+  "hypothesis": "H100 funding carry v1.1",
+  "lock": "prereg-lock-h100-funding-v1_1.md 89752618a943",
+  "spec": "hypotheses_h100_funding_v1_1.md 088ddd8c5c68",
+  "safety": "ops-safety-rules-v1-2026-10-29.md 48ef505e19a6",
+  "run_at": "2026-10-29 15:13:14 KST",
+  "window": {
+    "start": "2020-01-01",
+    "end": "2026-09-30",
+    "n_days": 2465,
+    "half_split_after_day": "2023-05-16"
+  },
+  "criteria": {
+    "C1a_liquidations_model": {
+      "value": 13,
+      "rule": "== 0",
+      "passes": false
+    },
+    "C1b_one_leg_intervals_hours": {
+      "value": 0,
+      "rule": "== 0",
+      "passes": true
+    },
+    "C1c_worst_intrabar_dd_from_start_or_peak": {
+      "value": -0.15458834809544164,
+      "rule": "> -0.25",
+      "passes": true
+    },
+    "C2a_mean_daily_net_1x": {
+      "value": 0.00010199101143451404,
+      "rule": "> 0",
+      "passes": true
+    },
+    "C2b_mean_daily_net_2x": {
+      "value": 2.063272461112392e-05,
+      "rule": "> 0",
+      "passes": true
+    },
+    "C3_block_bootstrap_LB_99.9375": {
+      "value": -0.00010199871190686395,
+      "rule": "> 0",
+      "passes": false
+    },
+    "C4a_first_half_mean": {
+      "value": 0.00013326220325654946,
+      "rule": "> 0",
+      "passes": true
+    },
+    "C4b_second_half_mean": {
+      "value": 7.074518148743568e-05,
+      "rule": "> 0",
+      "passes": true
+    },
+    "C5_residual_order_or_position_violations": {
+      "value": 0,
+      "rule": "== 0",
+      "passes": true
+    }
+  },
+  "counts": {
+    "entries": 370,
+    "sl_exits": 184,
+    "tp_exits": 108,
+    "liquidations": 13,
+    "signal_exits": 65,
+    "open_at_end": 0,
+    "one_leg_hours": 0,
+    "residual_violations": 0,
+    "deferred_signal_exits": 0,
+    "skipped_entries_missing_bar": 0
+  },
+  "x1": {
+    "end_exit_cost": 0.0,
+    "final_equity": 1.276599657306482,
+    "ann_return": 0.03684681872563722,
+    "mdd_close": -0.09998337641626842,
+    "mdd_worst_intrabar": -0.15458834809544164,
+    "mdd_worst_ts": "2021-04-18 03:00:00",
+    "min_wallet_worst": 0.892434265431185,
+    "min_wallet_worst_ts": "2020-08-02 04:00:00",
+    "min_wallet_close": 0.9736217089808133,
+    "start_drop_worst": -0.10756573456881502,
+    "daily_mean": 0.00010199101143451404,
+    "daily_std": 0.002409686631914263,
+    "n_days": 2465,
+    "time_in_market_slot_hours_pct": 23.517033133583602,
+    "time_in_market_wallet_any_pct": 35.25693035835024,
+    "days_with_position": 879
+  },
+  "x2": {
+    "end_exit_cost": 0.0,
+    "final_equity": 1.044683889999988,
+    "ann_return": 0.006498371636206146,
+    "mdd_close": -0.12869094467936137,
+    "mdd_worst_intrabar": -0.21247975714824763,
+    "mdd_worst_ts": "2021-04-18 03:00:00",
+    "min_wallet_worst": 0.8208760807310844,
+    "min_wallet_worst_ts": "2021-04-18 03:00:00",
+    "min_wallet_close": 0.9082138128248088,
+    "start_drop_worst": -0.17912391926891558,
+    "daily_mean": 2.063272461112392e-05,
+    "daily_std": 0.0023983055520569157,
+    "n_days": 2465
+  },
+  "bootstrap": {
+    "block": 7,
+    "resamples": 10000,
+    "seed": 102,
+    "one_sided_level": 0.999375,
+    "N": 80,
+    "lower_bound": -0.00010199871190686395
+  },
+  "halves": {
+    "first_mean": 0.00013326220325654946,
+    "second_mean": 7.074518148743568e-05,
+    "first_n": 1232,
+    "second_n": 1233
+  },
+  "data": {
+    "BTCUSDT": {
+      "start": "2020-01-01 00:00:00",
+      "fut_filled_from_v2": 0,
+      "fut_missing_after_fill": 0,
+      "spot_missing_hours": 31,
+      "funding_prints": 7395,
+      "funding_first": "2020-01-01 00:00:00",
+      "funding_last": "2026-09-30 16:00:00"
+    },
+    "ETHUSDT": {
+      "start": "2020-01-01 00:00:00",
+      "fut_filled_from_v2": 0,
+      "fut_missing_after_fill": 0,
+      "spot_missing_hours": 31,
+      "funding_prints": 7395,
+      "funding_first": "2020-01-01 00:00:00",
+      "funding_last": "2026-09-30 16:00:00"
+    },
+    "BNBUSDT": {
+      "start": "2020-02-10 08:00:00",
+      "fut_filled_from_v2": 0,
+      "fut_missing_after_fill": 0,
+      "spot_missing_hours": 30,
+      "funding_prints": 7274,
+      "funding_first": "2020-02-10 08:00:00",
+      "funding_last": "2026-09-30 16:00:00"
+    },
+    "SOLUSDT": {
+      "start": "2020-09-14 07:00:00",
+      "fut_filled_from_v2": 120,
+      "fut_missing_after_fill": 0,
+      "spot_missing_hours": 19,
+      "funding_prints": 6700,
+      "funding_first": "2020-09-13 16:00:00",
+      "funding_last": "2026-09-30 16:00:00"
+    },
+    "XRPUSDT": {
+      "start": "2020-01-06 08:00:00",
+      "fut_filled_from_v2": 120,
+      "fut_missing_after_fill": 0,
+      "spot_missing_hours": 31,
+      "funding_prints": 7379,
+      "funding_first": "2020-01-06 08:00:00",
+      "funding_last": "2026-09-30 16:00:00"
+    },
+    "DOGEUSDT": {
+      "start": "2020-07-10 09:00:00",
+      "fut_filled_from_v2": 0,
+      "fut_missing_after_fill": 0,
+      "spot_missing_hours": 19,
+      "funding_prints": 6821,
+      "funding_first": "2020-07-10 08:00:00",
+      "funding_last": "2026-09-30 16:00:00"
+    }
+  },
+  "inputs_sha256": {
+    "v3_um_funding.parquet": "f93baeb9ff1577fa9e09264b2745edbb327a72bb80e468e4cb752d2db1ab55d9",
+    "v7_um_1h.parquet": "25e39293e2448b5c2ce168906d45fa4f0e0ea86cfa072c509d00442960ee02f5"
+  }
+}
