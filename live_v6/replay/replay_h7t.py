@@ -51,14 +51,15 @@ class Sim1m(SimExchange):
         return super().klines(s, interval, limit)
 
 
-def run(data_dir, wallet=100.0, quiet=True):
+def run(data_dir, wallet=100.0, quiet=True, sizing=None):
     logging.basicConfig(level=logging.ERROR if quiet else logging.INFO)
     h1 = {s: RD.bars(data_dir, s, "1h") for s in SIX}
     h4 = {s: RD.bars(data_dir, s, "4h") for s in SIX}
     fund = {s: RD.funding(data_dir, s) for s in SIX}
     m1 = {s: dict(np.load(Path(data_dir) / f"{s}_1m.npz")) for s in SIX}
     ex = Sim1m(h1, h4, RD.daily(data_dir), fund, wallet, "none")
-    cfg = Settings(trade_from_ms=OOS, trade_until_ms=END, income_interval_s=0, stream_stale_s=1e12)
+    cfg = Settings(trade_from_ms=OOS, trade_until_ms=END, income_interval_s=0, stream_stale_s=1e12,
+                   **({} if sizing is None else {"sizing": sizing}))   # sizing: replay-only override of SizingParams
     clock = {"t": 0.0}
     strat = H7T(params=cfg.params, kline_fetch=cfg.kline_fetch, bootstrap_bars=cfg.bootstrap_bars,
                 daily_fetch=cfg.daily_fetch, funding_lookback_ms=cfg.funding_lookback_ms)

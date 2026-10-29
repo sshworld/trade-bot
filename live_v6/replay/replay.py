@@ -35,7 +35,7 @@ def ms(s):  # "2021-01-01 04:00:00" (UTC) → ms
     return int(datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc).timestamp() * 1000)
 
 
-def run(data_dir, order="research", wallet=100.0, quiet=True, stop_fill="research"):
+def run(data_dir, order="research", wallet=100.0, quiet=True, stop_fill="research", sizing=None):
     logging.basicConfig(level=logging.ERROR if quiet else logging.INFO)
     h1 = {s: RD.bars(data_dir, s, "1h") for s in SIX}
     h4 = {s: RD.bars(data_dir, s, "4h") for s in SIX}
@@ -47,7 +47,8 @@ def run(data_dir, order="research", wallet=100.0, quiet=True, stop_fill="researc
     tie = defaultdict(list)
     for r in T_rows:
         tie[int(r["entry_time"])].append(r["sym"])
-    cfg = Settings(trade_from_ms=OOS, trade_until_ms=END, income_interval_s=0)
+    cfg = Settings(trade_from_ms=OOS, trade_until_ms=END, income_interval_s=0,
+                   **({} if sizing is None else {"sizing": sizing}))   # sizing: replay-only override of SizingParams
     clock = {"t": 0.0}
     eng = V6Engine(ex, cfg, notifier=NullNotifier(), clock=lambda: clock["t"], sleep=lambda s: None)
     box["eng"] = eng
