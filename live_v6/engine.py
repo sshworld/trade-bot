@@ -1432,8 +1432,8 @@ class V6Engine:
                             failed.append((str(o["client_id"]), e))  # retried next reconcile; R3 alert below
                     elif not (o["close_position"] or o["reduce_only"]) and str(o["client_id"]).startswith(self.cfg.cid_prefix):
                         mismatch.append(f"{sym} 예상 밖 진입 주문 {o['client_id']}")
-                    elif not str(o["client_id"]).startswith(self.cfg.cid_prefix):
-                        foreign.append(o)                            # TA R4: never cancelled
+                    elif not str(o["client_id"]).startswith(self.cfg.cid_prefix) and (o["close_position"] or o["reduce_only"]):
+                        foreign.append(o)                            # TA R3/R4: alert only for reducing (SL/TP) orders; never cancelled
                 self._residual_watch(sym, failed, foreign)
                 if f"{MARGIN}:{sym}" in self.blocks:
                     self.ensure_isolated(sym)

@@ -211,6 +211,62 @@ def test_r3_non_bot_order_on_flat_coin_one_alert_never_cancelled(sticky):
     assert r3_alerts(eng) == [] and eng.started
 
 
+def _raw_order(b, sym, cid, typ, side, reduce_only, close_position, price="0.1", qty="100"):
+    """A non-bot order exactly as open_orders() normalises it (fake .stop() can only make reduceOnly / closePosition)."""
+    oid = f"raw{cid}"
+    b.inner.algos[oid] = {"kind": "std", "id": oid, "client_id": cid, "symbol": sym, "type": typ, "side": side,
+                          "stop_price": Decimal(price), "close_position": close_position, "reduce_only": reduce_only,
+                          "qty": Decimal(qty)}
+
+
+def test_r3_non_bot_plain_limit_buy_on_flat_coin_no_alert_not_cancelled(sticky):
+    """TA 2026-10-29 (narrowing): 성헌's own resting LIMIT BUY (reduceOnly false) on a flat coin → no alert, untouched."""
+    _raw_order(sticky, DOGE, "manual_buy_1", "LIMIT", "BUY", reduce_only=False, close_position=False)
+    eng = sticky.engine()
+    eng.startup()
+    for _ in range(10):
+        eng.reconcile()
+    assert [o["client_id"] for o in orders(sticky, DOGE)] == ["manual_buy_1"]
+    assert not [c for c in sticky.fx.calls if c[0] == "cancel"]
+    assert foreign_alerts(eng) == [] and r3_alerts(eng) == [] and eng.started
+
+
+def test_r3_non_bot_reduce_only_stop_market_on_flat_coin_one_alert_not_cancelled(sticky):
+    _raw_order(sticky, DOGE, "manual_ro_stop", "STOP_MARKET", "SELL", reduce_only=True, close_position=False)
+    eng = sticky.engine()
+    eng.startup()
+    for _ in range(10):
+        eng.reconcile()
+    assert [o["client_id"] for o in orders(sticky, DOGE)] == ["manual_ro_stop"]
+    assert not [c for c in sticky.fx.calls if c[0] == "cancel"]
+    fa = foreign_alerts(eng)
+    assert len(fa) == 1 and DOGE in fa[0] and "manual_ro_stop" in fa[0], fa
+
+
+def test_r3_non_bot_close_position_order_on_flat_coin_one_alert_not_cancelled(sticky):
+    _raw_order(sticky, DOGE, "manual_cp_tp", "TAKE_PROFIT_MARKET", "SELL", reduce_only=False, close_position=True)
+    eng = sticky.engine()
+    eng.startup()
+    for _ in range(10):
+        eng.reconcile()
+    assert [o["client_id"] for o in orders(sticky, DOGE)] == ["manual_cp_tp"]
+    assert not [c for c in sticky.fx.calls if c[0] == "cancel"]
+    fa = foreign_alerts(eng)
+    assert len(fa) == 1 and DOGE in fa[0] and "manual_cp_tp" in fa[0], fa
+
+
+def test_r3_mixed_non_bot_orders_on_flat_coin_alert_only_the_reducing_one(sticky):
+    _raw_order(sticky, DOGE, "manual_buy_2", "LIMIT", "BUY", reduce_only=False, close_position=False)
+    _raw_order(sticky, DOGE, "manual_ro_stop2", "STOP_MARKET", "SELL", reduce_only=True, close_position=False)
+    eng = sticky.engine()
+    eng.startup()
+    for _ in range(5):
+        eng.reconcile()
+    fa = foreign_alerts(eng)
+    assert len(fa) == 1 and "manual_ro_stop2" in fa[0] and "manual_buy_2" not in fa[0], fa
+    assert sorted(o["client_id"] for o in orders(sticky, DOGE)) == ["manual_buy_2", "manual_ro_stop2"]
+
+
 def test_r3_non_bot_order_on_coin_with_position_no_alert(sticky):
     """Existing behaviour kept: a hand-placed reduceOnly stop next to the bot's own position is neither cancelled
     nor alerted (R3 alert scope = flat coins only)."""
