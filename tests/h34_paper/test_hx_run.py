@@ -46,11 +46,34 @@ def loader(sym, months, group, h16):
 CLEAN = dict(head="abc", branch="t", dirty=False)
 
 
-def test_preflight_dirty_blocked_and_unknown(tmp_path):
+def test_preflight_dirty_blocked_and_unknown(tmp_path, monkeypatch):
+    monkeypatch.setitem(R.REGISTRY["H48"], "blocked", "test block")
     r = R.preflight(["H48", "H99"], tmp_path, git=dict(CLEAN, dirty=True), files_ok=lambda s: [])
     assert any("dirty" in x for x in r)
     assert any("H48: BLOCKED" in x for x in r)
     assert any("H99: unknown" in x for x in r)
+
+
+def test_no_spec_is_blocked_after_the_answers_and_all_locks_verify_on_disk():
+    for s, sp in R.REGISTRY.items():
+        assert not sp["blocked"], s
+        assert R.check_files(s) == [], (s, R.check_files(s))
+        assert ("answers-h48plus-questions-2026-10-29.md", "841c34b8dd7f") in sp["locks"], s
+
+
+def test_h67_h68_use_the_v1_1_lock_and_rule_and_their_seeds():
+    for s, seed in (("H67", 95), ("H68", 96)):
+        sp = R.REGISTRY[s]
+        assert ("prereg-lock-h67-h68-v1_1.md", "9ddc7ba9403c") in sp["locks"]
+        assert sp["rule2"][:2] == ("hypotheses_h67_h68_v1_1.md", "29c61c0b8ef9")
+        assert R.H.CFG[f"{s}-six"]["seed"] == seed and R.H.CFG[f"{s}-new"]["seed"] == seed
+        assert abs(R.H.CFG[f"{s}-six"]["q"] - 0.05 / 74) < 1e-12
+
+
+def test_render_states_candidate_ledger_columns_and_spec_notes():
+    assert "unit" in R.LEDGER_COLS and "funding_unit" in R.LEDGER_COLS
+    assert "always-true" in R.SPEC_NOTES["H59"] and "always-true" in R.SPEC_NOTES["H60"]
+    assert "fill_above_open" in R.SPEC_NOTES["H51"]
 
 
 def test_preflight_fe_requires_sizing(tmp_path):

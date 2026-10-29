@@ -128,14 +128,37 @@ def oi_with_drop(at_hour):
     return f
 
 
+def flush_path_v11(side):
+    """v1.1: H67 flush bar closes in the LOWER 40% of its range, H68 in the UPPER 40%."""
+    pre = flat(24 * 30, seed=2)
+    if side > 0:
+        fl = bars([(100, 100.2, 94.0, 94.6), (94.6, 95.3, 94.5, 95.0)])       # ret -5.4%, pos 0.10 (lower 40%); next close 95.0 > 94.6
+    else:
+        fl = bars([(100, 106.0, 99.8, 105.4), (105.4, 105.5, 104.9, 105.0)])  # ret +5.4%, pos 0.90 (upper 40%); next close 105.0 < 105.4
+    post = flat(24 * 3, px=fl[3][-1], seed=3)
+    return cat(pre, fl, post)
+
+
 @pytest.mark.parametrize("side", [1, -1])
-def test_h67_h68_flush_found_but_target_is_never_beyond_entry(side):
-    """literal lock: close in the top 40% of a >=1.5% down bar puts (open+low)/2 below the flush close, so no later close above that can have reward >= 1.0 x risk."""
-    o, h, l, c = flush_path(side)
+def test_h67_h68_v1_1_flush_in_lower_upper_40pct_trades_and_target_is_beyond_entry(side):
+    o, h, l, c = flush_path_v11(side)
     k, ctx = mk(o, h, l, c, oi=oi_with_drop(24 * 30))
     raws, notes = S3.gen_h67(k, ctx, side)
     assert notes["flush_bars"] == 1
-    assert raws == [] and notes["skip_rr"] == 1
+    assert len(raws) == 1, notes
+    r = raws[0]
+    assert side * (r["tp"] - r["entry_px"]) > 0, "target is on the profit side of the entry"
+    flush_open, flush_ext = (100.0, 94.0) if side > 0 else (100.0, 106.0)
+    assert r["tp"] == pytest.approx((flush_open + flush_ext) / 2)
+    assert r["exit_ms"] - r["entry_ms"] <= 24 * HR + 60_000
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_h67_h68_v1_1_old_close_position_is_not_a_flush(side):
+    o, h, l, c = flush_path(side)                     # v1 shapes: H67 top-40% close / H68 bottom-40% close
+    k, ctx = mk(o, h, l, c, oi=oi_with_drop(24 * 30))
+    raws, notes = S3.gen_h67(k, ctx, side)
+    assert notes["flush_bars"] == 0 and raws == []
 
 
 # ---------------------------------------------------------------- H71

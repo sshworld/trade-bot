@@ -35,6 +35,7 @@ FE_LOCKS = [("prereg-lock-fullentry-v2.md", "539c7585353b"), ("prereg-lock-fulle
             ("prereg-lock-fullentry-v2_2-variantC.md", "03a2d0898830"), ("prereg-lock-replace-losers-v1.md", "31619c1507f2"),
             ("prereg-lock-h61-h71-addendum-fe2.md", "9bc7869cd811"), ("prereg-lock-h61-h71-addendum-newcoin.md", "66047175f09a")]
 SIX_SET = set(H.SIX)
+ENTRY_YEARS = 69 / 12.0                                           # entry window 2021-01 .. 2026-09 = 69 months
 
 
 # ------------------------------------------------------------------ registry
@@ -65,9 +66,6 @@ def _q(n):
 
 
 # spec -> dict(locks=[(file, sha12)], groups=[...], frame, blocked)
-_Q1 = "Q1 (H48 window): open question in the questions file"
-_Q2 = "Q2 (H54 flush instance): open question in the questions file"
-_Q3 = "Q3 (H55-H60 leg policy / H59-H60 replacement): open question in the questions file"
 REGISTRY = OrderedDict()
 
 
@@ -75,7 +73,7 @@ def _reg(name, locks, groups, frame="old", blocked=None, rule=None):
     REGISTRY[name] = dict(name=name, locks=locks, groups=groups, frame=frame, blocked=blocked, rule=rule)
 
 
-_reg("H48", [("prereg-lock-h48.md", "09580f1d71b9")], [G("six", 69, "primary", 100, 48), G("new", 70, "aux", 100, 48)], blocked=_Q1,
+_reg("H48", [("prereg-lock-h48.md", "09580f1d71b9"), ("answers-h48plus-questions-2026-10-29.md", "841c34b8dd7f")], [G("six", 69, "primary", 100, 48), G("new", 70, "aux", 100, 48)],
      rule=("hypotheses_h48.md", "a3d09fac3cc1", QUANT_DIR))
 _reg("H49", [("prereg-lock-h49.md", "544e5f189ef1"), ("prereg-lock-h49-h51-v2-addendum.md", "e5181fe6a1b2")],
      [G("new", 72, "primary", 100, 49), G("six", 72, "report", 100, 49)], rule=("hypotheses_h49_h51_v2_intrabar.md", "4c12a5ae7d04", QUANT_DIR))
@@ -84,15 +82,35 @@ for nm, sd_six, sd_new in (("H50", 73, 76), ("H51", 74, 77), ("H52", 75, 78)):
     rf = ("hypotheses_h49_h51_v2_intrabar.md", "4c12a5ae7d04") if nm == "H51" else ("hypotheses_h50_h52.md", "50291d79d243")
     _reg(nm, lk, [G("six", sd_six, "primary", 60, 55), G("new", sd_new, "aux", 100, 55)], rule=rf + (QUANT_DIR,))
 _reg("H53", [("prereg-lock-h53-h54.md", "b6f45ee172bf")], [G("six", 79, "primary", 200, 57)], rule=("hypotheses_h53_h54.md", "be82b3a12320", QUANT_DIR))
-_reg("H54", [("prereg-lock-h53-h54.md", "b6f45ee172bf")], [G("six", 80, "primary", 100, 57)], blocked=_Q2, rule=("hypotheses_h53_h54.md", "be82b3a12320", QUANT_DIR))
-_reg("H55", [("prereg-lock-h55.md", "17da062a1189")], [G("six", 81, "primary", 100, 58)], blocked=_Q3, rule=("hypotheses_h55.md", "dacde151306d", QUANT_DIR))
+_reg("H54", [("prereg-lock-h53-h54.md", "b6f45ee172bf")], [G("six", 80, "primary", 100, 57)], rule=("hypotheses_h53_h54.md", "be82b3a12320", QUANT_DIR))
+_reg("H55", [("prereg-lock-h55.md", "17da062a1189")], [G("six", 81, "primary", 100, 58)], rule=("hypotheses_h55.md", "dacde151306d", QUANT_DIR))
 for nm, sd, mt in (("H56", 82, 100), ("H57", 83, 60), ("H58", 84, 60)):
-    _reg(nm, [("prereg-lock-h56-h58.md", "ae8a63a92973")], [G("six", sd, "primary", mt, 61)], blocked=_Q3, rule=("hypotheses_h56_h58.md", "059963626773", QUANT_DIR))
+    _reg(nm, [("prereg-lock-h56-h58.md", "ae8a63a92973")], [G("six", sd, "primary", mt, 61)], rule=("hypotheses_h56_h58.md", "059963626773", QUANT_DIR))
 for nm, sd, mt in (("H59", 85, 100), ("H60", 86, 60)):
-    _reg(nm, [("prereg-lock-h59-h60.md", "85afd19cbaed")], [G("six", sd, "primary", mt, 63)], blocked=_Q3, rule=("hypotheses_h59_h60.md", "17ee5db4e2f1", QUANT_DIR))
+    _reg(nm, [("prereg-lock-h59-h60.md", "85afd19cbaed")], [G("six", sd, "primary", mt, 63)], rule=("hypotheses_h59_h60.md", "17ee5db4e2f1", QUANT_DIR))
+ANSWERS = ("answers-h48plus-questions-2026-10-29.md", "841c34b8dd7f")
+LOCK_V11 = ("prereg-lock-h67-h68-v1_1.md", "9ddc7ba9403c")
 for k, nm in enumerate(["H61", "H62", "H63", "H64", "H65", "H66", "H67", "H68", "H69", "H70", "H71"]):
-    _reg(nm, [("prereg-lock-h61-h71.md", "91aca63a05f6")] + FE_LOCKS, [G("six", 89 + k, "primary", 300, 74), G("new", 89 + k, "aux", 100, 74)],
+    _reg(nm, [("prereg-lock-h61-h71.md", "91aca63a05f6")] + FE_LOCKS + [ANSWERS] + ([LOCK_V11] if nm in ("H67", "H68") else []), [G("six", 89 + k, "primary", 300, 74), G("new", 89 + k, "aux", 100, 74)],
          frame="fe2", rule=("hypotheses_h61_h71.md", "6623cd2cc42d", QUANT_DIR))
+    if nm in ("H67", "H68"):
+        REGISTRY[nm]["rule2"] = ("hypotheses_h67_h68_v1_1.md", "29c61c0b8ef9", QUANT_DIR)       # v1.1 replaces the closing-position line only; v1 is void and never run
+
+for _sp in REGISTRY.values():
+    if ANSWERS not in _sp["locks"]:
+        _sp["locks"] = _sp["locks"] + [ANSWERS]
+
+SPEC_NOTES = {
+    "H51": "H51 v2 fills the standing buy AT L literally (conservative for the buyer). The generator counter fill_above_open counts fills whose 1m bar opened below L "
+           "(the lock says report it; no change of the fill rule).",
+    "H59": "H59: the lock condition 'Lo earlier than Hi' is an always-true (vacuous) condition because Lo is taken from the 40 bars before the 40 bars that contain Hi; "
+           "implemented literally (always true). Orders persist until their 6-closed-4h-bar expiry or the next valid order; a bar without a valid cluster does not cancel.",
+    "H67": "H67/H68 v1.1 (lock 9ddc7ba9403c): H67 flush bar closes in the LOWER 40% of its range, H68 in the UPPER 40%; v1 (top/bottom 40%) is void and never run. "
+           "OI parquet exists for the six coins only: the new-coin book is untestable (all coins skipped 'no OI data'); per the lock the six-coin book is reused for the new-coin condition.",
+}
+SPEC_NOTES["H60"] = SPEC_NOTES["H59"].replace("H59:", "H60:").replace("'Lo earlier than Hi'", "'Hi2 earlier than Lo2'").replace(
+    "because Lo is taken from the 40 bars before the 40 bars that contain Hi", "because Hi2 is taken from the 40 bars before the 40 bars that contain Lo2")
+SPEC_NOTES["H68"] = SPEC_NOTES["H67"]
 
 RUN_ORDER = ["H61", "H62", "H65", "H66", "H48", "H49", "H50", "H51", "H52", "H53", "H54", "H55", "H56", "H57", "H58", "H59", "H60",
              "H63", "H64", "H67", "H68", "H69", "H70", "H71"]
@@ -120,8 +138,9 @@ def check_files(spec):
     """sha256 prefix of every lock / rule file of the spec (+ the v1.3 chain and the membership file); returns list of problems."""
     sp = REGISTRY[spec]
     files = [(SPECS_DIR / f, p) for f, p in sp["locks"] + [L_V13]]
-    if sp["rule"]:
-        files.append((sp["rule"][2] / sp["rule"][0], sp["rule"][1]))
+    for key in ("rule", "rule2"):
+        if sp.get(key):
+            files.append((sp[key][2] / sp[key][0], sp[key][1]))
     bad = []
     for p, pre in files:
         if not p.exists() or not sha(p).startswith(pre):
@@ -440,6 +459,7 @@ def render_group(spec, b, frame):
     for s, v in sorted(pc.items(), key=lambda kv: -kv[1]["rsum"])[:15]:
         L.append(f"| {s} | {v['n']} | {f4(v['mean'])} | {f4(v['rsum'], 2)} |")
     L += ["", f"Coins with trades {len(pc)}; with >= 10 trades {sum(1 for v in pc.values() if v['n'] >= 10)}; mean R > 0 among those {sum(1 for v in pc.values() if v['n'] >= 10 and v['mean'] > 0)}.", "",
+          f"Annual n (limits book): {f4(len(b['ledger']) / ENTRY_YEARS, 2)} trades per year over the {ENTRY_YEARS:.2f}-year entry window 2021-01..2026-09; unlimited candidate list: {f4(len(b['ledger_u']) / ENTRY_YEARS, 2)} per year.",
           "By year (KST entry year): " + ", ".join(f"{y}: n {n} mean {f4(m, 3)}" for y, (n, m) in b["by_year"].items()), ""]
     ex = b["extras"]
     if ex:
@@ -472,9 +492,14 @@ def render(res):
     g = res["git"]
     L = [f"# {spec} screen result (1m intrabar; frame {sp['frame']}) -- {now}", "",
          f"Runner: branch {g['branch']} @ {g['head'][:10]}{' (DIRTY TREE)' if g['dirty'] else ''}; runtime {res['runtime_s']:.0f} s (whole session), peak RSS {res['rss_mb']:.0f} MB; "
-         f"locks: " + ", ".join(f"{f} {p}" for f, p in sp["locks"] + [L_V13]) + (f"; rule {sp['rule'][0]} {sp['rule'][1]}" if sp["rule"] else "") + f"; membership sha {sha(D.MEMBERSHIP, 12)}.",
+         f"locks: " + ", ".join(f"{f} {p}" for f, p in sp["locks"] + [L_V13]) + (f"; rule {sp['rule'][0]} {sp['rule'][1]}" if sp["rule"] else "") + (f"; rule v1.1 {sp['rule2'][0]} {sp['rule2'][1]}" if sp.get("rule2") else "") + f"; membership sha {sha(D.MEMBERSHIP, 12)}.",
          "", "No verdict is given here: the clause numbers and the mechanical threshold comparison only; the judgment is TA's.",
          "gap_all is off; 1m bars are used for fills and stops only.", ""]
+    if spec in SPEC_NOTES:
+        L += ["Spec notes: " + SPEC_NOTES[spec], ""]
+    if sp["frame"] == "fe2":
+        L += ["Candidate-ledger columns (fe_candidate_ledger_*.csv, defined by the Developer, passed unchanged to the sizing module): " + ", ".join(LEDGER_COLS)
+              + ". stop_dist and mae are fractions of the entry price; unit = gross_unit - fee_unit - slip_unit + funding_unit (return on notional); funding_unit is signed P&L (negative = paid).", ""]
     for b in res["groups"].values():
         L += render_group(spec, b, sp["frame"])
     return "\n".join(L) + "\n"

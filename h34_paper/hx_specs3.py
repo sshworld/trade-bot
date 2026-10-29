@@ -316,9 +316,9 @@ def gen_h67(c, ctx, side):
     doi = oi_c / oi_o - 1.0
     pos = (Cc - Ll) / (Hh - Ll)
     if s > 0:
-        flush = (ret <= -thr) & (doi <= -0.03) & (pos >= 0.6)
+        flush = (ret <= -thr) & (doi <= -0.03) & (pos <= 0.4)          # v1.1 (lock 9ddc7ba9403c): close in the LOWER 40% of the range
     else:
-        flush = (ret >= thr) & (doi <= -0.03) & (pos <= 0.4)
+        flush = (ret >= thr) & (doi <= -0.03) & (pos >= 0.6)           # v1.1: H68 close in the UPPER 40%
     flush &= np.isfinite(ret) & np.isfinite(doi) & np.isfinite(pos)
     sigs = []
     for f in np.flatnonzero(flush):
