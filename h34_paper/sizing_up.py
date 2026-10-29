@@ -22,6 +22,7 @@ import os
 import subprocess
 import datetime as dt
 from collections import Counter
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -39,6 +40,8 @@ INIT_WALLET = 117.5
 N_TRADES_LEDGER = 355
 BOOT_N, BOOT_RUNS, BOOT_SEED, BOOT_DD = 124, 10_000, 71, 0.25
 Z1_MAX, Z2_MAX, Z3_MAX = 0.20, 0.05, 0.025
+OPEN_RISK_LIMIT = 0.025                      # prereg-lock-sizing-nohalf-v1 Z5: sum of open risk fractions must never exceed this
+HALVING_OFF = 10 ** 9                        # same_side_halving_at value that disables the same-side halving rule
 COINS = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT")
 LEDGER_COLS = ("sym", "side", "entry_time", "exit_time", "entry_px", "stop_dist", "mae", "unit", "fee1",
                "gross_unit", "fee_unit", "slip_unit", "funding_unit")
@@ -67,13 +70,15 @@ def live_code():
     return size_entry, SizingParams, SymbolRules
 
 
-def params_for(risk_pct, SizingParams=None):
-    """The lock's linked limits: fee-inclusive cap 2 x r (percent), open-risk cap min(5 x r, 6%) (fraction); the rest = live defaults."""
+def params_for(risk_pct, SizingParams=None, halving=True):
+    """The lock's linked limits: fee-inclusive cap 2 x r (percent), open-risk cap min(5 x r, 6%) (fraction); the rest = live defaults.
+    halving=False (prereg-lock-sizing-nohalf-v1): ONLY same_side_halving_at is changed (to HALVING_OFF); nothing else."""
     if risk_pct not in (BASE_RISK, *RISKS):
         raise ValueError(f"risk_pct {risk_pct} is not one of the lock's values {(BASE_RISK, *RISKS)}")
     if SizingParams is None:
         SizingParams = live_code()[1]
-    return SizingParams(risk_pct=float(risk_pct), max_risk_pct=2.0 * risk_pct, portfolio_risk_cap=min(5.0 * risk_pct / 100.0, 0.06))
+    sp = SizingParams(risk_pct=float(risk_pct), max_risk_pct=2.0 * risk_pct, portfolio_risk_cap=min(5.0 * risk_pct / 100.0, 0.06))
+    return sp if halving else replace(sp, same_side_halving_at=HALVING_OFF)
 
 
 # ------------------------------------------------------------------ inputs
@@ -107,16 +112,17 @@ def _events(ledger):
     return ev
 
 
-def simulate(ledger, rules, brackets, risk_pct, init=INIT_WALLET, live=None):
+def simulate(ledger, rules, brackets, risk_pct, init=INIT_WALLET, live=None, halving=True):
     """Compound the wallet through the ledger trades with live size_entry at `risk_pct`. Returns dict(trades, skips, wallet, ...)."""
     size_entry, SizingParams, _ = live or live_code()
-    sp = params_for(risk_pct, SizingParams)
+    sp = params_for(risk_pct, SizingParams, halving=halving)
     ledger = ledger.reset_index(drop=True)
     W = float(init)
     open_, rows, skips = {}, {}, Counter()
     wallet = [(None, W)]
     max_conc = 0
     max_open_risk = 0.0
+    open_risk_over = 0
     for ts, kind, i in _events(ledger):
         tr = ledger.iloc[i]
         if kind in (1, 3):
@@ -140,10 +146,12 @@ def simulate(ledger, rules, brackets, risk_pct, init=INIT_WALLET, live=None):
         rr = float(sz.risk_usdt) / W
         open_[i] = dict(side=int(tr.side), risk_frac=sz.risk_frac, notional=notional, margin=notional / lev, unit=unit, liq=liq)
         max_conc = max(max_conc, len(open_))
-        max_open_risk = max(max_open_risk, sum(p["risk_frac"] for p in open_.values()))
+        orisk = sum(p["risk_frac"] for p in open_.values())
+        max_open_risk = max(max_open_risk, orisk)
+        open_risk_over += int(orisk > OPEN_RISK_LIMIT + 1e-12)
         rows[i] = dict(idx=i, sym=tr.sym, entry_time=tr.entry_time, exit_time=tr.exit_time, W_entry=W, qty=float(sz.qty), notional=notional,
                        lev=lev, path=sz.path, risk_pct_used=sz.risk_pct_used, risk=rr, risk_frac=sz.risk_frac, loss_frac=sz.loss_frac,
-                       q0=float(sz.q0), open_before=len(open_) - 1, unit=unit,
+                       q0=float(sz.q0), open_before=len(open_) - 1, same_open=sum(1 for q in open_.values() if q["side"] == int(tr.side)) - 1, unit=unit,
                        budget=W * sz.risk_pct_used / 100.0, risk_usdt=float(sz.risk_usdt))
     done = [r for r in rows.values() if "net_usd" in r]
     t = pd.DataFrame(done)
@@ -152,7 +160,8 @@ def simulate(ledger, rules, brackets, risk_pct, init=INIT_WALLET, live=None):
         t["ret"] = t.net_usd / t.W_entry
         t["R"] = t.net_usd / t.risk_usdt
     return dict(risk_pct=risk_pct, params=sp, trades=t, skips=dict(skips), wallet=[w for _, w in wallet], init=float(init), final=W,
-                entered=len(done), signals=len(ledger), max_concurrent=max_conc, max_open_risk=max_open_risk)
+                entered=len(done), signals=len(ledger), max_concurrent=max_conc, max_open_risk=max_open_risk,
+                open_risk_over=open_risk_over, halving=bool(halving))
 
 
 # ------------------------------------------------------------------ metrics
@@ -198,6 +207,23 @@ def clauses(sim, base_final, boot=None):
         z3=z3, z3_pass=z3 <= Z3_MAX + 1e-12, z3_worst_R=float(t.R.min()), z3_worst_trade_risk=float(t.risk.iloc[k]),
         z3_worst_trade=dict(sym=t.sym.iloc[k], entry_time=str(t.entry_time.iloc[k])), z3_direct=direct, z3_direct_pass=direct <= Z3_MAX + 1e-12,
         z4_final=sim["final"], z4_base_final=base_final, z4_pass=sim["final"] > base_final)
+
+
+def z5(sim):
+    """prereg-lock-sizing-nohalf-v1 Z5: entries after which the open-risk sum exceeded 2.5% (must be 0); skips by the open-risk cap are info."""
+    return dict(max_open_risk=sim["max_open_risk"], over=int(sim["open_risk_over"]), limit=OPEN_RISK_LIMIT, z5_pass=sim["open_risk_over"] == 0,
+                skipped_by_cap=int(sum(v for k, v in sim["skips"].items() if "risk_cap_portfolio" in k or k == "total_risk_cap")))
+
+
+def size_changed(on, off):
+    """How many trades are sized differently because halving is off. `same_state_would_halve`: trades of the OFF run that had >= 3 same-side
+    positions open at entry (halving would have applied to them in that very state); `qty_differs`: trades entered in both runs whose qty differs
+    (includes the compounding drift of the wallet); `baseline_halved`: halved trades of the ON run."""
+    a, b = on["trades"].set_index("idx"), off["trades"].set_index("idx")
+    both = a.index.intersection(b.index)
+    return dict(same_state_would_halve=int((off["trades"].same_open >= 3).sum()), qty_differs=int((a.loc[both, "qty"] != b.loc[both, "qty"]).sum()),
+                baseline_halved=int((on["trades"].risk_pct_used < on["risk_pct"] - 1e-12).sum()), entered_both=int(len(both)),
+                only_in_on=sorted(int(i) for i in a.index.difference(b.index)), only_in_off=sorted(int(i) for i in b.index.difference(a.index)))
 
 
 def stat4(x):
