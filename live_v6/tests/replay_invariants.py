@@ -91,7 +91,7 @@ def check_entries(entries: list[Entry], p: SizingParams = SizingParams()) -> lis
         if e.path == "q0":
             stop_loss = e.qty * (e.ref - e.stop_px)
             frac = float(stop_loss / e.wallet)
-            want_pct = p.risk_pct / 2 if n_open >= p.same_side_halving_at else p.risk_pct
+            want_pct = p.risk_pct / 2 if (p.same_side_halving_at is not None and n_open >= p.same_side_halving_at) else p.risk_pct
             if e.risk_pct_used != want_pct:
                 bad.append(f"{key}: risk_pct_used {e.risk_pct_used} != {want_pct} with {n_open} open")
             if stop_loss > e.wallet * D(want_pct) / 100:
