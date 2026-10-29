@@ -41,7 +41,7 @@ ENTRY_YEARS = 69 / 12.0                                           # entry window
 
 # ------------------------------------------------------------------ registry
 def _gens():
-    from . import hx_specs as S1, hx_specs2 as S2, hx_specs3 as S3
+    from . import hx_specs as S1, hx_specs2 as S2, hx_specs3 as S3, hx_specs4 as S4
     f = functools.partial
     return {
         "H48": S1.gen_h48, "H49": S1.gen_h49, "H50": S1.gen_h50, "H51": S1.gen_h51, "H52": S1.gen_h52, "H53": S1.gen_h53,
@@ -55,6 +55,7 @@ def _gens():
         "H67": f(S3.gen_h67, side=1), "H68": f(S3.gen_h67, side=-1),
         "H69": f(S3.gen_h69, side=1), "H70": f(S3.gen_h69, side=-1),
         "H71": S3.gen_h71,
+        "H93": S4.gen_h93, "H94": S4.gen_h94, "H95": S4.gen_h95, "H96": S4.gen_h96, "H98": S4.gen_h98,
     }
 
 
@@ -98,6 +99,13 @@ for k, nm in enumerate(["H61", "H62", "H63", "H64", "H65", "H66", "H67", "H68", 
     if nm in ("H67", "H68"):
         REGISTRY[nm]["rule2"] = ("hypotheses_h67_h68_v1_1.md", "29c61c0b8ef9", QUANT_DIR)       # v1.1 replaces the closing-position line only; v1 is void and never run
 
+# early-entry batch 3: TA lock v1.2 over QR v1.1 (rule) and the v1 entry rules (rule2); N = 79 -> bound 99.937%; H96 is defined over the six only
+LOCK_B3 = ("prereg-lock-h93-h98-v1_2.md", "c2945d535a11")
+for nm, sd in (("H93", 97), ("H94", 98), ("H95", 99), ("H96", 100), ("H98", 101)):
+    _reg(nm, [LOCK_B3] + FE_LOCKS + [ANSWERS, ANSWERS_FE], [G("six", sd, "primary", 300, 79)] + ([] if nm == "H96" else [G("new", sd, "aux", 100, 79)]),
+         frame="fe2", rule=("hypotheses_h93_early_v1_1.md", "1f575ac39bd7", QUANT_DIR))
+    REGISTRY[nm]["rule2"] = ("hypotheses_h93_early.md", "e225f7ccee5c", QUANT_DIR)
+
 for _sp in REGISTRY.values():
     if ANSWERS not in _sp["locks"]:
         _sp["locks"] = _sp["locks"] + [ANSWERS]
@@ -113,6 +121,14 @@ SPEC_NOTES = {
 SPEC_NOTES["H60"] = SPEC_NOTES["H59"].replace("H59:", "H60:").replace("'Lo earlier than Hi'", "'Hi2 earlier than Lo2'").replace(
     "because Lo is taken from the 40 bars before the 40 bars that contain Hi", "because Hi2 is taken from the 40 bars before the 40 bars that contain Lo2")
 SPEC_NOTES["H68"] = SPEC_NOTES["H67"]
+SPEC_NOTES_B3 = 'Batch 3 common frame (lock c2945d535a11 over QR v1.1 1f575ac39bd7): intrabar entry at the trigger 1m close, entry instant = close of the trigger minute; the 0.15% round trip (fees + slippage, lock costs line) is the only cost term, no separate entry-slippage add-on; stop 2 x A4 (Wilder ATR14 of the last closed 4h bar) fixed; a stop touched in the first held minute fills at min(open, stop) (short: max); exit at the next 1m open after the first 4h close below the prior 20-bar low (short: above the prior 20-bar high), counting 4h bars that close after the entry instant; no time cap, no target; BTC SMA200 regime of the last completed UTC day before the trigger minute (long 1, short 0, unknown skipped). Closed-bar values use bars that end at or before the trigger minute start; 15m bars are built from the stored 1m rows and rolling windows count existing bars (as the 4h bars). Signal-state rules (cooldown, one per range, re-arm, first-in-4h) run on the signal stream before the entry filters; filter order: window, next minute present, busy, regime, stop width (skip_stop_low < 0.60%, skip_stop_high > 8.0%; per coin in generator_counts_per_coin csv). Counters cooldown / range_used / not_first / not_rearmed / funding_not_neutral count candidate MINUTES.'
+SPEC_NOTES['H93'] = 'H93: one signal per Hi6/Lo6 VALUE per direction (literal QR v1 wording); V15 = volume of the 15 1m rows in [t-14m, t]; median over the previous 672 closed 15m bars.'
+SPEC_NOTES['H94'] = 'H94: the opening range needs all 60 1m bars (else counted or_incomplete); the width test is a session-level test at S0+60m with A4 of the last closed 4h bar then (width_rule_at_trigger_differs counts sessions where A4 at the break minute would flip it); the stop uses A4 at the trigger; first close beyond ORH/ORL only.'
+SPEC_NOTES['H95'] = 'H95: OI points with timestamp <= trigger minute start; fresh = latest point >= t - 10 min (stale counted once per direction and level, it does not use up the level or the cooldown); dOI >= +1.5% inclusive; entries from the first complete OI month (BTC 2020-09 -> window start 2021-01; ETH SOL BNB XRP DOGE 2021-12). OI exists for the six only: new coins give 0 trades (no_oi_data).'
+SPEC_NOTES['H96'] = 'H96: common 1m grid from 2020-12-31 00:00 UTC; R4 = close / close of the 1m bar 240 min earlier - 1, a coin missing either minute is out of that minute ranking; the rank-1 coin must pass its own R4 floor and 24h-high test (no fall-back to rank 2); a signal at t blocks all six for [t, t + 4h). Six-coin rule: no new-coin book.'
+SPEC_NOTES['H98'] = 'H98: re-arm needs a 15m bar after the signal whose 16-bar window range is > 1.0 x A4 at that bar close; funding = last settled rate with timestamp <= trigger minute start, |rate| <= 0.0001 inclusive.'
+for _k in ("H93", "H94", "H95", "H96", "H98"):
+    SPEC_NOTES[_k] = SPEC_NOTES_B3 + " " + SPEC_NOTES[_k]
 
 RUN_ORDER = ["H61", "H62", "H65", "H66", "H48", "H49", "H50", "H51", "H52", "H53", "H54", "H55", "H56", "H57", "H58", "H59", "H60",
              "H63", "H64", "H67", "H68", "H69", "H70", "H71"]
@@ -269,7 +285,7 @@ def run_session(specs, out_root, git=None, universe=None, loader=None, ctx_build
     loader = loader or default_loader
     h16 = D.h16_set() if loader is default_loader else None
     ctx = (ctx_builder or default_ctx)(specs)
-    acc = {(s, g["name"]): dict(raws=[], notes={}, cov=[], coins=[], nodata=[]) for s in specs for g in REGISTRY[s]["groups"]}
+    acc = {(s, g["name"]): dict(raws=[], notes={}, cov=[], coins=[], nodata=[], coin_notes=[]) for s in specs for g in REGISTRY[s]["groups"]}
     for gname in ("six", "new"):
         active = [s for s in specs if any(g["coins"] == gname for g in REGISTRY[s]["groups"])]
         if not active:
@@ -286,6 +302,7 @@ def run_session(specs, out_root, git=None, universe=None, loader=None, ctx_build
                 raws, notes = gens[s](c, ctx)
                 a["raws"] += raws
                 sum_notes(a["notes"], notes)
+                a["coin_notes"].append(dict(sym=sym, **{k: v for k, v in notes.items() if isinstance(v, (int, float, np.integer, np.floating))}))
                 a["coins"].append(sym)
             log(f"[{gname} {k}/{len(coins)}] {sym} ok={c.ok} rss={resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024} MB")
             del c
@@ -307,15 +324,20 @@ def default_ctx(specs):
         btc = X.load_coin("BTCUSDT", set(D.MONTHS), None, "orig6")
         ctx["btc_events"] = S1.btc_events(btc, ctx)
         del btc
+    if "H96" in specs:
+        from . import hx_specs4 as S4
+        ctx["h96"] = S4.h96_events(lambda sym: X.load_coin(sym, set(D.MONTHS), None, "orig6"))
     return ctx
 
 
 def load_h7t():
     if not H7T_TRADES.exists():
         return None
-    d = pd.read_csv(H7T_TRADES, usecols=["entry_time", "sym"])
+    d = pd.read_csv(H7T_TRADES, usecols=["entry_time", "exit_time", "side", "sym"])
     t = pd.to_datetime(d.entry_time)
-    return dict(sym=d.sym.to_numpy(), ms=(t.astype("datetime64[ms]").astype("int64")).to_numpy())
+    x = pd.to_datetime(d.exit_time)
+    return dict(sym=d.sym.to_numpy(), ms=(t.astype("datetime64[ms]").astype("int64")).to_numpy(), exit_ms=(x.astype("datetime64[ms]").astype("int64")).to_numpy(),
+                side=d.side.to_numpy())
 
 
 # ------------------------------------------------------------------ analysis
@@ -337,6 +359,28 @@ def overlap_h7t(ledger, h7):
         out[kind] = dict(any=sum(1 for s, k in e if k in any_k) / len(e), same_coin=sum(1 for s, k in e if (s, k) in coin_k) / len(e), n=len(e))
     out["note"] = "week bucket = 7 UTC days counted from the epoch (Thu 00:00 UTC to Wed 24:00), not ISO Monday weeks"
     return out
+
+
+def overlap_h7t_open(raws, h7):
+    # per trade, same coin: entered while an H7-T trade was open (H7-T entered first; also same side), or an H7-T trade was entered while this trade was open (this one first)
+    if h7 is None or "exit_ms" not in h7 or not raws:
+        return None
+    by = {}
+    for s, e, x, sd in zip(h7["sym"], h7["ms"], h7["exit_ms"], h7["side"]):
+        by.setdefault(s, []).append((int(e), int(x), int(sd)))
+    a = a_s = d_ = u = 0
+    for r in raws:
+        hs = by.get(r["sym"], [])
+        e, x = int(r["entry_ms"]), int(r["exit_ms"])
+        ins = [h for h in hs if h[0] <= e < h[1]]
+        dur = any(e < h[0] < x for h in hs)
+        a += bool(ins)
+        a_s += any(h[2] == int(r["side"]) for h in ins)
+        d_ += dur
+        u += bool(ins) or dur
+    n = len(raws)
+    return dict(n=n, inside_open_h7t=a / n, inside_open_h7t_same_side=a_s / n, h7t_entered_during=d_ / n, any_overlap=u / n,
+                note="same coin; H7-T entry <= entry < H7-T exit counts as H7-T first; H7-T entry strictly inside this trade counts as this trade first")
 
 
 def trade_extras(ledger):
@@ -380,6 +424,10 @@ def group_block(spec, g, a, h7, rules):
     b["by_year"] = stats.by_year(led) if led else {}
     b["extras"] = trade_extras(led)
     b["overlap_h7t"] = overlap_h7t(led, h7)
+    b["overlap_h7t_open"] = overlap_h7t_open(raws, h7)
+    nl = sum(1 for r in raws if r["side"] > 0)
+    b["sides"] = dict(long=nl, short=len(raws) - nl, long_share=nl / len(raws) if raws else float("nan"))
+    b["coin_notes"] = a.get("coin_notes", [])
     b["overlap_bar"] = H.overlap_rate(raws)
     b["min_order"] = {w: H.min_order_skips(raws, rules, w) for w in H.TEST_WALLETS} if rules else {}
     b["end_of_data"] = sum(1 for t in led if t["exit_reason"] == "end_of_data")
@@ -556,6 +604,14 @@ def render_group(spec, b, frame):
     o = b["overlap_h7t"]
     if o:
         L += [f"H7-T entry overlap (limits book): same week any coin {f4(o['week']['any'], 3)}, same week same coin {f4(o['week']['same_coin'], 3)}; same day any coin {f4(o['day']['any'], 3)}, same day same coin {f4(o['day']['same_coin'], 3)} ({o['note']})", ""]
+    oo = b.get("overlap_h7t_open")
+    if oo:
+        L += [f"H7-T open-trade overlap (candidate list, n {oo["n"]}): entered while an H7-T trade on the same coin was open {f4(oo["inside_open_h7t"], 3)} "
+              f"(same side {f4(oo["inside_open_h7t_same_side"], 3)}); an H7-T trade on the same coin entered while this trade was open {f4(oo["h7t_entered_during"], 3)}; "
+              f"either {f4(oo["any_overlap"], 3)} ({oo["note"]})", ""]
+    sd = b.get("sides")
+    if sd and b.get("coin_notes"):
+        L += [f"Long / short (candidate list): long {sd["long"]}, short {sd["short"]}, long share {f4(sd["long_share"], 3)}", ""]
     L += [f"Signals skipped by the live limits: {len(b['skips'])} of {b['n_raw']} raw signals (mean unsized R of the skipped, descriptive only):"]
     for k, v in b["skip_summary"].items():
         L.append(f"- {k}: {v['n']} (mean R {f4(v['mean_r'])})")
@@ -616,6 +672,8 @@ def write_files(res, out):
         pd.DataFrame([dict(symbol=s, **v) for s, v in b["per_coin"].items()]).to_csv(out / f"per_coin_{tag}.csv", index=False)
         pd.DataFrame({"coin": b["coins"]}).to_csv(out / f"coin_list_{tag}.csv", index=False)
         pd.DataFrame({"coin": b["nodata"]}).to_csv(out / f"coins_no_data_{tag}.csv", index=False)
+        if b.get("coin_notes"):
+            pd.DataFrame(b["coin_notes"]).to_csv(out / f"generator_counts_per_coin_{tag}.csv", index=False)
         if "fe_ledger" in b:
             b["fe_ledger"].to_csv(out / f"fe_candidate_ledger_{tag}.csv", index=False)
             if isinstance(b.get("sizing"), dict) and b["sizing"].get("sims"):
