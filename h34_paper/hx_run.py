@@ -456,18 +456,53 @@ def flag(ok):
     return "meets" if ok else "does not meet"
 
 
-S1_NAMES = {"S1-0": "trades / months", "S1-1": "mean R", "S1-2": "date-block bootstrap lower bound", "S1-3": "mean R at 0.30% cost",
-            "S1-4": "halves (first, second mean)", "S1-5": "MDD (limits book) and top-5%-removed mean", "S1-6": "top-5% removed mean",
-            "S1-Y": "largest year share of profit"}
+S1_0_TIERS = (1000, 300)     # lock (FE-v1 S1-0, prereg-lock-h61-h71): >= 1000 pass; 300..999 conditional (verdict capped); < 300 undecidable
+LOCK_S1_KEYS = ("S1-0", "S1-1", "S1-2", "S1-3", "S1-4", "S1-5", "S1-6")
+S1_NAMES = {"S1-0": "trades / months", "S1-1": "mean R > 0", "S1-2": "date-block bootstrap lower bound > 0", "S1-3": "mean R at 2x cost (0.30%) > 0",
+            "S1-4": "both halves > 0 (first, second mean, n, n)", "S1-5": "MDD <= 20% and top-5%-removed mean > 0",
+            "S1-6": "best-year share of total R <= 60% (share, year)"}
+S1_0_TIER_NAME = f"trade-count tier (>= {S1_0_TIERS[0]} pass; {S1_0_TIERS[1]}-{S1_0_TIERS[0] - 1} conditional; < {S1_0_TIERS[1]} undecidable)"
 
 
-def s1_lines(sc, label):
-    L = [f"{label}: trades {sc['n']}"]
-    for k in H.S1_KEYS:
+def s1_0_tier(n):
+    return "pass" if n >= S1_0_TIERS[0] else "conditional" if n >= S1_0_TIERS[1] else "undecidable"
+
+
+def lock_s1(sc, frame):
+    """Relabel the screen's S1 dict to the lock's clause numbering (no recalculation): the screen's 'S1-5' (MDD) and 'S1-6' (top-5%-removed mean)
+    are the two halves of lock S1-5; the screen's 'S1-Y' is lock S1-6. fe2 frame: S1-0 is the lock's three-tier trade count."""
+    out = OrderedDict()
+    if frame == "fe2":
+        t = s1_0_tier(sc["n"])
+        out["S1-0"] = (t == "pass", dict(trades=sc["n"], tier=t))
+    elif "S1-0" in sc:
+        out["S1-0"] = sc["S1-0"]
+    for k in ("S1-1", "S1-2", "S1-3", "S1-4"):
         if k in sc:
-            v = sc[k][1]
-            v = tuple(round(x, 4) if isinstance(x, float) else x for x in v) if isinstance(v, tuple) else (round(v, 4) if isinstance(v, float) else v)
-            L.append(f"- {k} {S1_NAMES.get(k, '')}: {v} (threshold {flag(sc[k][0])}; mechanical, verdict is TA's)")
+            out[k] = sc[k]
+    if "S1-5" in sc and "S1-6" in sc:
+        (dd_ok, dd), (top_ok, (top, kk)) = sc["S1-5"], sc["S1-6"]
+        out["S1-5"] = (bool(dd_ok and top_ok), dict(max_dd=dd, top5_removed_mean=top, removed=kk))
+    if "S1-Y" in sc:
+        out["S1-6"] = sc["S1-Y"]
+    return out
+
+
+def _rnd(v):
+    if isinstance(v, dict):
+        return {k: _rnd(x) for k, x in v.items()}
+    if isinstance(v, tuple):
+        return tuple(_rnd(x) for x in v)
+    return round(v, 4) if isinstance(v, float) else v
+
+
+def s1_lines(sc, label, frame="old"):
+    L = [f"{label}: trades {sc['n']}"]
+    for k, (ok, v) in lock_s1(sc, frame).items():
+        if k == "S1-0" and frame == "fe2":
+            L.append(f"- S1-0 {S1_0_TIER_NAME}: {v['tier']} ({v['trades']} trades; mechanical, verdict is TA's)")
+            continue
+        L.append(f"- {k} {S1_NAMES[k]}: {_rnd(v)} (threshold {flag(ok)}; mechanical, verdict is TA's)")
     if "S1-2_date_99" in sc:
         L.append(f"- date-block bounds: 99% {f4(sc['S1-2_date_99'])}, 99.8% {f4(sc['S1-2_date_998'])}, lock bound index {sc['boot_index']}")
     return L
@@ -483,7 +518,7 @@ def head(sc):
 
 def render_group(spec, b, frame):
     sc = b["sc"]
-    L = [f"## {spec} / {b['group']} ({b['role']}), seed {b['seed']}, N {b['n_cand']}, bound {100 * (1 - b['q']):.3f}% (q {b['q']:.6f}), min trades {b['min_trades']}", ""]
+    L = [f"## {spec} / {b['group']} ({b['role']}), seed {b['seed']}, N {b['n_cand']}, bound {100 * (1 - b['q']):.3f}% (q {b['q']:.6f}), " + (f"S1-0 {S1_0_TIER_NAME}" if frame == "fe2" else f"min trades {b['min_trades']}"), ""]
     L += [f"Coin list ({b['n_coins']} coins with data): " + ", ".join(b["coins"]) if b["coins"] else "Coin list: none"]
     L += ["", f"Coins in the universe skipped for NO DATA: {b['n_nodata']}" + (": " + ", ".join(b["nodata"]) if b["nodata"] else ""),
           f"Universe coin-months {b['universe_coin_months']}; excluded for coverage/funding/warmup (member months): {b['excl']['excluded']} of {b['excl']['coin_months']} = {f4(b['excl']['share'], 4)}"
@@ -491,12 +526,12 @@ def render_group(spec, b, frame):
     if frame == "fe2":
         L += ["Candidate-list statistics below are in R units on the sizing-independent candidate list (no FE concurrency / open-loss rules, no variant sizing); "
               "the variant A/B ledgers, FE-Z1..Z3 and RP come from the sizing module (see sizing section).", ""]
-        L += [head(b["sc_u"]), ""] + s1_lines(b["sc_u"], "Candidate list (unlimited, R units)") + [""]
+        L += [head(b["sc_u"]), ""] + s1_lines(b["sc_u"], "Candidate list (unlimited, R units)", frame) + [""]
         cs = candidate_list_stats(b["ledger_u"])
         L += [f"Candidate list: {cs['n']} trades, average hold {f4(cs['avg_hold_h'], 2) if cs['avg_hold_h'] is not None else 'n/a'} h, annual n {cs['annual_n']} "
               f"(trades / (days first entry to last exit / 365.25), nearest integer); coins with data {b['n_coins']}: {', '.join(b['coins'][:400])}", ""]
     L += [f"### Limits book (3 concurrent, 6% open risk, 2%/trade, 1 per coin, 5% KST daily cap)" if frame == "old" else "### Old-frame limits book (report only here)", "", head(sc), ""]
-    L += s1_lines(sc, "Limits book") + [f"end_of_data trades: {b['end_of_data']}", ""]
+    L += s1_lines(sc, "Limits book", frame) + [f"end_of_data trades: {b['end_of_data']}", ""]
     t = b["thresholds"]
     L += [f"Lock aux numbers: trades {t['trades']} (>= 100: {t['trades_ge_100']}), mean R {f4(t['mean_r'])} (> 0: {t['mean_r_gt0']}), mean R at 2x cost {f4(t['mean_r_2x_cost'])} (> 0: {t['mean_r_2x_cost_gt0']})", ""]
     if b["u"]:
@@ -586,11 +621,11 @@ def write_files(res, out):
             if isinstance(b.get("sizing"), dict) and b["sizing"].get("sims"):
                 write_sizing_files(b["sizing"], out, tag)
         js["groups"][gn] = dict(role=b["role"], seed=b["seed"], q=b["q"], n_coins=b["n_coins"], n_nodata=b["n_nodata"], trades=len(b["ledger"]), raw=b["n_raw"],
-                                s1={k: dict(met=bool(b["sc"][k][0]), value=b["sc"][k][1]) for k in H.S1_KEYS if k in b["sc"]}, thresholds=b["thresholds"],
+                                s1={k: dict(met=bool(ok), value=v) for k, (ok, v) in lock_s1(b["sc"], res["frame"]).items()}, thresholds=b["thresholds"],
                                 excl_share=b["excl"]["share"])
         t = b["thresholds"]
         summ += [f"- {gn} ({b['role']}, seed {b['seed']}, bound {100 * (1 - b['q']):.3f}%): coins {b['n_coins']} (no data {b['n_nodata']}), raw {b['n_raw']}, limits-book trades {t['trades']}, mean R {f4(t['mean_r'])}, 0.30%-cost mean {f4(t['mean_r_2x_cost'])}, "
-                 + ", ".join(f"{k} {f4(b['sc'][k][1]) if not isinstance(b['sc'][k][1], tuple) else tuple(round(x, 4) if isinstance(x, float) else x for x in b['sc'][k][1])}" for k in H.S1_KEYS if k in b["sc"] and k != "S1-0")
+                 + ", ".join(f"{k} {_rnd(v)}" for k, (_, v) in lock_s1(b["sc"], res["frame"]).items() if k != "S1-0")
                  for _ in [0]]
     p = out / f"{spec}_screen_result.md"
     p.write_text(render(res), encoding="utf-8")

@@ -191,3 +191,11 @@ def test_write_csvs(tmp_path):
     for v in ("A_off", "A_on", "B_off", "B_on", "C_off", "C_on"):
         assert (tmp_path / f"fe_trades_h61_six_{v}.csv").exists() and (tmp_path / f"fe_skips_h61_six_{v}.csv").exists()
     assert (tmp_path / "fe_replacements_h61_six.csv").exists()
+
+
+def test_render_sizing_candidate_s1_3_is_labelled_distinct():
+    z = hook(many(), price=prices({}))
+    line = next(x for x in Z.render_sizing(z, coins=SIX) if x.startswith("Unlimited candidate-list") or x.startswith("Sizing-ledger"))
+    assert "S1-3 pass=" not in line and "S1-1 pass=" not in line     # not labelled as the lock clauses: a different R definition
+    assert "sizing-ledger R = unit / (stop_dist + 0.0017)" in line and "2x-cost mean (R - 0.0015/stop_dist)" in line
+    assert "not the clause S1-3" in line

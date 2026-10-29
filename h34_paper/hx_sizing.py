@@ -22,6 +22,9 @@ from . import sizing_up as S
 SIZING_COLS = ("sym", "side", "entry_time", "exit_time", "entry_px", "stop_dist", "mae", "unit", "fee1", "R")
 FEE_SIZING = 0.0017
 S1_KEYS_BASE = ("S1-1", "S1-2", "S1-3", "S1-4", "S1-6")
+# report names for the sizing-ledger RP-gate numbers (same keys / calculation; named apart from the clause lines, which use the screen's R)
+RP_GATE_LABELS = {"S1-1": "gate mean R", "S1-2": "gate date-block lower bound", "S1-3": "gate 2x-cost mean (R - 0.0015/stop_dist)",
+                  "S1-4": "gate halves", "S1-6": "gate best-year share"}
 VARIANT_C_NOTE = ("variant C (per-coin margin fraction) is defined for BTC/ETH/SOL/BNB/XRP/DOGE only (lock 03a2d0898830; answers C2: a coin without f is an error). "
                   "The group has coins outside these six, so C was not run; the new-coin addendum names variants A and B.")
 
@@ -164,8 +167,10 @@ def render_sizing(z, coins=None):
     L += ["", "Candidate ledger columns passed to the sizing module: " + ", ".join(SIZING_COLS)
           + " (R = unit / (stop_dist + 0.0017) on the unlimited candidate list; sym/side/times/px from the candidate ledger).", ""]
     cr = z["candidate_R"]
-    L += [f"Unlimited candidate-list R statistics (n {cr['n']}, mean R {_f(cr['mean_R'])}; seed {z['seed']}, N {z['n_cand']}, q {0.05 / z['n_cand']:.6f}): "
-          + "; ".join(f"{k} pass={cr[k]['pass']} value={cr[k]['value']}" for k in S1_KEYS_BASE), ""]
+    L += [f"Sizing-ledger RP-gate inputs on the unlimited candidate list (sizing-ledger R = unit / (stop_dist + 0.0017), n {cr['n']}, mean R {_f(cr['mean_R'])}; "
+          f"seed {z['seed']}, N {z['n_cand']}, q {0.05 / z['n_cand']:.6f}; a different R definition from the clause lines above, so these are not the clause S1-3 etc. "
+          "and feed only the RP gate): "
+          + "; ".join(f"{RP_GATE_LABELS[k]} pass={cr[k]['pass']} value={cr[k]['value']}" for k in S1_KEYS_BASE), ""]
     L += ["RP gate (answers R10: the RP verdict applies only where S1-1..S1-6 all pass on the base ledger; otherwise reference only): "
           + ", ".join(f"{v}: {'applies' if ok else 'reference only'} (S1-5 pass={z['gate_detail'][v]['S1-5']['pass']} MDD={_pct(z['gate_detail'][v]['S1-5']['value']['max_dd'])} "
                       f"top5-removed mean R={_f(z['gate_detail'][v]['S1-5']['value']['top5_removed_mean'])})" for v, ok in z["gate"].items()), ""]

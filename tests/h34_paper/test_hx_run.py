@@ -229,3 +229,34 @@ def test_sizing_meta_is_rendered():
     from h34_paper import hx_sizing as Z
     z = dict(min_stop_dist=0.006, note="x", meta=dict(exchangeinfo_sha256="aa", brackets_sha256="bb", sizing_module="m", rules_new_coins="r", ledger_cols=["a"]))
     assert "exchangeinfo_sha256 aa" in "\n".join(Z.render_sizing(z))
+
+
+# ---- lock alignment (verdict-h61-h71-2026-10-29: runner labels and S1-0 tiers must match the lock)
+def test_s1_0_tiers_match_lock():
+    assert R.S1_0_TIERS == (1000, 300)
+    assert [R.s1_0_tier(n) for n in (0, 299, 300, 999, 1000, 5000)] == ["undecidable", "undecidable", "conditional", "conditional", "pass", "pass"]
+
+
+def _old_sc(n=75):
+    return {"n": n, "S1-0": (False, "x"), "S1-1": (False, -0.1), "S1-2": (False, -0.5), "S1-3": (False, -0.2), "S1-4": (False, (-0.1, -0.2, 37, 38)),
+            "S1-5": (False, 0.36), "S1-6": (False, (-0.44, 4)), "S1-Y": (True, (0.3, "2021"))}
+
+
+def test_lock_s1_labels_and_values():
+    L = R.lock_s1(_old_sc(), "fe2")
+    assert list(L) == ["S1-0", "S1-1", "S1-2", "S1-3", "S1-4", "S1-5", "S1-6"] and "S1-Y" not in L
+    assert L["S1-0"][1]["tier"] == "undecidable" and L["S1-0"][0] is False
+    assert R.lock_s1(_old_sc(1000), "fe2")["S1-0"][1]["tier"] == "pass"
+    assert R.lock_s1(_old_sc(500), "fe2")["S1-0"][1]["tier"] == "conditional"
+    assert L["S1-5"][0] is False and L["S1-5"][1] == dict(max_dd=0.36, top5_removed_mean=-0.44, removed=4)
+    assert L["S1-6"] == (True, (0.3, "2021"))      # lock S1-6 = best-year share (old 'S1-Y')
+    ok = dict(_old_sc(1200), **{"S1-5": (True, 0.1), "S1-6": (True, (0.2, 3))})
+    assert R.lock_s1(ok, "fe2")["S1-5"][0] is True
+    assert R.lock_s1(dict(ok, **{"S1-6": (False, (-0.1, 3))}), "fe2")["S1-5"][0] is False
+
+
+def test_s1_lines_use_lock_labels():
+    txt = "\n".join(R.s1_lines(_old_sc(), "Limits book", "fe2"))
+    assert "S1-Y" not in txt and "S1-0 trade-count tier (>= 1000 pass; 300-999 conditional; < 300 undecidable): undecidable" in txt
+    assert "S1-5 MDD <= 20% and top-5%-removed mean > 0" in txt and "S1-6 best-year share of total R <= 60%" in txt
+    assert "trades 75 >= " not in txt          # the old built-in 300/100 trade-count check is gone
