@@ -1,0 +1,223 @@
+idx,sym,entry_time,reason,detail,wallet
+4,ETHUSDT,2021-01-13 07:00:00,open_loss_cap,open stop-losses 5.000% + this 4.989% = 9.988% > 6.0% of wallet,103.91374131998482
+5,BNBUSDT,2021-01-13 09:00:00,open_loss_cap,open stop-losses 5.000% + this 4.994% = 9.994% > 6.0% of wallet,103.91374131998482
+7,BNBUSDT,2021-01-22 07:00:00,open_loss_cap,open stop-losses 5.000% + this 4.113% = 9.113% > 6.0% of wallet,110.40470233518485
+8,BTCUSDT,2021-01-22 07:00:00,open_loss_cap,open stop-losses 5.000% + this 4.445% = 9.445% > 6.0% of wallet,110.40470233518485
+9,ETHUSDT,2021-01-22 12:00:00,open_loss_cap,open stop-losses 5.000% + this 4.968% = 9.968% > 6.0% of wallet,110.40470233518485
+10,SOLUSDT,2021-01-22 14:00:00,open_loss_cap,open stop-losses 5.000% + this 5.000% = 9.999% > 6.0% of wallet,110.40470233518485
+12,ETHUSDT,2021-02-01 03:00:00,open_loss_cap,open stop-losses 5.000% + this 4.972% = 9.972% > 6.0% of wallet,113.38960578229283
+18,ETHUSDT,2021-02-21 12:00:00,open_loss_cap,open stop-losses 4.998% + this 3.905% = 8.903% > 6.0% of wallet,121.41035049321076
+19,XRPUSDT,2021-02-21 12:00:00,open_loss_cap,open stop-losses 4.998% + this 4.999% = 9.997% > 6.0% of wallet,121.41035049321076
+25,SOLUSDT,2021-03-03 08:00:00,open_loss_cap,open stop-losses 4.009% + this 4.693% = 8.702% > 6.0% of wallet,108.196900878872
+30,ETHUSDT,2021-03-11 04:00:00,open_loss_cap,open stop-losses 2.834% + this 4.067% = 6.901% > 6.0% of wallet,111.70169959710368
+36,ETHUSDT,2021-03-19 07:00:00,open_loss_cap,open stop-losses 2.812% + this 3.217% = 6.029% > 6.0% of wallet,103.97686232985218
+38,BNBUSDT,2021-03-19 12:00:00,open_loss_cap,open stop-losses 5.493% + this 2.860% = 8.353% > 6.0% of wallet,103.97686232985218
+41,BNBUSDT,2021-03-24 03:00:00,open_loss_cap,open stop-losses 4.710% + this 4.963% = 9.673% > 6.0% of wallet,109.74982423471423
+42,SOLUSDT,2021-03-24 03:00:00,open_loss_cap,open stop-losses 4.710% + this 4.998% = 9.708% > 6.0% of wallet,109.74982423471423
+43,ETHUSDT,2021-03-24 04:00:00,open_loss_cap,open stop-losses 4.710% + this 1.988% = 6.698% > 6.0% of wallet,109.74982423471423
+50,ETHUSDT,2021-04-04 11:00:00,open_loss_cap,open stop-losses 4.998% + this 3.000% = 7.998% > 6.0% of wallet,117.70641952773013
+55,BNBUSDT,2021-04-15 05:00:00,open_loss_cap,open stop-losses 3.457% + this 4.954% = 8.411% > 6.0% of wallet,132.02379613017663
+58,XRPUSDT,2021-04-20 12:00:00,open_loss_cap,open stop-losses 4.951% + this 4.999% = 9.950% > 6.0% of wallet,121.07949807882198
+63,SOLUSDT,2021-04-30 06:00:00,open_loss_cap,open stop-losses 4.996% + this 4.732% = 9.727% > 6.0% of wallet,114.63296185307736
+67,BNBUSDT,2021-05-07 16:00:00,open_loss_cap,open stop-losses 4.995% + this 4.028% = 9.023% > 6.0% of wallet,121.19471658954348
+69,DOGEUSDT,2021-05-11 05:00:00,stop_vs_liq,stop 7.9849% > 0.7 x (1/10 - mmr 0.0065) = 6.5450% of entry,111.90542351577668
+71,XRPUSDT,2021-05-11 08:00:00,open_loss_cap,open stop-losses 4.996% + this 4.999% = 9.995% > 6.0% of wallet,111.90542351577668
+72,ETHUSDT,2021-05-11 11:00:00,open_loss_cap,open stop-losses 4.996% + this 4.992% = 9.989% > 6.0% of wallet,111.90542351577668
+73,BTCUSDT,2021-05-11 21:00:00,open_loss_cap,open stop-losses 4.996% + this 2.296% = 7.293% > 6.0% of wallet,111.90542351577668
+77,XRPUSDT,2021-05-17 09:00:00,open_loss_cap,open stop-losses 4.888% + this 4.998% = 9.885% > 6.0% of wallet,117.22180405023711
+79,DOGEUSDT,2021-05-20 05:00:00,open_loss_cap,open stop-losses 4.777% + this 4.997% = 9.774% > 6.0% of wallet,111.51751408970351
+80,ETHUSDT,2021-05-20 06:00:00,stop_vs_liq,stop 8.3407% > 0.7 x (1/10 - mmr 0.004) = 6.7200% of entry,111.51751408970351
+81,BNBUSDT,2021-05-20 09:00:00,open_loss_cap,open stop-losses 4.777% + this 4.912% = 9.689% > 6.0% of wallet,111.51751408970351
+82,SOLUSDT,2021-05-20 09:00:00,open_loss_cap,open stop-losses 4.777% + this 4.992% = 9.770% > 6.0% of wallet,111.51751408970351
+84,DOGEUSDT,2021-05-28 03:00:00,open_loss_cap,open stop-losses 4.170% + this 4.997% = 9.167% > 6.0% of wallet,119.46647667770353
+94,ETHUSDT,2021-06-20 06:00:00,open_loss_cap,open stop-losses 2.670% + this 4.495% = 7.165% > 6.0% of wallet,109.42139549043374
+95,SOLUSDT,2021-06-20 06:00:00,open_loss_cap,open stop-losses 2.670% + this 5.000% = 7.670% > 6.0% of wallet,109.42139549043374
+100,XRPUSDT,2021-07-09 05:00:00,open_loss_cap,open stop-losses 4.944% + this 4.337% = 9.281% > 6.0% of wallet,100.48157856147373
+110,XRPUSDT,2021-07-27 13:00:00,open_loss_cap,open stop-losses 4.431% + this 4.999% = 9.430% > 6.0% of wallet,83.44444261004341
+111,BNBUSDT,2021-07-27 13:00:00,open_loss_cap,open stop-losses 4.431% + this 4.905% = 9.336% > 6.0% of wallet,83.44444261004341
+112,ETHUSDT,2021-07-27 13:00:00,open_loss_cap,open stop-losses 4.431% + this 4.911% = 9.342% > 6.0% of wallet,83.44444261004341
+114,DOGEUSDT,2021-07-29 06:00:00,open_loss_cap,open stop-losses 3.505% + this 4.292% = 7.798% > 6.0% of wallet,88.30277388665779
+118,BNBUSDT,2021-08-09 10:00:00,open_loss_cap,open stop-losses 4.999% + this 4.931% = 9.930% > 6.0% of wallet,91.72857192722732
+120,BTCUSDT,2021-08-17 04:00:00,open_loss_cap,open stop-losses 4.992% + this 1.935% = 6.927% > 6.0% of wallet,99.82627513386893
+121,ETHUSDT,2021-08-17 11:00:00,open_loss_cap,open stop-losses 4.992% + this 3.947% = 8.938% > 6.0% of wallet,99.82627513386893
+123,SOLUSDT,2021-08-18 07:00:00,open_loss_cap,open stop-losses 2.645% + this 4.987% = 7.631% > 6.0% of wallet,94.81754801916512
+132,SOLUSDT,2021-09-01 03:00:00,open_loss_cap,open stop-losses 2.080% + this 4.968% = 7.048% > 6.0% of wallet,70.78659846147596
+135,DOGEUSDT,2021-09-03 10:00:00,open_loss_cap,open stop-losses 3.863% + this 4.995% = 8.858% > 6.0% of wallet,76.04712807578395
+139,SOLUSDT,2021-09-12 04:00:00,open_loss_cap,open stop-losses 3.577% + this 4.987% = 8.564% > 6.0% of wallet,72.04406904363867
+140,BNBUSDT,2021-09-12 05:00:00,open_loss_cap,open stop-losses 3.577% + this 2.779% = 6.356% > 6.0% of wallet,72.04406904363867
+142,XRPUSDT,2021-09-17 05:00:00,open_loss_cap,open stop-losses 2.897% + this 3.494% = 6.391% > 6.0% of wallet,76.71810178363866
+143,BNBUSDT,2021-09-17 06:00:00,open_loss_cap,open stop-losses 2.897% + this 3.672% = 6.569% > 6.0% of wallet,76.71810178363866
+147,BTCUSDT,2021-09-19 08:00:00,open_loss_cap,open stop-losses 4.854% + this 1.606% = 6.460% > 6.0% of wallet,72.8878611935079
+148,ETHUSDT,2021-09-19 08:00:00,open_loss_cap,open stop-losses 4.854% + this 2.577% = 7.431% > 6.0% of wallet,72.8878611935079
+149,BNBUSDT,2021-09-19 09:00:00,open_loss_cap,open stop-losses 4.854% + this 1.920% = 6.774% > 6.0% of wallet,72.8878611935079
+151,BNBUSDT,2021-09-21 03:00:00,open_loss_cap,open stop-losses 4.311% + this 4.916% = 9.227% > 6.0% of wallet,69.3678339062915
+153,BTCUSDT,2021-09-22 03:00:00,open_loss_cap,open stop-losses 4.888% + this 4.124% = 9.012% > 6.0% of wallet,66.37735205521669
+154,XRPUSDT,2021-09-22 03:00:00,open_loss_cap,open stop-losses 4.888% + this 4.996% = 9.885% > 6.0% of wallet,66.37735205521669
+155,ETHUSDT,2021-09-22 03:00:00,open_loss_cap,open stop-losses 4.888% + this 4.925% = 9.814% > 6.0% of wallet,66.37735205521669
+156,SOLUSDT,2021-09-22 03:00:00,open_loss_cap,open stop-losses 4.888% + this 4.927% = 9.816% > 6.0% of wallet,66.37735205521669
+159,XRPUSDT,2021-09-29 05:00:00,open_loss_cap,open stop-losses 4.718% + this 4.775% = 9.493% > 6.0% of wallet,69.44368902552144
+166,SOLUSDT,2021-10-11 05:00:00,open_loss_cap,open stop-losses 4.905% + this 4.978% = 9.884% > 6.0% of wallet,57.83776146904269
+168,DOGEUSDT,2021-10-11 09:00:00,open_loss_cap,open stop-losses 3.238% + this 4.499% = 7.737% > 6.0% of wallet,60.532501229042694
+170,SOLUSDT,2021-10-12 18:00:00,open_loss_cap,open stop-losses 4.608% + this 4.953% = 9.561% > 6.0% of wallet,58.59832338945027
+175,DOGEUSDT,2021-10-22 09:00:00,open_loss_cap,open stop-losses 5.672% + this 3.386% = 9.059% > 6.0% of wallet,51.490191186496965
+176,BTCUSDT,2021-10-22 09:00:00,open_loss_cap,open stop-losses 5.672% + this 4.441% = 10.114% > 6.0% of wallet,51.490191186496965
+180,ETHUSDT,2021-10-28 03:00:00,open_loss_cap,open stop-losses 4.996% + this 4.740% = 9.736% > 6.0% of wallet,44.98603544206235
+184,XRPUSDT,2021-11-11 08:00:00,open_loss_cap,open stop-losses 2.639% + this 4.996% = 7.635% > 6.0% of wallet,46.76958174582345
+193,XRPUSDT,2021-12-11 06:00:00,open_loss_cap,open stop-losses 4.159% + this 2.935% = 7.094% > 6.0% of wallet,39.5828080391611
+198,BNBUSDT,2021-12-30 13:00:00,open_loss_cap,open stop-losses 2.857% + this 3.483% = 6.341% > 6.0% of wallet,36.52614322184062
+199,ETHUSDT,2021-12-30 13:00:00,open_loss_cap,open stop-losses 2.857% + this 3.762% = 6.619% > 6.0% of wallet,36.52614322184062
+204,SOLUSDT,2022-01-04 13:00:00,open_loss_cap,open stop-losses 5.749% + this 3.290% = 9.039% > 6.0% of wallet,42.12253511484062
+206,SOLUSDT,2022-01-14 07:00:00,open_loss_cap,open stop-losses 2.296% + this 4.838% = 7.134% > 6.0% of wallet,42.01910511442638
+207,BTCUSDT,2022-01-14 16:00:00,below_min_notional,qty 0.001 x 43082.58 = 43.0826 < minNotional 50,41.07477629888559
+212,BNBUSDT,2022-02-22 15:00:00,open_loss_cap,open stop-losses 2.576% + this 4.907% = 7.483% > 6.0% of wallet,43.67167875812805
+213,ETHUSDT,2022-02-22 16:00:00,open_loss_cap,open stop-losses 2.576% + this 4.993% = 7.569% > 6.0% of wallet,43.67167875812805
+216,BTCUSDT,2022-02-28 08:00:00,open_loss_cap,open stop-losses 3.829% + this 4.364% = 8.193% > 6.0% of wallet,46.690550194680064
+221,DOGEUSDT,2022-03-26 06:00:00,open_loss_cap,open stop-losses 4.500% + this 4.022% = 8.522% > 6.0% of wallet,48.52794306975808
+222,SOLUSDT,2022-03-26 07:00:00,open_loss_cap,open stop-losses 4.500% + this 3.711% = 8.211% > 6.0% of wallet,48.52794306975808
+226,DOGEUSDT,2022-04-01 19:00:00,open_loss_cap,open stop-losses 3.832% + this 4.808% = 8.640% > 6.0% of wallet,53.594698421550035
+228,DOGEUSDT,2022-04-03 06:00:00,open_loss_cap,open stop-losses 2.807% + this 3.834% = 6.641% > 6.0% of wallet,57.83690692155004
+231,ETHUSDT,2022-04-07 03:00:00,open_loss_cap,open stop-losses 2.957% + this 3.549% = 6.507% > 6.0% of wallet,61.68515942155006
+238,DOGEUSDT,2022-05-01 07:00:00,open_loss_cap,open stop-losses 4.976% + this 4.999% = 9.975% > 6.0% of wallet,54.10318745557376
+239,BNBUSDT,2022-05-01 17:00:00,open_loss_cap,open stop-losses 4.976% + this 4.173% = 9.149% > 6.0% of wallet,54.10318745557376
+240,XRPUSDT,2022-05-01 17:00:00,open_loss_cap,open stop-losses 4.976% + this 4.998% = 9.974% > 6.0% of wallet,54.10318745557376
+245,SOLUSDT,2022-05-21 05:00:00,open_loss_cap,open stop-losses 3.249% + this 4.771% = 8.020% > 6.0% of wallet,56.64363714903081
+246,XRPUSDT,2022-05-21 16:00:00,open_loss_cap,open stop-losses 3.249% + this 4.096% = 7.345% > 6.0% of wallet,56.64363714903081
+249,ETHUSDT,2022-05-27 14:00:00,open_loss_cap,open stop-losses 4.986% + this 4.960% = 9.946% > 6.0% of wallet,54.17102441563934
+253,SOLUSDT,2022-06-10 04:00:00,open_loss_cap,open stop-losses 2.315% + this 4.988% = 7.303% > 6.0% of wallet,48.799988378849385
+254,BTCUSDT,2022-06-14 07:00:00,below_min_notional,qty 0.002 x 22621.8 = 45.2436 < minNotional 50,47.684190970237715
+256,DOGEUSDT,2022-06-17 03:00:00,open_loss_cap,open stop-losses 3.287% + this 4.999% = 8.286% > 6.0% of wallet,47.684190970237715
+257,SOLUSDT,2022-06-17 03:00:00,open_loss_cap,open stop-losses 3.287% + this 4.983% = 8.270% > 6.0% of wallet,47.684190970237715
+263,SOLUSDT,2022-07-13 08:00:00,open_loss_cap,open stop-losses 4.021% + this 4.950% = 8.972% > 6.0% of wallet,41.64960311786432
+264,DOGEUSDT,2022-07-13 09:00:00,open_loss_cap,open stop-losses 4.021% + this 3.797% = 7.818% > 6.0% of wallet,41.64960311786432
+269,ETHUSDT,2022-07-23 04:00:00,open_loss_cap,open stop-losses 2.116% + this 4.117% = 6.232% > 6.0% of wallet,46.38900134233118
+271,DOGEUSDT,2022-07-23 06:00:00,open_loss_cap,open stop-losses 4.344% + this 3.654% = 7.997% > 6.0% of wallet,46.38900134233118
+274,ETHUSDT,2022-08-02 18:00:00,open_loss_cap,open stop-losses 3.298% + this 4.566% = 7.864% > 6.0% of wallet,45.94374413732467
+286,ETHUSDT,2022-08-21 03:00:00,open_loss_cap,open stop-losses 3.170% + this 3.761% = 6.931% > 6.0% of wallet,46.02274718667628
+293,SOLUSDT,2022-09-07 19:00:00,open_loss_cap,open stop-losses 5.696% + this 4.080% = 9.776% > 6.0% of wallet,42.93695696698246
+294,XRPUSDT,2022-09-07 19:00:00,open_loss_cap,open stop-losses 5.696% + this 4.999% = 10.695% > 6.0% of wallet,42.93695696698246
+295,BTCUSDT,2022-09-07 22:00:00,open_loss_cap,open stop-losses 5.696% + this 4.904% = 10.599% > 6.0% of wallet,42.93695696698246
+305,BNBUSDT,2022-09-25 12:00:00,open_loss_cap,open stop-losses 4.269% + this 2.325% = 6.594% > 6.0% of wallet,47.5674044743
+307,SOLUSDT,2022-09-28 16:00:00,open_loss_cap,open stop-losses 4.989% + this 4.991% = 9.980% > 6.0% of wallet,51.654370154300004
+308,BTCUSDT,2022-09-28 16:00:00,open_loss_cap,open stop-losses 4.989% + this 4.946% = 9.936% > 6.0% of wallet,51.654370154300004
+323,XRPUSDT,2022-11-10 06:00:00,open_loss_cap,open stop-losses 4.996% + this 5.000% = 9.996% > 6.0% of wallet,52.1994781845269
+324,BTCUSDT,2022-11-10 07:00:00,open_loss_cap,open stop-losses 4.996% + this 3.742% = 8.738% > 6.0% of wallet,52.1994781845269
+330,XRPUSDT,2022-11-27 04:00:00,open_loss_cap,open stop-losses 3.993% + this 2.051% = 6.044% > 6.0% of wallet,49.61221255409281
+333,DOGEUSDT,2022-12-20 03:00:00,open_loss_cap,open stop-losses 2.716% + this 4.996% = 7.712% > 6.0% of wallet,50.43873270595291
+338,XRPUSDT,2023-01-19 06:00:00,open_loss_cap,open stop-losses 2.506% + this 4.010% = 6.516% > 6.0% of wallet,48.40273506931547
+341,DOGEUSDT,2023-01-22 14:00:00,open_loss_cap,open stop-losses 2.206% + this 3.871% = 6.077% > 6.0% of wallet,46.9248305525952
+351,SOLUSDT,2023-02-17 21:00:00,open_loss_cap,open stop-losses 2.333% + this 4.643% = 6.977% > 6.0% of wallet,42.79910626693766
+354,DOGEUSDT,2023-02-20 05:00:00,open_loss_cap,open stop-losses 4.708% + this 3.325% = 8.033% > 6.0% of wallet,41.81332548915144
+355,XRPUSDT,2023-02-20 06:00:00,open_loss_cap,open stop-losses 4.708% + this 3.235% = 7.942% > 6.0% of wallet,41.81332548915144
+358,XRPUSDT,2023-03-16 03:00:00,open_loss_cap,open stop-losses 2.777% + this 4.574% = 7.351% > 6.0% of wallet,46.07251639469083
+366,DOGEUSDT,2023-03-23 09:00:00,open_loss_cap,open stop-losses 3.979% + this 3.427% = 7.406% > 6.0% of wallet,45.14734712071039
+367,XRPUSDT,2023-03-23 09:00:00,open_loss_cap,open stop-losses 3.979% + this 4.998% = 8.977% > 6.0% of wallet,45.14734712071039
+377,XRPUSDT,2023-04-22 14:00:00,open_loss_cap,open stop-losses 2.675% + this 4.231% = 6.906% > 6.0% of wallet,52.17598585390392
+378,DOGEUSDT,2023-04-22 16:00:00,open_loss_cap,open stop-losses 2.675% + this 4.349% = 7.024% > 6.0% of wallet,52.17598585390392
+379,SOLUSDT,2023-04-22 16:00:00,open_loss_cap,open stop-losses 2.675% + this 4.346% = 7.021% > 6.0% of wallet,52.17598585390392
+394,SOLUSDT,2023-06-25 03:00:00,open_loss_cap,open stop-losses 5.789% + this 4.013% = 9.802% > 6.0% of wallet,51.23984372429064
+397,SOLUSDT,2023-06-26 08:00:00,open_loss_cap,open stop-losses 5.661% + this 3.660% = 9.321% > 6.0% of wallet,52.19737851229065
+401,ETHUSDT,2023-06-29 09:00:00,open_loss_cap,open stop-losses 5.971% + this 2.100% = 8.071% > 6.0% of wallet,52.98127052421754
+409,BNBUSDT,2023-07-15 10:00:00,open_loss_cap,open stop-losses 4.998% + this 2.743% = 7.741% > 6.0% of wallet,55.88924688015688
+425,SOLUSDT,2023-11-03 14:00:00,open_loss_cap,open stop-losses 3.808% + this 4.996% = 8.804% > 6.0% of wallet,51.938354314750434
+428,XRPUSDT,2023-11-12 05:00:00,open_loss_cap,open stop-losses 5.773% + this 1.940% = 7.713% > 6.0% of wallet,53.120246095569044
+429,DOGEUSDT,2023-11-12 07:00:00,open_loss_cap,open stop-losses 5.773% + this 4.998% = 10.771% > 6.0% of wallet,53.120246095569044
+431,SOLUSDT,2023-11-14 09:00:00,open_loss_cap,open stop-losses 3.297% + this 4.979% = 8.276% > 6.0% of wallet,52.66932577291604
+434,BTCUSDT,2023-11-15 10:00:00,open_loss_cap,open stop-losses 5.859% + this 1.722% = 7.581% > 6.0% of wallet,50.94069311642152
+435,ETHUSDT,2023-11-15 13:00:00,open_loss_cap,open stop-losses 5.859% + this 3.654% = 9.513% > 6.0% of wallet,50.94069311642152
+439,SOLUSDT,2023-11-22 05:00:00,open_loss_cap,open stop-losses 3.787% + this 4.658% = 8.445% > 6.0% of wallet,56.39662546488284
+440,XRPUSDT,2023-11-22 11:00:00,open_loss_cap,open stop-losses 3.787% + this 2.686% = 6.472% > 6.0% of wallet,56.39662546488284
+447,DOGEUSDT,2023-12-16 04:00:00,open_loss_cap,open stop-losses 4.556% + this 2.950% = 7.507% > 6.0% of wallet,53.60668548165093
+449,SOLUSDT,2023-12-18 20:00:00,open_loss_cap,open stop-losses 2.676% + this 4.784% = 7.460% > 6.0% of wallet,52.36223276738575
+456,SOLUSDT,2024-01-13 21:00:00,open_loss_cap,open stop-losses 1.946% + this 4.993% = 6.939% > 6.0% of wallet,56.60227612806537
+463,SOLUSDT,2024-01-23 04:00:00,open_loss_cap,open stop-losses 2.420% + this 3.729% = 6.148% > 6.0% of wallet,53.97417393033971
+472,DOGEUSDT,2024-03-01 15:00:00,open_loss_cap,open stop-losses 4.251% + this 4.995% = 9.246% > 6.0% of wallet,51.1570329036214
+474,XRPUSDT,2024-03-06 09:00:00,open_loss_cap,open stop-losses 4.892% + this 4.998% = 9.891% > 6.0% of wallet,50.54996248220141
+476,ETHUSDT,2024-03-17 03:00:00,open_loss_cap,open stop-losses 2.619% + this 4.935% = 7.554% > 6.0% of wallet,50.81881901128621
+499,SOLUSDT,2024-06-12 04:00:00,open_loss_cap,open stop-losses 2.916% + this 4.922% = 7.838% > 6.0% of wallet,44.417914206165655
+500,DOGEUSDT,2024-06-12 04:00:00,open_loss_cap,open stop-losses 2.916% + this 4.999% = 7.914% > 6.0% of wallet,44.417914206165655
+509,SOLUSDT,2024-07-12 19:00:00,open_loss_cap,open stop-losses 1.846% + this 4.195% = 6.041% > 6.0% of wallet,49.347652214577806
+516,DOGEUSDT,2024-07-24 04:00:00,open_loss_cap,open stop-losses 5.966% + this 4.765% = 10.731% > 6.0% of wallet,48.9078581962804
+520,BTCUSDT,2024-08-12 13:00:00,open_loss_cap,open stop-losses 4.998% + this 4.120% = 9.118% > 6.0% of wallet,49.314133430530916
+525,ETHUSDT,2024-08-19 03:00:00,open_loss_cap,open stop-losses 3.159% + this 3.346% = 6.505% > 6.0% of wallet,44.53486024300849
+529,SOLUSDT,2024-08-21 07:00:00,open_loss_cap,open stop-losses 4.983% + this 2.044% = 7.027% > 6.0% of wallet,44.98591603952235
+531,BNBUSDT,2024-08-28 11:00:00,open_loss_cap,open stop-losses 4.997% + this 3.419% = 8.416% > 6.0% of wallet,45.11932427441373
+532,DOGEUSDT,2024-08-28 11:00:00,open_loss_cap,open stop-losses 4.997% + this 4.999% = 9.996% > 6.0% of wallet,45.11932427441373
+546,XRPUSDT,2024-10-01 09:00:00,open_loss_cap,open stop-losses 4.460% + this 3.414% = 7.873% > 6.0% of wallet,45.01758757596833
+553,SOLUSDT,2024-10-26 10:00:00,open_loss_cap,open stop-losses 4.073% + this 3.376% = 7.449% > 6.0% of wallet,38.962056873207956
+555,DOGEUSDT,2024-11-01 15:00:00,open_loss_cap,open stop-losses 3.495% + this 4.994% = 8.490% > 6.0% of wallet,37.398753423555064
+557,SOLUSDT,2024-11-05 06:00:00,open_loss_cap,open stop-losses 3.106% + this 2.998% = 6.104% > 6.0% of wallet,36.1057374794336
+558,BTCUSDT,2024-11-15 11:00:00,qty_zero,target notional 87.460559 / 89405.7 floors to 0 at step 0.001,34.98422354597118
+561,BTCUSDT,2024-12-06 16:00:00,qty_zero,target notional 82.844122 / 99358.5 floors to 0 at step 0.001,33.137648614767876
+565,SOLUSDT,2024-12-19 07:00:00,open_loss_cap,open stop-losses 2.138% + this 4.388% = 6.527% > 6.0% of wallet,34.91720487144866
+566,BTCUSDT,2024-12-19 09:00:00,qty_zero,target notional 87.293012 / 101613.0 floors to 0 at step 0.001,34.91720487144866
+567,XRPUSDT,2024-12-19 11:00:00,open_loss_cap,open stop-losses 2.138% + this 4.987% = 7.126% > 6.0% of wallet,34.91720487144866
+568,DOGEUSDT,2024-12-19 12:00:00,open_loss_cap,open stop-losses 2.138% + this 4.999% = 7.137% > 6.0% of wallet,34.91720487144866
+570,BTCUSDT,2024-12-30 03:00:00,qty_zero,target notional 83.198665 / 93869.7 floors to 0 at step 0.001,33.27946598652629
+572,XRPUSDT,2024-12-31 10:00:00,open_loss_cap,open stop-losses 2.457% + this 4.996% = 7.453% > 6.0% of wallet,33.27946598652629
+575,BNBUSDT,2025-01-20 04:00:00,open_loss_cap,open stop-losses 4.873% + this 4.228% = 9.100% > 6.0% of wallet,34.029077969377305
+577,SOLUSDT,2025-01-20 09:00:00,open_loss_cap,open stop-losses 4.970% + this 4.674% = 9.644% > 6.0% of wallet,36.68116466937731
+578,BTCUSDT,2025-01-20 20:00:00,qty_zero,target notional 87.155661 / 103674.3 floors to 0 at step 0.001,34.862264222020166
+580,BTCUSDT,2025-01-21 12:00:00,qty_zero,target notional 87.155661 / 103725.0 floors to 0 at step 0.001,34.862264222020166
+581,SOLUSDT,2025-01-21 12:00:00,open_loss_cap,open stop-losses 4.743% + this 3.601% = 8.343% > 6.0% of wallet,34.862264222020166
+582,DOGEUSDT,2025-01-21 14:00:00,open_loss_cap,open stop-losses 4.743% + this 4.453% = 9.196% > 6.0% of wallet,34.862264222020166
+586,SOLUSDT,2025-01-25 19:00:00,open_loss_cap,open stop-losses 4.154% + this 4.901% = 9.055% > 6.0% of wallet,33.31400697330103
+589,SOLUSDT,2025-01-29 08:00:00,open_loss_cap,open stop-losses 5.978% + this 4.383% = 10.362% > 6.0% of wallet,32.72036202067303
+591,DOGEUSDT,2025-02-06 05:00:00,open_loss_cap,open stop-losses 2.629% + this 4.113% = 6.742% > 6.0% of wallet,30.797216253338963
+592,XRPUSDT,2025-02-06 05:00:00,open_loss_cap,open stop-losses 2.629% + this 4.201% = 6.830% > 6.0% of wallet,30.797216253338963
+596,ETHUSDT,2025-02-22 11:00:00,open_loss_cap,open stop-losses 3.389% + this 4.530% = 7.920% > 6.0% of wallet,29.86749397582502
+600,BTCUSDT,2025-02-28 20:00:00,qty_zero,target notional 68.874998 / 84393.3 floors to 0 at step 0.001,27.549999011529497
+602,BNBUSDT,2025-03-04 20:00:00,open_loss_cap,open stop-losses 4.965% + this 4.600% = 9.565% > 6.0% of wallet,27.549999011529497
+603,ETHUSDT,2025-03-04 20:00:00,open_loss_cap,open stop-losses 4.965% + this 4.774% = 9.738% > 6.0% of wallet,27.549999011529497
+605,SOLUSDT,2025-03-07 16:00:00,open_loss_cap,open stop-losses 4.265% + this 4.728% = 8.993% > 6.0% of wallet,27.109410278872097
+606,BTCUSDT,2025-03-11 04:00:00,qty_zero,target notional 64.893619 / 79486.7 floors to 0 at step 0.001,25.957447763602097
+608,BNBUSDT,2025-03-11 07:00:00,open_loss_cap,open stop-losses 4.976% + this 2.925% = 7.901% > 6.0% of wallet,25.957447763602097
+609,ETHUSDT,2025-03-11 11:00:00,open_loss_cap,open stop-losses 4.976% + this 2.959% = 7.935% > 6.0% of wallet,25.957447763602097
+610,DOGEUSDT,2025-03-11 11:00:00,open_loss_cap,open stop-losses 4.976% + this 4.379% = 9.355% > 6.0% of wallet,25.957447763602097
+616,XRPUSDT,2025-04-09 09:00:00,open_loss_cap,open stop-losses 4.590% + this 4.799% = 9.390% > 6.0% of wallet,29.405922068368422
+617,SOLUSDT,2025-04-09 09:00:00,open_loss_cap,open stop-losses 4.590% + this 4.954% = 9.544% > 6.0% of wallet,29.405922068368422
+618,ETHUSDT,2025-04-09 09:00:00,open_loss_cap,open stop-losses 4.590% + this 4.942% = 9.532% > 6.0% of wallet,29.405922068368422
+619,BTCUSDT,2025-04-11 03:00:00,qty_zero,target notional 70.169518 / 80254.1 floors to 0 at step 0.001,28.06780732084712
+621,BTCUSDT,2025-04-16 17:00:00,qty_zero,target notional 74.256607 / 85000.0 floors to 0 at step 0.001,29.702642765505125
+623,XRPUSDT,2025-04-18 09:00:00,open_loss_cap,open stop-losses 2.994% + this 3.465% = 6.459% > 6.0% of wallet,29.702642765505125
+630,ETHUSDT,2025-05-05 09:00:00,open_loss_cap,open stop-losses 4.631% + this 2.217% = 6.848% > 6.0% of wallet,30.848751430051486
+631,BTCUSDT,2025-05-13 11:00:00,qty_zero,target notional 73.606463 / 103516.8 floors to 0 at step 0.001,29.44258533842641
+633,DOGEUSDT,2025-05-13 17:00:00,open_loss_cap,open stop-losses 3.275% + this 4.971% = 8.246% > 6.0% of wallet,29.44258533842641
+635,BTCUSDT,2025-05-25 04:00:00,qty_zero,target notional 77.153481 / 108045.4 floors to 0 at step 0.001,30.861392245379253
+640,SOLUSDT,2025-06-06 04:00:00,open_loss_cap,open stop-losses 3.240% + this 3.741% = 6.981% > 6.0% of wallet,32.63025118737925
+641,BNBUSDT,2025-06-06 04:00:00,open_loss_cap,open stop-losses 3.240% + this 3.729% = 6.968% > 6.0% of wallet,32.63025118737925
+642,DOGEUSDT,2025-06-06 04:00:00,open_loss_cap,open stop-losses 3.240% + this 4.986% = 8.226% > 6.0% of wallet,32.63025118737925
+643,ETHUSDT,2025-06-06 15:00:00,open_loss_cap,open stop-losses 3.240% + this 4.982% = 8.221% > 6.0% of wallet,32.63025118737925
+649,BNBUSDT,2025-07-19 04:00:00,open_loss_cap,open stop-losses 4.909% + this 4.615% = 9.525% > 6.0% of wallet,34.20107931254586
+657,DOGEUSDT,2025-08-12 16:00:00,open_loss_cap,open stop-losses 4.141% + this 4.997% = 9.137% > 6.0% of wallet,31.896857220062685
+660,ETHUSDT,2025-08-20 06:00:00,open_loss_cap,open stop-losses 5.028% + this 3.167% = 8.195% > 6.0% of wallet,33.39427874006268
+665,BTCUSDT,2025-08-26 20:00:00,qty_zero,target notional 83.468040 / 111053.5 floors to 0 at step 0.001,33.38721586050012
+675,XRPUSDT,2025-10-08 18:00:00,open_loss_cap,open stop-losses 4.735% + this 4.993% = 9.727% > 6.0% of wallet,34.771724729067316
+676,ETHUSDT,2025-10-08 19:00:00,open_loss_cap,open stop-losses 4.735% + this 2.501% = 7.235% > 6.0% of wallet,34.771724729067316
+678,SOLUSDT,2025-10-12 07:00:00,open_loss_cap,open stop-losses 4.618% + this 4.993% = 9.611% > 6.0% of wallet,35.58074068440162
+679,DOGEUSDT,2025-10-12 08:00:00,open_loss_cap,open stop-losses 4.618% + this 3.173% = 7.791% > 6.0% of wallet,35.58074068440162
+680,BTCUSDT,2025-10-16 03:00:00,qty_zero,target notional 97.049515 / 111464.2 floors to 0 at step 0.001,38.81980592904323
+690,BTCUSDT,2025-11-05 03:00:00,qty_zero,target notional 54.239328 / 101633.8 floors to 0 at step 0.001,32.290245378733495
+693,XRPUSDT,2025-11-09 08:00:00,open_loss_cap,open stop-losses 2.949% + this 3.699% = 6.647% > 6.0% of wallet,33.554436580273496
+697,BTCUSDT,2025-11-12 10:00:00,qty_zero,target notional 88.241580 / 104475.4 floors to 0 at step 0.001,35.29663205507526
+698,ETHUSDT,2025-11-12 10:00:00,open_loss_cap,open stop-losses 2.166% + this 4.602% = 6.768% > 6.0% of wallet,35.29663205507526
+699,SOLUSDT,2025-11-12 10:00:00,open_loss_cap,open stop-losses 2.166% + this 4.942% = 7.108% > 6.0% of wallet,35.29663205507526
+703,DOGEUSDT,2025-11-18 10:00:00,open_loss_cap,open stop-losses 3.768% + this 4.633% = 8.401% > 6.0% of wallet,32.11593232122317
+707,DOGEUSDT,2025-12-16 12:00:00,open_loss_cap,open stop-losses 2.798% + this 4.997% = 7.795% > 6.0% of wallet,35.43528854344378
+710,SOLUSDT,2025-12-19 05:00:00,open_loss_cap,open stop-losses 4.995% + this 4.914% = 9.909% > 6.0% of wallet,32.746327744013186
+719,ETHUSDT,2026-02-06 15:00:00,open_loss_cap,open stop-losses 2.787% + this 4.861% = 7.649% > 6.0% of wallet,28.14910009864914
+720,SOLUSDT,2026-02-06 15:00:00,open_loss_cap,open stop-losses 2.787% + this 4.897% = 7.684% > 6.0% of wallet,28.14910009864914
+724,BNBUSDT,2026-02-16 22:00:00,open_loss_cap,open stop-losses 4.150% + this 4.712% = 8.862% > 6.0% of wallet,31.056964307313816
+726,XRPUSDT,2026-02-23 11:00:00,open_loss_cap,open stop-losses 4.966% + this 5.000% = 9.965% > 6.0% of wallet,30.90712405114581
+729,SOLUSDT,2026-02-27 03:00:00,open_loss_cap,open stop-losses 4.520% + this 4.338% = 8.858% > 6.0% of wallet,29.375420271344694
+730,ETHUSDT,2026-02-27 04:00:00,open_loss_cap,open stop-losses 4.520% + this 3.843% = 8.363% > 6.0% of wallet,29.375420271344694
+731,DOGEUSDT,2026-02-27 05:00:00,open_loss_cap,open stop-losses 4.520% + this 4.998% = 9.518% > 6.0% of wallet,29.375420271344694
+734,ETHUSDT,2026-03-06 03:00:00,open_loss_cap,open stop-losses 4.936% + this 3.307% = 8.243% > 6.0% of wallet,28.08234482826021
+735,BTCUSDT,2026-03-08 10:00:00,qty_zero,target notional 66.796094 / 67663.0 floors to 0 at step 0.001,26.71843770639575
+736,BTCUSDT,2026-03-09 05:00:00,qty_zero,target notional 66.796094 / 67100.3 floors to 0 at step 0.001,26.71843770639575
+744,DOGEUSDT,2026-03-31 03:00:00,open_loss_cap,open stop-losses 5.329% + this 3.814% = 9.144% > 6.0% of wallet,23.602174853033755
+749,SOLUSDT,2026-04-15 20:00:00,open_loss_cap,open stop-losses 2.737% + this 3.339% = 6.076% > 6.0% of wallet,21.95255762678392
+751,BTCUSDT,2026-04-20 08:00:00,qty_zero,target notional 54.261704 / 74795.5 floors to 0 at step 0.001,21.70468161615366
+753,BTCUSDT,2026-05-08 12:00:00,qty_zero,target notional 56.154285 / 80181.8 floors to 0 at step 0.001,22.46171380558666
+759,BTCUSDT,2026-05-23 22:00:00,qty_zero,target notional 63.409452 / 76778.0 floors to 0 at step 0.001,25.363780925163553
+770,BTCUSDT,2026-08-31 07:00:00,qty_zero,target notional 49.843374 / 78049.3 floors to 0 at step 0.001,19.937349683137043
+773,XRPUSDT,2026-08-31 19:00:00,open_loss_cap,open stop-losses 5.635% + this 3.251% = 8.886% > 6.0% of wallet,19.937349683137043

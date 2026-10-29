@@ -1,0 +1,133 @@
+{
+ "spec": "H61",
+ "runtime_s": 709.2128870487213,
+ "rss_mb": 1460.3671875,
+ "groups": {
+  "six": {
+   "role": "primary",
+   "seed": 89,
+   "q": 0.0006756756756756757,
+   "n_coins": 6,
+   "n_nodata": 0,
+   "trades": 747,
+   "raw": 779,
+   "s1": {
+    "S1-0": {
+     "met": true,
+     "value": "trades 747 >= 300 and months 69 >= 12"
+    },
+    "S1-1": {
+     "met": false,
+     "value": -0.07857442421205928
+    },
+    "S1-2": {
+     "met": false,
+     "value": -0.24388647780534467
+    },
+    "S1-3": {
+     "met": false,
+     "value": -0.18910884412503848
+    },
+    "S1-4": {
+     "met": false,
+     "value": [
+      -0.04429160034309319,
+      -0.1127655827765629,
+      373,
+      374
+     ]
+    },
+    "S1-5": {
+     "met": false,
+     "value": 0.7833800514755332
+    },
+    "S1-6": {
+     "met": false,
+     "value": [
+      -0.21697930934658163,
+      38
+     ]
+    },
+    "S1-Y": {
+     "met": true,
+     "value": [
+      NaN,
+      "2023"
+     ]
+    }
+   },
+   "thresholds": {
+    "trades": 747,
+    "trades_ge_100": true,
+    "mean_r": -0.07857442421205928,
+    "mean_r_gt0": false,
+    "mean_r_2x_cost": -0.18910884412503848,
+    "mean_r_2x_cost_gt0": false
+   },
+   "excl_share": 0.00966183574879227
+  },
+  "new": {
+   "role": "aux",
+   "seed": 89,
+   "q": 0.0006756756756756757,
+   "n_coins": 197,
+   "n_nodata": 0,
+   "trades": 3138,
+   "raw": 5396,
+   "s1": {
+    "S1-0": {
+     "met": true,
+     "value": "trades 3138 >= 100 and months 69 >= 12"
+    },
+    "S1-1": {
+     "met": false,
+     "value": -0.092082485234624
+    },
+    "S1-2": {
+     "met": false,
+     "value": -0.18137249578658174
+    },
+    "S1-3": {
+     "met": false,
+     "value": -0.1900101927883169
+    },
+    "S1-4": {
+     "met": false,
+     "value": [
+      -0.09273689795584547,
+      -0.09142807251340251,
+      1569,
+      1569
+     ]
+    },
+    "S1-5": {
+     "met": false,
+     "value": 0.9997426374195225
+    },
+    "S1-6": {
+     "met": false,
+     "value": [
+      -0.2553705529820495,
+      157
+     ]
+    },
+    "S1-Y": {
+     "met": true,
+     "value": [
+      NaN,
+      "2021"
+     ]
+    }
+   },
+   "thresholds": {
+    "trades": 3138,
+    "trades_ge_100": true,
+    "mean_r": -0.092082485234624,
+    "mean_r_gt0": false,
+    "mean_r_2x_cost": -0.1900101927883169,
+    "mean_r_2x_cost_gt0": false
+   },
+   "excl_share": 0.000888494002665482
+  }
+ }
+}

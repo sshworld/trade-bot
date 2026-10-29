@@ -1,0 +1,13 @@
+{
+ "spec": "H62",
+ "started": "2026-10-29T11:10:19.678328+09:00",
+ "git": {
+  "head": "714a1e348888bb91cedf2db07fd8baec73151d99",
+  "branch": "h48-screen",
+  "dirty": false
+ },
+ "seeds": {
+  "H62-six": 90,
+  "H62-new": 90
+ }
+}

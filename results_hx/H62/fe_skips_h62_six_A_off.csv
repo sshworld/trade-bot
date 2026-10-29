@@ -1,0 +1,104 @@
+idx,sym,entry_time,reason,detail,wallet
+18,ETHUSDT,2021-02-04 16:00:00,open_loss_cap,open stop-losses 3.517% + this 4.220% = 7.737% > 6.0% of wallet,120.048308917501
+28,SOLUSDT,2021-02-23 10:00:00,stop_vs_liq,stop 7.2425% > 0.7 x (1/10 - mmr 0.005) = 6.6500% of entry,102.80432092756588
+77,ETHUSDT,2021-05-25 12:00:00,stop_vs_liq,stop 7.5012% > 0.7 x (1/10 - mmr 0.004) = 6.7200% of entry,99.57155013511054
+80,BNBUSDT,2021-06-01 03:00:00,open_loss_cap,open stop-losses 5.840% + this 4.244% = 10.084% > 6.0% of wallet,94.626497560756
+95,DOGEUSDT,2021-06-27 11:00:00,open_loss_cap,open stop-losses 4.417% + this 2.361% = 6.777% > 6.0% of wallet,94.35423832933402
+116,XRPUSDT,2021-07-30 13:00:00,open_loss_cap,open stop-losses 4.853% + this 1.211% = 6.064% > 6.0% of wallet,79.54108967265259
+120,BTCUSDT,2021-08-05 08:00:00,below_min_notional,qty 0.001 x 38889.07 = 38.8891 < minNotional 50,73.38115891134879
+127,BTCUSDT,2021-08-14 12:00:00,below_min_notional,qty 0.001 x 46579.99 = 46.5800 < minNotional 50,70.86600170564233
+129,BTCUSDT,2021-08-20 09:00:00,below_min_notional,qty 0.001 x 46933.45 = 46.9335 < minNotional 50,68.44107936822823
+135,SOLUSDT,2021-08-31 22:00:00,stop_vs_liq,stop 7.7574% > 0.7 x (1/10 - mmr 0.005) = 6.6500% of entry,74.55978301762957
+139,BTCUSDT,2021-09-15 05:00:00,below_min_notional,qty 0.001 x 46867.81 = 46.8678 < minNotional 50,71.60054338294673
+141,BTCUSDT,2021-09-24 05:00:00,below_min_notional,qty 0.001 x 44256.55 = 44.2565 < minNotional 50,74.26431459751272
+142,BTCUSDT,2021-09-27 08:00:00,below_min_notional,qty 0.001 x 43662.7 = 43.6627 < minNotional 50,74.26431459751272
+151,DOGEUSDT,2021-10-05 03:00:00,max_positions,3 positions open (max 3),77.70291309276492
+193,BTCUSDT,2022-01-02 03:00:00,below_min_notional,qty 0.001 x 47374.29 = 47.3743 < minNotional 50,68.72412396330745
+199,BTCUSDT,2022-01-28 10:00:00,below_min_notional,qty 0.001 x 36473.3 = 36.4733 < minNotional 50,66.66161873574956
+208,BTCUSDT,2022-02-26 07:00:00,below_min_notional,qty 0.001 x 39124.0 = 39.1240 < minNotional 50,65.44940568047527
+210,BTCUSDT,2022-03-02 08:00:00,below_min_notional,qty 0.001 x 43962.8 = 43.9628 < minNotional 50,63.73296047878057
+216,BTCUSDT,2022-04-02 20:00:00,below_min_notional,qty 0.001 x 46099.1 = 46.0991 < minNotional 50,63.78325910674769
+219,BTCUSDT,2022-04-14 12:00:00,below_min_notional,qty 0.001 x 40913.5 = 40.9135 < minNotional 50,64.97268287474769
+229,XRPUSDT,2022-05-16 06:00:00,max_positions,3 positions open (max 3),66.69552810514094
+230,SOLUSDT,2022-05-16 06:00:00,max_positions,3 positions open (max 3),66.69552810514094
+247,BTCUSDT,2022-06-08 05:00:00,max_positions,3 positions open (max 3),67.01036987932751
+248,BTCUSDT,2022-06-16 07:00:00,below_min_notional,qty 0.002 x 21788.4 = 43.5768 < minNotional 50,64.86001538880389
+251,BNBUSDT,2022-06-16 12:00:00,open_loss_cap,open stop-losses 5.007% + this 1.904% = 6.911% > 6.0% of wallet,64.86001538880389
+252,DOGEUSDT,2022-06-16 15:00:00,open_loss_cap,open stop-losses 5.007% + this 4.998% = 10.005% > 6.0% of wallet,64.86001538880389
+267,SOLUSDT,2022-07-05 10:00:00,open_loss_cap,open stop-losses 2.549% + this 4.390% = 6.939% > 6.0% of wallet,55.34665296550319
+269,BTCUSDT,2022-07-07 07:00:00,below_min_notional,qty 0.002 x 20332.2 = 40.6644 < minNotional 50,54.014727171115474
+274,ETHUSDT,2022-07-14 10:00:00,max_positions,3 positions open (max 3),52.645069452778586
+275,BTCUSDT,2022-07-14 10:00:00,max_positions,3 positions open (max 3),52.645069452778586
+276,BTCUSDT,2022-07-17 03:00:00,below_min_notional,qty 0.002 x 21154.2 = 42.3084 < minNotional 50,50.2594465767774
+285,BTCUSDT,2022-07-29 13:00:00,below_min_notional,qty 0.002 x 23513.9 = 47.0278 < minNotional 50,47.31474853959971
+287,SOLUSDT,2022-07-29 13:00:00,open_loss_cap,open stop-losses 3.185% + this 4.181% = 7.366% > 6.0% of wallet,47.31474853959971
+299,BTCUSDT,2022-09-05 03:00:00,below_min_notional,qty 0.002 x 19842.1 = 39.6842 < minNotional 50,44.32977264030372
+305,BTCUSDT,2022-09-23 09:00:00,below_min_notional,qty 0.002 x 19061.7 = 38.1234 < minNotional 50,45.46095625409106
+308,BTCUSDT,2022-09-24 08:00:00,below_min_notional,qty 0.002 x 18985.6 = 37.9712 < minNotional 50,43.57562683649961
+317,BTCUSDT,2022-10-14 20:00:00,below_min_notional,qty 0.002 x 19160.1 = 38.3202 < minNotional 50,40.95287381675044
+320,BTCUSDT,2022-10-24 03:00:00,below_min_notional,qty 0.002 x 19406.2 = 38.8124 < minNotional 50,40.28991457760843
+326,BTCUSDT,2022-11-11 03:00:00,below_min_notional,qty 0.002 x 17194.3 = 34.3886 < minNotional 50,39.171135765347906
+328,XRPUSDT,2022-11-11 03:00:00,open_loss_cap,open stop-losses 4.238% + this 4.523% = 8.761% > 6.0% of wallet,39.171135765347906
+329,ETHUSDT,2022-11-11 03:00:00,open_loss_cap,open stop-losses 4.238% + this 4.893% = 9.131% > 6.0% of wallet,39.171135765347906
+330,SOLUSDT,2022-11-11 05:00:00,open_loss_cap,open stop-losses 4.238% + this 3.806% = 8.044% > 6.0% of wallet,39.171135765347906
+337,BTCUSDT,2022-12-01 17:00:00,below_min_notional,qty 0.002 x 16974.5 = 33.9490 < minNotional 50,38.58107513274236
+340,BTCUSDT,2022-12-09 15:00:00,below_min_notional,qty 0.002 x 17146.9 = 34.2938 < minNotional 50,38.802689326170636
+352,BTCUSDT,2023-01-24 11:00:00,below_min_notional,qty 0.001 x 22897.0 = 22.8970 < minNotional 50,36.5539289976935
+358,BTCUSDT,2023-01-30 09:00:00,below_min_notional,qty 0.001 x 23554.2 = 23.5542 < minNotional 50,36.26646960868467
+374,BTCUSDT,2023-03-12 03:00:00,below_min_notional,qty 0.001 x 20367.7 = 20.3677 < minNotional 50,36.02885528026379
+383,SOLUSDT,2023-05-04 16:00:00,max_positions,3 positions open (max 3),38.046355136132185
+386,BTCUSDT,2023-05-06 04:00:00,below_min_notional,qty 0.001 x 29360.0 = 29.3600 < minNotional 50,37.43074906742295
+392,BTCUSDT,2023-05-18 17:00:00,below_min_notional,qty 0.001 x 27060.1 = 27.0601 < minNotional 50,40.73695589537221
+395,BTCUSDT,2023-05-29 17:00:00,below_min_notional,qty 0.001 x 27593.6 = 27.5936 < minNotional 50,40.86261575150363
+396,BTCUSDT,2023-06-07 11:00:00,below_min_notional,qty 0.001 x 26582.9 = 26.5829 < minNotional 50,40.86261575150363
+400,BTCUSDT,2023-06-22 16:00:00,below_min_notional,qty 0.001 x 29837.3 = 29.8373 < minNotional 50,39.612739231521374
+403,BTCUSDT,2023-07-04 06:00:00,below_min_notional,qty 0.001 x 30958.9 = 30.9589 < minNotional 50,38.668504168565555
+411,BTCUSDT,2023-08-02 18:00:00,below_min_notional,qty 0.001 x 29137.5 = 29.1375 < minNotional 50,41.761312548706805
+415,BTCUSDT,2023-08-24 03:00:00,below_min_notional,qty 0.001 x 26364.0 = 26.3640 < minNotional 50,40.709133460557865
+419,BTCUSDT,2023-09-08 10:00:00,below_min_notional,qty 0.001 x 26032.2 = 26.0322 < minNotional 50,40.93437728166266
+429,BTCUSDT,2023-11-02 15:00:00,below_min_notional,qty 0.001 x 34933.9 = 34.9339 < minNotional 50,40.213058514181334
+431,BTCUSDT,2023-11-05 15:00:00,below_min_notional,qty 0.001 x 34902.9 = 34.9029 < minNotional 50,40.48215765218133
+441,BTCUSDT,2023-12-09 10:00:00,qty_zero,target notional 38.776751 / 43865.6 floors to 0 at step 0.001,38.77675071303744
+449,BTCUSDT,2024-01-11 06:00:00,qty_zero,target notional 37.391683 / 46074.0 floors to 0 at step 0.001,37.39168259360921
+456,BTCUSDT,2024-02-02 15:00:00,qty_zero,target notional 34.995475 / 42787.8 floors to 0 at step 0.001,34.995475476475455
+461,BTCUSDT,2024-02-15 07:00:00,qty_zero,target notional 32.865139 / 52003.7 floors to 0 at step 0.001,32.865138534055106
+471,BTCUSDT,2024-03-05 06:00:00,qty_zero,target notional 32.952945 / 67062.4 floors to 0 at step 0.001,32.952944616329866
+476,BTCUSDT,2024-03-16 11:00:00,qty_zero,target notional 32.053052 / 68471.3 floors to 0 at step 0.001,32.053051553036724
+485,BTCUSDT,2024-04-17 09:00:00,qty_zero,target notional 35.892179 / 63304.2 floors to 0 at step 0.001,35.892179317167525
+486,BTCUSDT,2024-04-23 04:00:00,qty_zero,target notional 35.892179 / 66410.0 floors to 0 at step 0.001,35.892179317167525
+506,BTCUSDT,2024-07-17 12:00:00,qty_zero,target notional 41.356798 / 64699.9 floors to 0 at step 0.001,41.356798348146306
+508,BTCUSDT,2024-07-22 07:00:00,qty_zero,target notional 41.754298 / 67382.1 floors to 0 at step 0.001,41.75429774814631
+516,BTCUSDT,2024-08-13 04:00:00,qty_zero,target notional 39.807546 / 59014.0 floors to 0 at step 0.001,39.807546002204404
+520,BTCUSDT,2024-08-22 04:00:00,qty_zero,target notional 39.975312 / 60515.0 floors to 0 at step 0.001,39.97531207992121
+524,BTCUSDT,2024-09-05 04:00:00,qty_zero,target notional 38.709922 / 57104.1 floors to 0 at step 0.001,38.70992186669738
+532,XRPUSDT,2024-10-05 04:00:00,max_positions,3 positions open (max 3),38.50074912853065
+537,BTCUSDT,2024-10-24 10:00:00,qty_zero,target notional 38.314416 / 66867.3 floors to 0 at step 0.001,38.31441631375067
+540,BTCUSDT,2024-11-07 04:00:00,qty_zero,target notional 38.883841 / 75062.8 floors to 0 at step 0.001,38.8838414169463
+544,BTCUSDT,2024-11-12 14:00:00,qty_zero,target notional 37.443049 / 86418.6 floors to 0 at step 0.001,37.443048640135544
+545,DOGEUSDT,2024-11-13 03:00:00,stop_vs_liq,stop 7.0932% > 0.7 x (1/10 - mmr 0.0065) = 6.5450% of entry,37.844221215393944
+554,BTCUSDT,2024-12-14 19:00:00,qty_zero,target notional 37.700179 / 100869.2 floors to 0 at step 0.001,37.700178940742965
+557,SOLUSDT,2024-12-21 14:00:00,open_loss_cap,open stop-losses 2.019% + this 4.374% = 6.393% > 6.0% of wallet,37.33482767221345
+562,BTCUSDT,2025-01-16 10:00:00,qty_zero,target notional 35.615842 / 99106.1 floors to 0 at step 0.001,35.615841698369834
+574,BTCUSDT,2025-02-13 06:00:00,qty_zero,target notional 36.287496 / 96628.8 floors to 0 at step 0.001,36.28749582709924
+578,BNBUSDT,2025-02-13 18:00:00,max_positions,3 positions open (max 3),36.28749582709924
+582,SOLUSDT,2025-03-03 05:00:00,open_loss_cap,open stop-losses 5.495% + this 1.768% = 7.263% > 6.0% of wallet,34.483680581576145
+586,BTCUSDT,2025-03-13 09:00:00,qty_zero,target notional 43.384714 / 82932.5 floors to 0 at step 0.001,43.384713932147996
+587,BTCUSDT,2025-03-18 03:00:00,qty_zero,target notional 42.306454 / 83325.3 floors to 0 at step 0.001,42.30645447369499
+597,BTCUSDT,2025-04-10 17:00:00,qty_zero,target notional 41.589746 / 79406.0 floors to 0 at step 0.001,41.58974590293457
+598,DOGEUSDT,2025-04-10 17:00:00,open_loss_cap,open stop-losses 4.386% + this 3.200% = 7.586% > 6.0% of wallet,41.58974590293457
+605,BTCUSDT,2025-04-25 04:00:00,qty_zero,target notional 46.307754 / 93262.9 floors to 0 at step 0.001,46.30775369308565
+615,BTCUSDT,2025-05-20 14:00:00,qty_zero,target notional 45.648768 / 104395.5 floors to 0 at step 0.001,45.648768360773445
+630,BTCUSDT,2025-07-16 03:00:00,qty_zero,target notional 42.154979 / 117335.0 floors to 0 at step 0.001,42.15497896371208
+653,DOGEUSDT,2025-08-21 13:00:00,max_positions,3 positions open (max 3),37.95250858649627
+671,BTCUSDT,2025-11-08 13:00:00,qty_zero,target notional 41.027522 / 102011.6 floors to 0 at step 0.001,41.02752220541005
+677,BTCUSDT,2025-11-19 05:00:00,qty_zero,target notional 38.946851 / 91120.4 floors to 0 at step 0.001,38.94685145499977
+695,BTCUSDT,2026-01-31 09:00:00,qty_zero,target notional 37.306975 / 83031.1 floors to 0 at step 0.001,37.306975394205146
+701,BTCUSDT,2026-02-07 11:00:00,qty_zero,target notional 37.140458 / 67954.8 floors to 0 at step 0.001,37.14045756438831
+711,BTCUSDT,2026-03-17 06:00:00,qty_zero,target notional 36.332464 / 73996.0 floors to 0 at step 0.001,36.33246399082428
+716,SOLUSDT,2026-04-01 03:00:00,max_positions,3 positions open (max 3),35.70812486878485
+717,ETHUSDT,2026-04-01 03:00:00,max_positions,3 positions open (max 3),35.70812486878485
+718,BTCUSDT,2026-04-16 09:00:00,qty_zero,target notional 34.588903 / 74634.2 floors to 0 at step 0.001,34.58890294447684
+735,SOLUSDT,2026-05-29 04:00:00,max_positions,3 positions open (max 3),33.802433214256446
+739,SOLUSDT,2026-06-08 06:00:00,max_positions,3 positions open (max 3),32.58338734174712
+748,BTCUSDT,2026-07-07 03:00:00,qty_zero,target notional 31.616117 / 63298.2 floors to 0 at step 0.001,31.616116888051895
+755,BTCUSDT,2026-09-19 03:00:00,qty_zero,target notional 30.109278 / 81265.3 floors to 0 at step 0.001,30.10927837095485
