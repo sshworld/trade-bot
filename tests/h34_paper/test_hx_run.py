@@ -173,7 +173,59 @@ def test_overlap_h7t():
 def test_fe2_group_writes_candidate_ledger(tmp_path, monkeypatch):
     monkeypatch.setattr(R, "preflight", lambda *a, **k: [])
     res = R.run_session(["H61"], tmp_path, git=CLEAN, universe=UNIV, loader=loader, ctx_builder=lambda s: {}, gens={"H61": fake_gen}, log=lambda *_: None,
-                        apply_sizing=lambda spec, grp, df: dict(rows=len(df)))
+                        apply_sizing=lambda spec, grp, df, b: dict(rows=len(df), seed=b['seed']))
     assert (tmp_path / "H61" / "fe_candidate_ledger_h61_new.csv").exists()
-    assert res["H61"]["groups"]["new"]["sizing"] == dict(rows=6)
+    assert res["H61"]["groups"]["new"]["sizing"] == dict(rows=6, seed=89)
     assert "FE sizing output" in (tmp_path / "H61" / "H61_screen_result.md").read_text()
+
+
+def test_fullentry_answers_lock_is_checked_for_fe2_specs():
+    for sp in ("H61", "H62", "H63", "H64", "H65", "H66", "H67", "H68", "H69", "H70", "H71"):
+        assert ("answers-fullentry-R1-R10-C1-C6-2026-10-29.md", "b9c172688fee") in R.REGISTRY[sp]["locks"]
+    assert R.check_files("H61") == []
+
+
+def test_candidate_ledger_has_R_column_equal_to_unit_over_stop_plus_fee():
+    raws = fake_gen(FakeCoin("AAAUSDT"), {})[0]
+    df = R.fe_ledger(raws)
+    assert R.LEDGER_COLS[-1] == "R" and "R" in df
+    assert df.R.tolist() == pytest.approx((df.unit / (df.stop_dist + 0.0017)).tolist())
+
+
+def test_default_sizing_hook_is_available_and_sizing_ready():
+    assert R.sizing_ready()
+    assert callable(R.default_apply_sizing)
+
+
+def test_fe2_sizing_dict_is_rendered_as_tables(tmp_path, monkeypatch):
+    from h34_paper import hx_sizing as Z
+    monkeypatch.setattr(R, "preflight", lambda *a, **k: [])
+    z = dict(spec="H61", group="new", n_candidates_total=0, seed=89, n_cand=74, min_stop_dist=0.006, sims={}, rows={}, no_exchange_info={}, variants=(), gate={}, gate_detail={},
+             rp_applies={}, candidate_R={}, note="no candidate trades: nothing to size", variant_c_note="")
+    res = R.run_session(["H61"], tmp_path, git=CLEAN, universe=UNIV, loader=loader, ctx_builder=lambda s: {}, gens={"H61": fake_gen}, log=lambda *_: None,
+                        apply_sizing=lambda spec, grp, df, b: z)
+    assert "no candidate trades: nothing to size" in (tmp_path / "H61" / "H61_screen_result.md").read_text()
+
+
+def test_default_rules_loader_six_from_file_new_from_exchangeinfo():
+    if not R.EXCHANGE_INFO.exists():
+        pytest.skip("no snapshot")
+    rules, br = R.default_rules_loader(["BTCUSDT", "1000BONKUSDT", "EOSUSDT"])
+    assert str(rules["BTCUSDT"].min_notional) == "50" and "1000BONKUSDT" in rules and "EOSUSDT" not in rules
+    assert set(rules) <= set(br)
+
+
+def test_candidate_list_stats_hold_and_annual_n():
+    d = 86_400_000
+    led = [dict(entry_ms=T0, exit_ms=T0 + 2 * 3_600_000), dict(entry_ms=T0 + 100 * d, exit_ms=T0 + 100 * d + 4 * 3_600_000), dict(entry_ms=T0 + 200 * d, exit_ms=T0 + 200 * d + 3 * 3_600_000)]
+    c = R.candidate_list_stats(led)
+    assert c["n"] == 3 and c["avg_hold_h"] == pytest.approx(3.0)
+    span_days = (200 * d + 3 * 3_600_000) / d
+    assert c["annual_n"] == int(np.floor(3 / (span_days / 365.25) + 0.5))
+    assert R.candidate_list_stats([]) == dict(n=0, avg_hold_h=None, annual_n=0)
+
+
+def test_sizing_meta_is_rendered():
+    from h34_paper import hx_sizing as Z
+    z = dict(min_stop_dist=0.006, note="x", meta=dict(exchangeinfo_sha256="aa", brackets_sha256="bb", sizing_module="m", rules_new_coins="r", ledger_cols=["a"]))
+    assert "exchangeinfo_sha256 aa" in "\n".join(Z.render_sizing(z))

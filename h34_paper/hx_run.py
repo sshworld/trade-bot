@@ -23,6 +23,7 @@ from . import h46 as H
 from . import h46_data as D
 from . import hx_data as X
 from . import stats
+from .hx_sizing import render_sizing, write_sizing_files
 
 SPECS_DIR = Path("/workspace/specs")
 QUANT_DIR = Path("/workspace/quant")
@@ -89,9 +90,10 @@ for nm, sd, mt in (("H56", 82, 100), ("H57", 83, 60), ("H58", 84, 60)):
 for nm, sd, mt in (("H59", 85, 100), ("H60", 86, 60)):
     _reg(nm, [("prereg-lock-h59-h60.md", "85afd19cbaed")], [G("six", sd, "primary", mt, 63)], rule=("hypotheses_h59_h60.md", "17ee5db4e2f1", QUANT_DIR))
 ANSWERS = ("answers-h48plus-questions-2026-10-29.md", "841c34b8dd7f")
+ANSWERS_FE = ("answers-fullentry-R1-R10-C1-C6-2026-10-29.md", "b9c172688fee")
 LOCK_V11 = ("prereg-lock-h67-h68-v1_1.md", "9ddc7ba9403c")
 for k, nm in enumerate(["H61", "H62", "H63", "H64", "H65", "H66", "H67", "H68", "H69", "H70", "H71"]):
-    _reg(nm, [("prereg-lock-h61-h71.md", "91aca63a05f6")] + FE_LOCKS + [ANSWERS] + ([LOCK_V11] if nm in ("H67", "H68") else []), [G("six", 89 + k, "primary", 300, 74), G("new", 89 + k, "aux", 100, 74)],
+    _reg(nm, [("prereg-lock-h61-h71.md", "91aca63a05f6")] + FE_LOCKS + [ANSWERS, ANSWERS_FE] + ([LOCK_V11] if nm in ("H67", "H68") else []), [G("six", 89 + k, "primary", 300, 74), G("new", 89 + k, "aux", 100, 74)],
          frame="fe2", rule=("hypotheses_h61_h71.md", "6623cd2cc42d", QUANT_DIR))
     if nm in ("H67", "H68"):
         REGISTRY[nm]["rule2"] = ("hypotheses_h67_h68_v1_1.md", "29c61c0b8ef9", QUANT_DIR)       # v1.1 replaces the closing-position line only; v1 is void and never run
@@ -161,6 +163,7 @@ def sizing_ready():
     try:
         import importlib
         importlib.import_module("h34_paper.sizing_full")
+        importlib.import_module("h34_paper.hx_sizing")
         return True
     except Exception:
         return False
@@ -209,6 +212,40 @@ def default_universe():
 
 def default_loader(sym, months, group, h16):
     return X.load_coin(sym, months, h16, "orig6" if group == "six" else "new")
+
+
+def default_rules_loader(syms):
+    """(rules, brackets) for the coins that have both. Six coins: the exchangeInfo snapshot file of the TA sizing run (sizing-full); other coins: the research
+    exchangeInfo (v8.EXI, same live SymbolRules parser); a coin missing from either is simply absent (the hook counts it as no_exchange_info)."""
+    from . import sizing_up as S
+    _, _, SymbolRules = S.live_code()
+    v8 = D.research()
+    allbr = S.load_brackets(BRACKETS)
+    six = S.load_rules(EXCHANGE_INFO, SymbolRules)
+    rules = {}
+    for s in syms:
+        if s in six:
+            rules[s] = six[s]
+            continue
+        try:
+            rules[s] = SymbolRules.from_exchange_info(v8.EXI, s)
+        except Exception:
+            pass
+    br = {s: allbr[s] for s in rules if s in allbr}
+    return {s: r for s, r in rules.items() if s in br}, br
+
+
+def default_open_loader(sym):
+    k = D.load_1m(sym)
+    return None if k is None else k["open"]
+
+
+def default_apply_sizing(spec, gname, fe, b):
+    from . import hx_sizing as Z
+    z = Z.apply_fe_sizing(spec, gname, fe, b, rules_loader=default_rules_loader, open_loader=default_open_loader, min_stop_dist=SIZING_MIN_STOP)
+    z["meta"] = dict(exchangeinfo_sha256=sha(EXCHANGE_INFO, 12), brackets_sha256=sha(BRACKETS, 12), rules_new_coins="research exchangeInfo (v8.EXI)",
+                     sizing_module="h34_paper/sizing_full.py (sizing-full 1f1c05e)", ledger_cols=LEDGER_COLS)
+    return z
 
 
 def sum_notes(acc, notes):
@@ -360,6 +397,15 @@ def lock_thresholds(b):
                 mean_r_2x_cost=stats.mean(r30), mean_r_2x_cost_gt0=bool(r30) and stats.mean(r30) > 0)
 
 
+def candidate_list_stats(led):
+    """unlimited candidate list: n, average hold (hours), annual n = n / (days first entry -> last exit / 365.25) rounded to the nearest integer (FE-v2.1 Q12)."""
+    if not led:
+        return dict(n=0, avg_hold_h=None, annual_n=0)
+    days = (max(t["exit_ms"] for t in led) - min(t["entry_ms"] for t in led)) / 86_400_000
+    n = len(led)
+    return dict(n=n, avg_hold_h=sum(t["exit_ms"] - t["entry_ms"] for t in led) / n / 3_600_000, annual_n=int(math.floor(n / (days / 365.25) + 0.5)) if days > 0 else n)
+
+
 def build_result(spec, acc, h7, git, universe, runtime, rss, apply_sizing=None):
     sp = REGISTRY[spec]
     rules = None
@@ -375,12 +421,15 @@ def build_result(spec, acc, h7, git, universe, runtime, rss, apply_sizing=None):
         if sp["frame"] == "fe2":
             b["fe_ledger"] = fe_ledger(b["raws"])
             if apply_sizing:
-                b["sizing"] = apply_sizing(spec, g["name"], b["fe_ledger"])
+                b["sizing"] = apply_sizing(spec, g["name"], b["fe_ledger"], b)
         res["groups"][g["name"]] = b
     return res
 
 
-LEDGER_COLS = ["sym", "side", "entry_time", "exit_time", "entry_px", "stop_dist", "mae", "unit", "fee1", "gross_unit", "fee_unit", "slip_unit", "funding_unit"]
+LEDGER_COLS = ["sym", "side", "entry_time", "exit_time", "entry_px", "stop_dist", "mae", "unit", "fee1", "gross_unit", "fee_unit", "slip_unit", "funding_unit", "R"]
+SIZING_MIN_STOP = 0.006                                           # H61-H71 lock: min stop distance 0.60%
+EXCHANGE_INFO = RESULTS_ROOT / "exchangeinfo_2026-10-26.json"     # the six-coin filters of the TA sizing run (sizing-full)
+BRACKETS = RESULTS_ROOT / "v4/extra/brackets_snapshot.json"
 
 
 def fe_ledger(raws):
@@ -392,7 +441,7 @@ def fe_ledger(raws):
         f = lambda ms: pd.Timestamp(ms, unit="ms").strftime("%Y-%m-%d %H:%M:%S")
         rows.append(dict(sym=r["sym"], side=r["side"], entry_time=f(r["entry_ms"]), exit_time=f(r["exit_ms"]), entry_px=r["entry_px"],
                          stop_dist=r["stop_pct"], mae=r.get("mae", float("nan")), unit=gross - H.COST - r["fund"], fee1=H.COST / 2, gross_unit=gross,
-                         fee_unit=H.COST, slip_unit=0.0, funding_unit=-r["fund"]))
+                         fee_unit=H.COST, slip_unit=0.0, funding_unit=-r["fund"], R=(gross - H.COST - r["fund"]) / (r["stop_pct"] + 0.0017)))
     return pd.DataFrame(rows, columns=LEDGER_COLS)
 
 
@@ -443,6 +492,9 @@ def render_group(spec, b, frame):
         L += ["Candidate-list statistics below are in R units on the sizing-independent candidate list (no FE concurrency / open-loss rules, no variant sizing); "
               "the variant A/B ledgers, FE-Z1..Z3 and RP come from the sizing module (see sizing section).", ""]
         L += [head(b["sc_u"]), ""] + s1_lines(b["sc_u"], "Candidate list (unlimited, R units)") + [""]
+        cs = candidate_list_stats(b["ledger_u"])
+        L += [f"Candidate list: {cs['n']} trades, average hold {f4(cs['avg_hold_h'], 2) if cs['avg_hold_h'] is not None else 'n/a'} h, annual n {cs['annual_n']} "
+              f"(trades / (days first entry to last exit / 365.25), nearest integer); coins with data {b['n_coins']}: {', '.join(b['coins'][:400])}", ""]
     L += [f"### Limits book (3 concurrent, 6% open risk, 2%/trade, 1 per coin, 5% KST daily cap)" if frame == "old" else "### Old-frame limits book (report only here)", "", head(sc), ""]
     L += s1_lines(sc, "Limits book") + [f"end_of_data trades: {b['end_of_data']}", ""]
     t = b["thresholds"]
@@ -481,7 +533,11 @@ def render_group(spec, b, frame):
     L += ["", "Generator counters (summed over coins): " + ", ".join(f"{k} {int(v) if float(v).is_integer() else round(v, 4)}" for k, v in sorted(b["notes"].items())), ""]
     L += [f"Trades open across a data hole window: {len(b['hole_cross'])}", ""]
     if "sizing" in b:
-        L += ["### FE sizing output (from the sizing module)", "", "```", json.dumps(b["sizing"], indent=1, default=str)[:20000], "```", ""]
+        z = b["sizing"]
+        if isinstance(z, dict) and "rows" in z and "gate" in z:
+            L += render_sizing(z)
+        else:
+            L += ["### FE sizing output (from the sizing module)", "", "```", json.dumps(z, indent=1, default=str)[:20000], "```", ""]
     return L
 
 
@@ -498,8 +554,8 @@ def render(res):
     if spec in SPEC_NOTES:
         L += ["Spec notes: " + SPEC_NOTES[spec], ""]
     if sp["frame"] == "fe2":
-        L += ["Candidate-ledger columns (fe_candidate_ledger_*.csv, defined by the Developer, passed unchanged to the sizing module): " + ", ".join(LEDGER_COLS)
-              + ". stop_dist and mae are fractions of the entry price; unit = gross_unit - fee_unit - slip_unit + funding_unit (return on notional); funding_unit is signed P&L (negative = paid).", ""]
+        L += ["Candidate-ledger columns (fe_candidate_ledger_*.csv, defined by the Developer; the sizing module receives them with times as datetimes): " + ", ".join(LEDGER_COLS)
+              + ". stop_dist and mae are fractions of the entry price; unit = gross_unit - fee_unit - slip_unit + funding_unit (return on notional); funding_unit is signed P&L (negative = paid); R = unit / (stop_dist + 0.0017).", ""]
     for b in res["groups"].values():
         L += render_group(spec, b, sp["frame"])
     return "\n".join(L) + "\n"
@@ -527,6 +583,8 @@ def write_files(res, out):
         pd.DataFrame({"coin": b["nodata"]}).to_csv(out / f"coins_no_data_{tag}.csv", index=False)
         if "fe_ledger" in b:
             b["fe_ledger"].to_csv(out / f"fe_candidate_ledger_{tag}.csv", index=False)
+            if isinstance(b.get("sizing"), dict) and b["sizing"].get("sims"):
+                write_sizing_files(b["sizing"], out, tag)
         js["groups"][gn] = dict(role=b["role"], seed=b["seed"], q=b["q"], n_coins=b["n_coins"], n_nodata=b["n_nodata"], trades=len(b["ledger"]), raw=b["n_raw"],
                                 s1={k: dict(met=bool(b["sc"][k][0]), value=b["sc"][k][1]) for k in H.S1_KEYS if k in b["sc"]}, thresholds=b["thresholds"],
                                 excl_share=b["excl"]["share"])

@@ -18,7 +18,7 @@ def main():
         bad = R.preflight(a.specs, a.out)
         print("preflight:", "OK" if not bad else "\n".join(bad))
         return 0 if not bad else 1
-    res = R.run_session(a.specs, a.out)
+    res = R.run_session(a.specs, a.out, apply_sizing=R.default_apply_sizing)
     for s, r in res.items():
         print(s, r["result_path"])
     return 0
