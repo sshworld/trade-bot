@@ -1,0 +1,3 @@
+ledger,closed_idx,new_idx,closed_sym,new_sym,blocked_by,signal_time,close_time,close_px,mark_px,unrealized_R,unit,net_usd
+B_on,5,6,SOLUSDT,BNBUSDT,open_loss_cap,2022-01-04 04:00:00,2022-01-04 04:01:00,167.74,167.84,-0.29175250504361155,-0.006069461753011584,-1.7796110999999686
+B_on,67,68,XRPUSDT,DOGEUSDT,open_loss_cap,2024-01-31 22:00:00,2024-01-31 22:01:00,0.503,0.5037,-0.44489544010570775,-0.012121557828481433,-1.6090548599999894

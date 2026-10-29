@@ -1,0 +1,3 @@
+idx,sym,entry_time,reason,detail,wallet
+16,BTCUSDT,2022-03-22 07:00:00,open_loss_cap,open stop-losses 1.689% + this 4.485% = 6.174% > 6.0% of wallet,130.4660795439281
+152,BNBUSDT,2025-12-09 21:00:00,open_loss_cap,open stop-losses 4.863% + this 1.530% = 6.393% > 6.0% of wallet,56.92770888525135

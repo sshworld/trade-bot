@@ -1,0 +1,20 @@
+idx,sym,entry_time,reason,detail,wallet
+16,BTCUSDT,2022-03-22 07:00:00,open_loss_cap,open stop-losses 4.261% + this 4.827% = 9.088% > 6.0% of wallet,121.21382885623572
+31,XRPUSDT,2022-10-27 02:00:00,open_loss_cap,open stop-losses 2.381% + this 4.186% = 6.567% > 6.0% of wallet,93.8291437656237
+54,BNBUSDT,2023-09-17 17:00:00,open_loss_cap,open stop-losses 4.958% + this 1.939% = 6.897% > 6.0% of wallet,86.11703070480846
+56,DOGEUSDT,2023-09-19 11:00:00,open_loss_cap,open stop-losses 4.132% + this 2.303% = 6.436% > 6.0% of wallet,91.63885738210723
+57,DOGEUSDT,2023-09-19 17:00:00,open_loss_cap,open stop-losses 4.132% + this 1.976% = 6.109% > 6.0% of wallet,91.63885738210723
+89,SOLUSDT,2024-06-05 17:00:00,open_loss_cap,open stop-losses 3.303% + this 2.941% = 6.244% > 6.0% of wallet,61.39900582221216
+93,BTCUSDT,2024-07-14 07:00:00,open_loss_cap,open stop-losses 4.996% + this 1.965% = 6.961% > 6.0% of wallet,60.50229351409499
+104,SOLUSDT,2024-09-25 01:00:00,open_loss_cap,open stop-losses 5.737% + this 4.220% = 9.958% > 6.0% of wallet,47.57646414664141
+128,SOLUSDT,2025-05-08 02:00:00,open_loss_cap,open stop-losses 2.309% + this 3.826% = 6.135% > 6.0% of wallet,43.72289492937523
+130,BTCUSDT,2025-05-22 00:00:00,qty_zero,target notional 104.562364 / 109609.6 floors to 0 at step 0.001,41.824945556150595
+145,BTCUSDT,2025-09-03 13:00:00,qty_zero,target notional 99.679267 / 111051.0 floors to 0 at step 0.001,39.87170660975811
+146,BTCUSDT,2025-09-05 10:00:00,qty_zero,target notional 99.679267 / 112252.8 floors to 0 at step 0.001,39.87170660975811
+152,BNBUSDT,2025-12-09 21:00:00,open_loss_cap,open stop-losses 3.307% + this 3.814% = 7.122% > 6.0% of wallet,41.85902370874539
+167,SOLUSDT,2026-04-14 15:00:00,open_loss_cap,open stop-losses 2.021% + this 4.975% = 6.996% > 6.0% of wallet,40.398092043170266
+169,BNBUSDT,2026-04-15 21:00:00,open_loss_cap,open stop-losses 4.033% + this 2.152% = 6.184% > 6.0% of wallet,39.60111759768505
+170,XRPUSDT,2026-04-16 11:00:00,open_loss_cap,open stop-losses 4.033% + this 3.230% = 7.262% > 6.0% of wallet,39.60111759768505
+174,DOGEUSDT,2026-05-13 12:00:00,open_loss_cap,open stop-losses 2.407% + this 4.706% = 7.112% > 6.0% of wallet,37.420811711653734
+177,BNBUSDT,2026-05-22 15:00:00,open_loss_cap,open stop-losses 3.451% + this 3.163% = 6.614% > 6.0% of wallet,35.70792888482663
+180,BNBUSDT,2026-06-12 16:00:00,open_loss_cap,open stop-losses 2.485% + this 3.755% = 6.240% > 6.0% of wallet,38.66721766423263

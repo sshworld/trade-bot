@@ -1,0 +1,14 @@
+idx,sym,entry_time,reason,detail,wallet
+16,BTCUSDT,2022-03-22 07:00:00,open_loss_cap,open stop-losses 4.261% + this 4.827% = 9.088% > 6.0% of wallet,121.21382885623572
+31,XRPUSDT,2022-10-27 02:00:00,open_loss_cap,open stop-losses 2.381% + this 4.186% = 6.567% > 6.0% of wallet,93.8291437656237
+54,BNBUSDT,2023-09-17 17:00:00,open_loss_cap,open stop-losses 4.958% + this 1.939% = 6.897% > 6.0% of wallet,86.11703070480846
+89,SOLUSDT,2024-06-05 17:00:00,open_loss_cap,open stop-losses 3.304% + this 2.938% = 6.242% > 6.0% of wallet,64.2582732912066
+104,SOLUSDT,2024-09-25 01:00:00,open_loss_cap,open stop-losses 5.604% + this 4.207% = 9.811% > 6.0% of wallet; replace tried idx 102: still blocked (open_loss_cap),50.78852928642397
+128,SOLUSDT,2025-05-08 02:00:00,open_loss_cap,open stop-losses 2.269% + this 3.856% = 6.125% > 6.0% of wallet,46.957069461916326
+145,BTCUSDT,2025-09-03 13:00:00,qty_zero,target notional 103.799436 / 111051.0 floors to 0 at step 0.001,41.519774593291004
+146,BTCUSDT,2025-09-05 10:00:00,qty_zero,target notional 103.799436 / 112252.8 floors to 0 at step 0.001,41.519774593291004
+152,BNBUSDT,2025-12-09 21:00:00,open_loss_cap,open stop-losses 3.171% + this 3.990% = 7.161% > 6.0% of wallet,43.65286108209317
+167,SOLUSDT,2026-04-14 15:00:00,open_loss_cap,open stop-losses 1.938% + this 4.996% = 6.935% > 6.0% of wallet,42.1240785068083
+174,DOGEUSDT,2026-05-13 12:00:00,open_loss_cap,open stop-losses 2.475% + this 4.705% = 7.179% > 6.0% of wallet,36.39142723942038
+177,BNBUSDT,2026-05-22 15:00:00,open_loss_cap,open stop-losses 3.442% + this 3.251% = 6.693% > 6.0% of wallet,34.74230510424928
+180,BNBUSDT,2026-06-12 16:00:00,open_loss_cap,open stop-losses 2.559% + this 3.866% = 6.424% > 6.0% of wallet,37.55992907849628

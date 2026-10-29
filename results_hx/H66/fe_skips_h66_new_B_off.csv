@@ -1,0 +1,69 @@
+idx,sym,entry_time,reason,detail,wallet
+7,BCHUSDT,2022-07-07 18:00:00,open_loss_cap,open stop-losses 2.161% + this 5.000% = 7.160% > 6.0% of wallet,116.64295536989253
+34,ENSUSDT,2022-12-27 03:00:00,open_loss_cap,open stop-losses 5.431% + this 2.500% = 7.931% > 6.0% of wallet,139.52299702571503
+35,ENSUSDT,2022-12-27 06:00:00,open_loss_cap,open stop-losses 5.431% + this 2.537% = 7.968% > 6.0% of wallet,139.52299702571503
+41,DOTUSDT,2023-01-03 15:00:00,open_loss_cap,open stop-losses 3.605% + this 3.360% = 6.965% > 6.0% of wallet,141.04546444845158
+45,1000SHIBUSDT,2023-01-04 05:00:00,open_loss_cap,open stop-losses 3.893% + this 2.545% = 6.438% > 6.0% of wallet,133.0437570416513
+52,TRXUSDT,2023-02-08 07:00:00,open_loss_cap,open stop-losses 4.958% + this 2.211% = 7.169% > 6.0% of wallet,117.20285253416114
+53,LTCUSDT,2023-02-08 08:00:00,open_loss_cap,open stop-losses 4.958% + this 3.011% = 7.969% > 6.0% of wallet,117.20285253416114
+59,SNXUSDT,2023-04-11 03:00:00,open_loss_cap,open stop-losses 1.970% + this 4.391% = 6.362% > 6.0% of wallet,120.99984915317232
+63,DOTUSDT,2023-04-11 09:00:00,open_loss_cap,open stop-losses 4.698% + this 3.200% = 7.898% > 6.0% of wallet,115.05075729871895
+64,DOTUSDT,2023-04-11 15:00:00,open_loss_cap,open stop-losses 4.698% + this 2.790% = 7.488% > 6.0% of wallet,115.05075729871895
+65,OPUSDT,2023-04-11 15:00:00,open_loss_cap,open stop-losses 4.698% + this 3.869% = 8.567% > 6.0% of wallet,115.05075729871895
+66,AVAXUSDT,2023-04-11 15:00:00,open_loss_cap,open stop-losses 4.698% + this 4.240% = 8.938% > 6.0% of wallet,115.05075729871895
+69,BCHUSDT,2023-04-11 20:00:00,open_loss_cap,open stop-losses 5.720% + this 3.816% = 9.536% > 6.0% of wallet,109.64769805858815
+72,LINKUSDT,2023-04-13 16:00:00,open_loss_cap,open stop-losses 4.007% + this 2.855% = 6.862% > 6.0% of wallet,117.92865908536079
+74,LINKUSDT,2023-04-13 20:00:00,open_loss_cap,open stop-losses 2.335% + this 3.676% = 6.011% > 6.0% of wallet,113.2667663006716
+75,BNXUSDT,2023-04-13 22:00:00,bracket,10x above bracket max 5x at notional 283.15,113.2667663006716
+80,CRVUSDT,2023-05-24 01:00:00,open_loss_cap,open stop-losses 4.998% + this 2.075% = 7.073% > 6.0% of wallet,132.17018520458998
+84,MANAUSDT,2023-06-03 18:00:00,open_loss_cap,open stop-losses 2.715% + this 3.380% = 6.095% > 6.0% of wallet,134.02151257840805
+96,LINAUSDT,2023-07-22 01:00:00,bracket,10x above bracket max 7x at notional 317.84,127.13740016762358
+98,LINAUSDT,2023-08-01 20:00:00,bracket,10x above bracket max 7x at notional 331.96,132.78484309762356
+105,STORJUSDT,2023-08-29 20:00:00,open_loss_cap,open stop-losses 3.883% + this 3.299% = 7.182% > 6.0% of wallet,159.2997739179039
+107,LINKUSDT,2023-09-07 22:00:00,open_loss_cap,open stop-losses 2.627% + this 4.547% = 7.173% > 6.0% of wallet,172.35807230382392
+111,ADAUSDT,2023-09-15 06:00:00,open_loss_cap,open stop-losses 3.504% + this 2.797% = 6.302% > 6.0% of wallet,167.73422134691995
+114,1000SHIBUSDT,2023-09-16 07:00:00,open_loss_cap,open stop-losses 4.251% + this 4.111% = 8.362% > 6.0% of wallet,157.5943315342207
+118,DYDXUSDT,2023-09-20 19:00:00,open_loss_cap,open stop-losses 5.253% + this 2.880% = 8.132% > 6.0% of wallet,167.93996837303402
+123,BCHUSDT,2023-09-26 13:00:00,open_loss_cap,open stop-losses 2.102% + this 4.766% = 6.867% > 6.0% of wallet,208.78041744662744
+132,DYDXUSDT,2023-09-29 11:00:00,open_loss_cap,open stop-losses 2.623% + this 3.533% = 6.156% > 6.0% of wallet,181.98433590433444
+133,LINAUSDT,2023-09-29 16:00:00,bracket,10x above bracket max 7x at notional 443.23,177.2919704685448
+152,ADAUSDT,2023-12-02 12:00:00,open_loss_cap,open stop-losses 4.605% + this 1.965% = 6.570% > 6.0% of wallet,159.7132486744662
+168,DOTUSDT,2024-02-13 03:00:00,open_loss_cap,open stop-losses 2.758% + this 4.139% = 6.897% > 6.0% of wallet,112.70014316240791
+169,MASKUSDT,2024-02-13 03:00:00,open_loss_cap,open stop-losses 2.758% + this 4.979% = 7.737% > 6.0% of wallet,112.70014316240791
+174,1000SHIBUSDT,2024-02-15 16:00:00,open_loss_cap,open stop-losses 2.481% + this 5.000% = 7.481% > 6.0% of wallet,109.06306722296732
+183,ADAUSDT,2024-05-15 22:00:00,open_loss_cap,open stop-losses 4.697% + this 2.527% = 7.223% > 6.0% of wallet,112.082240995706
+185,LINKUSDT,2024-05-16 03:00:00,open_loss_cap,open stop-losses 4.629% + this 2.446% = 7.075% > 6.0% of wallet,109.58948082487714
+194,AVAXUSDT,2024-06-05 22:00:00,open_loss_cap,open stop-losses 5.143% + this 3.265% = 8.408% > 6.0% of wallet,106.14973302512772
+195,AVAXUSDT,2024-06-06 10:00:00,open_loss_cap,open stop-losses 5.143% + this 2.061% = 7.204% > 6.0% of wallet,106.14973302512772
+198,HBARUSDT,2024-07-13 21:00:00,open_loss_cap,open stop-losses 2.909% + this 3.165% = 6.074% > 6.0% of wallet,115.74966633314688
+217,STMXUSDT,2024-10-21 03:00:00,bracket,10x above bracket max 8x at notional 198.29,79.31610277595576
+226,ETCUSDT,2025-03-20 01:00:00,open_loss_cap,open stop-losses 3.283% + this 4.221% = 7.503% > 6.0% of wallet,73.79784978329172
+233,XLMUSDT,2025-03-26 03:00:00,open_loss_cap,open stop-losses 3.854% + this 4.997% = 8.851% > 6.0% of wallet,68.83386131333496
+249,ONDOUSDT,2025-07-09 18:00:00,open_loss_cap,open stop-losses 5.167% + this 4.547% = 9.714% > 6.0% of wallet,60.9134183263476
+261,MOODENGUSDT,2025-09-08 00:00:00,open_loss_cap,open stop-losses 4.957% + this 2.697% = 7.654% > 6.0% of wallet,54.33476989054968
+263,MOODENGUSDT,2025-09-08 05:00:00,open_loss_cap,open stop-losses 2.453% + this 4.997% = 7.450% > 6.0% of wallet,51.67113809219921
+266,NEARUSDT,2025-09-08 12:00:00,open_loss_cap,open stop-losses 3.386% + this 3.782% = 7.168% > 6.0% of wallet,52.59947134714432
+270,HBARUSDT,2025-09-09 01:00:00,open_loss_cap,open stop-losses 5.844% + this 2.030% = 7.874% > 6.0% of wallet,48.74533272183369
+271,ARBUSDT,2025-09-09 01:00:00,open_loss_cap,open stop-losses 5.844% + this 2.947% = 8.790% > 6.0% of wallet,48.74533272183369
+272,ADAUSDT,2025-09-09 02:00:00,open_loss_cap,open stop-losses 5.844% + this 3.495% = 9.339% > 6.0% of wallet,48.74533272183369
+274,ETCUSDT,2025-09-09 13:00:00,open_loss_cap,open stop-losses 4.157% + this 3.460% = 7.618% > 6.0% of wallet,45.94066356018304
+283,HBARUSDT,2025-10-01 11:00:00,open_loss_cap,open stop-losses 3.564% + this 3.967% = 7.532% > 6.0% of wallet,45.177324219011965
+284,OPUSDT,2025-10-01 13:00:00,open_loss_cap,open stop-losses 3.564% + this 4.507% = 8.071% > 6.0% of wallet,45.177324219011965
+285,ARBUSDT,2025-10-01 13:00:00,open_loss_cap,open stop-losses 3.564% + this 4.706% = 8.271% > 6.0% of wallet,45.177324219011965
+286,UNIUSDT,2025-10-01 13:00:00,open_loss_cap,open stop-losses 3.564% + this 4.565% = 8.129% > 6.0% of wallet,45.177324219011965
+289,HBARUSDT,2025-10-01 17:00:00,open_loss_cap,open stop-losses 4.572% + this 3.122% = 7.694% > 6.0% of wallet,43.594194202075315
+290,ONDOUSDT,2025-10-01 17:00:00,open_loss_cap,open stop-losses 4.572% + this 3.748% = 8.321% > 6.0% of wallet,43.594194202075315
+294,FILUSDT,2025-10-02 01:00:00,open_loss_cap,open stop-losses 5.897% + this 2.143% = 8.040% > 6.0% of wallet,40.81514870854179
+295,HBARUSDT,2025-10-02 01:00:00,open_loss_cap,open stop-losses 5.897% + this 2.331% = 8.228% > 6.0% of wallet,40.81514870854179
+297,AAVEUSDT,2025-10-06 21:00:00,open_loss_cap,open stop-losses 4.990% + this 2.551% = 7.541% > 6.0% of wallet,38.44775764409621
+307,LTCUSDT,2026-01-02 15:00:00,open_loss_cap,open stop-losses 4.751% + this 2.723% = 7.474% > 6.0% of wallet,36.76757007503214
+309,AAVEUSDT,2026-01-13 15:00:00,open_loss_cap,open stop-losses 3.523% + this 3.554% = 7.077% > 6.0% of wallet,35.03750736212477
+314,LINKUSDT,2026-02-21 15:00:00,open_loss_cap,open stop-losses 4.995% + this 3.439% = 8.434% > 6.0% of wallet,31.313353144463207
+315,LTCUSDT,2026-02-21 17:00:00,open_loss_cap,open stop-losses 4.995% + this 3.132% = 8.127% > 6.0% of wallet,31.313353144463207
+321,WIFUSDT,2026-04-06 15:00:00,open_loss_cap,open stop-losses 5.000% + this 5.000% = 10.000% > 6.0% of wallet,36.49646539050695
+324,1000SHIBUSDT,2026-04-08 01:00:00,open_loss_cap,open stop-losses 4.616% + this 4.491% = 9.108% > 6.0% of wallet,39.266445457866936
+327,NEARUSDT,2026-04-14 10:00:00,open_loss_cap,open stop-losses 4.996% + this 4.845% = 9.840% > 6.0% of wallet,36.76662390291454
+330,1000SHIBUSDT,2026-04-16 03:00:00,open_loss_cap,open stop-losses 5.627% + this 2.699% = 8.326% > 6.0% of wallet,38.47875747675455
+341,WLDUSDT,2026-05-06 00:00:00,open_loss_cap,open stop-losses 3.813% + this 4.195% = 8.008% > 6.0% of wallet,40.32902828367475
+361,TAOUSDT,2026-08-04 21:00:00,open_loss_cap,open stop-losses 4.653% + this 3.571% = 8.224% > 6.0% of wallet,29.482453608859156
+367,ZECUSDT,2026-08-17 21:00:00,open_loss_cap,open stop-losses 3.529% + this 2.629% = 6.158% > 6.0% of wallet,31.158355539690724

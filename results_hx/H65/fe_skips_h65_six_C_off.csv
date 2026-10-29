@@ -1,0 +1,3 @@
+idx,sym,entry_time,reason,detail,wallet
+23,BTCUSDT,2022-10-21 14:00:00,open_loss_cap,open stop-losses 1.446% + this 4.880% = 6.326% > 6.0% of wallet,96.42836215172792
+80,XRPUSDT,2024-06-14 22:00:00,open_loss_cap,open stop-losses 3.873% + this 2.674% = 6.546% > 6.0% of wallet,98.4849585634492

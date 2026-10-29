@@ -1,0 +1,15 @@
+idx,sym,entry_time,reason,detail,wallet
+63,DOTUSDT,2023-04-11 09:00:00,max_positions,3 positions open (max 3),118.3824541474522
+65,OPUSDT,2023-04-11 15:00:00,max_positions,3 positions open (max 3),120.76727462745217
+66,AVAXUSDT,2023-04-11 15:00:00,max_positions,3 positions open (max 3),120.76727462745217
+75,BNXUSDT,2023-04-13 22:00:00,bracket,10x above bracket max 5x at notional 119.64,119.67938247862172
+96,LINAUSDT,2023-07-22 01:00:00,bracket,10x above bracket max 7x at notional 127.17,127.17023731287428
+98,LINAUSDT,2023-08-01 20:00:00,bracket,10x above bracket max 7x at notional 129.43,129.42851640787427
+133,LINAUSDT,2023-09-29 16:00:00,bracket,10x above bracket max 7x at notional 152.51,152.51098987781685
+217,STMXUSDT,2024-10-21 03:00:00,bracket,10x above bracket max 8x at notional 107.46,107.45821851882182
+271,ARBUSDT,2025-09-09 01:00:00,max_positions,3 positions open (max 3),84.38636174687677
+272,ADAUSDT,2025-09-09 02:00:00,max_positions,3 positions open (max 3),84.38636174687677
+285,ARBUSDT,2025-10-01 13:00:00,max_positions,3 positions open (max 3),82.80136961593719
+286,UNIUSDT,2025-10-01 13:00:00,max_positions,3 positions open (max 3),82.80136961593719
+290,ONDOUSDT,2025-10-01 17:00:00,max_positions,3 positions open (max 3),78.87157135867629
+295,HBARUSDT,2025-10-02 01:00:00,max_positions,3 positions open (max 3),75.91470086140639

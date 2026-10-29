@@ -1,0 +1,18 @@
+idx,sym,entry_time,reason,detail,wallet
+23,BTCUSDT,2022-10-21 14:00:00,open_loss_cap,open stop-losses 3.621% + this 3.185% = 6.806% > 6.0% of wallet,85.55823835960328
+24,ETHUSDT,2022-10-21 14:00:00,open_loss_cap,open stop-losses 3.621% + this 3.986% = 7.607% > 6.0% of wallet,85.55823835960328
+36,DOGEUSDT,2023-02-22 03:00:00,open_loss_cap,open stop-losses 4.437% + this 4.998% = 9.435% > 6.0% of wallet,79.03788160463638
+80,XRPUSDT,2024-06-14 22:00:00,open_loss_cap,open stop-losses 3.571% + this 4.999% = 8.570% > 6.0% of wallet,71.20680074328197
+120,BTCUSDT,2025-06-20 21:00:00,qty_zero,target notional 100.159038 / 103655.4 floors to 0 at step 0.001,40.063615085455176
+121,BTCUSDT,2025-08-01 21:00:00,qty_zero,target notional 100.159038 / 113900.1 floors to 0 at step 0.001,40.063615085455176
+122,BTCUSDT,2025-08-03 01:00:00,qty_zero,target notional 100.159038 / 112902.3 floors to 0 at step 0.001,40.063615085455176
+125,BTCUSDT,2025-08-29 22:00:00,qty_zero,target notional 94.324735 / 108393.4 floors to 0 at step 0.001,37.72989388307198
+129,BTCUSDT,2025-09-24 05:00:00,qty_zero,target notional 88.429447 / 112122.5 floors to 0 at step 0.001,35.37177893337086
+132,SOLUSDT,2025-10-08 01:00:00,open_loss_cap,open stop-losses 1.953% + this 4.145% = 6.097% > 6.0% of wallet,34.679108073951014
+134,BTCUSDT,2025-10-09 18:00:00,qty_zero,target notional 82.051754 / 120915.5 floors to 0 at step 0.001,32.82070157643708
+136,BTCUSDT,2025-12-14 12:00:00,qty_zero,target notional 78.275553 / 89308.3 floors to 0 at step 0.001,31.310221026095462
+137,BTCUSDT,2025-12-18 22:00:00,qty_zero,target notional 78.275553 / 85584.3 floors to 0 at step 0.001,31.310221026095462
+144,BTCUSDT,2026-01-20 16:00:00,qty_zero,target notional 82.642499 / 90644.3 floors to 0 at step 0.001,33.056999444529346
+160,BTCUSDT,2026-05-29 15:00:00,qty_zero,target notional 70.230670 / 73065.8 floors to 0 at step 0.001,28.092268069363502
+169,BTCUSDT,2026-08-13 19:00:00,qty_zero,target notional 59.118138 / 63284.7 floors to 0 at step 0.001,23.647255141385674
+172,BTCUSDT,2026-09-11 01:00:00,qty_zero,target notional 59.575431 / 76881.0 floors to 0 at step 0.001,23.8301723634696

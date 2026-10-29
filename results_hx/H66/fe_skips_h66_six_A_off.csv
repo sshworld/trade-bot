@@ -1,0 +1,13 @@
+idx,sym,entry_time,reason,detail,wallet
+112,BTCUSDT,2024-12-12 17:00:00,qty_zero,target notional 92.932016 / 101449.8 floors to 0 at step 0.001,92.93201642209866
+113,BTCUSDT,2024-12-16 20:00:00,qty_zero,target notional 92.932016 / 106546.1 floors to 0 at step 0.001,92.93201642209866
+114,BTCUSDT,2024-12-25 22:00:00,qty_zero,target notional 92.932016 / 98473.9 floors to 0 at step 0.001,92.93201642209866
+115,BTCUSDT,2024-12-26 01:00:00,qty_zero,target notional 92.932016 / 98988.4 floors to 0 at step 0.001,92.93201642209866
+118,BTCUSDT,2025-01-03 17:00:00,qty_zero,target notional 91.431266 / 97822.4 floors to 0 at step 0.001,91.43126574044155
+125,BTCUSDT,2025-05-02 16:00:00,qty_zero,target notional 88.531309 / 97270.1 floors to 0 at step 0.001,88.5313090401979
+130,BTCUSDT,2025-05-22 00:00:00,qty_zero,target notional 84.986259 / 109609.6 floors to 0 at step 0.001,84.98625919050308
+135,BTCUSDT,2025-07-03 12:00:00,qty_zero,target notional 89.797843 / 109551.1 floors to 0 at step 0.001,89.7978432284431
+145,BTCUSDT,2025-09-03 13:00:00,qty_zero,target notional 84.470262 / 111051.0 floors to 0 at step 0.001,84.47026154556929
+146,BTCUSDT,2025-09-05 10:00:00,qty_zero,target notional 84.470262 / 112252.8 floors to 0 at step 0.001,84.47026154556929
+151,BTCUSDT,2025-12-09 21:00:00,qty_zero,target notional 86.660957 / 93075.2 floors to 0 at step 0.001,86.66095712206152
+157,BTCUSDT,2026-01-14 18:00:00,qty_zero,target notional 86.833940 / 96895.1 floors to 0 at step 0.001,86.83394039533941
