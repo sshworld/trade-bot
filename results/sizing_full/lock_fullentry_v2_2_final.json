@@ -1,0 +1,18 @@
+{
+ "started_kst": "2026-10-29T10:22:00+09:00",
+ "pid": 147709,
+ "git": {
+  "head": "e2e0d501bab5f31028dec4c4ac9e05f2b1d00233",
+  "branch": "sizing-full",
+  "dirty": false
+ },
+ "ledger_sha256": "2a147ab723f583d764063785bc401b77a333b39eae534a389020b828b29709c0",
+ "locks": {
+  "prereg-lock-fullentry-v2.md": "539c7585353b0f50eef38368f16f6ce767d7b7ee9ace4ac71c1311e01f34aa76",
+  "prereg-lock-h61-h71-addendum-fe2.md": "9bc7869cd811e10f2952c15274af0dab7366ffb4bf5c28205f9ee5e948924e34",
+  "prereg-lock-fullentry-v2_1-addendum.md": "a5852ccbc9b0d2665f1251f08600151178f9da5e0ec5a62ebd45be1d9a9c34c0",
+  "prereg-lock-replace-losers-v1.md": "31619c1507f2d17571ce9f80dbd91028b16263b0822b7c75388f840d0902f17b",
+  "prereg-lock-fullentry-v2_2-variantC.md": "03a2d0898830c9f3496c2c1f5e2dda9527cefd0cd9d2ea29a8d8dc023c73d3cb",
+  "answers-fullentry-R1-R10-C1-C6-2026-10-29.md": "b9c172688feebd649f0a2899c6bef21c30b9ccf3717f049363b917acc0c9abb2"
+ }
+}
