@@ -1,0 +1,868 @@
+idx,sym,entry_time,reason,detail,wallet
+4,BCHUSDT,2021-01-26 01:00:00,open_loss_cap,open stop-losses 4.292% + this 2.311% = 6.603% > 6.0% of wallet,111.34324459924622
+5,ADAUSDT,2021-01-26 01:00:00,open_loss_cap,open stop-losses 4.292% + this 3.089% = 7.381% > 6.0% of wallet,111.34324459924622
+15,XTZUSDT,2021-03-16 02:00:00,open_loss_cap,open stop-losses 2.964% + this 3.044% = 6.008% > 6.0% of wallet,88.44006089188423
+16,BCHUSDT,2021-03-16 02:00:00,open_loss_cap,open stop-losses 2.964% + this 3.324% = 6.287% > 6.0% of wallet,88.44006089188423
+17,IOSTUSDT,2021-03-16 02:00:00,open_loss_cap,open stop-losses 2.964% + this 3.408% = 6.371% > 6.0% of wallet,88.44006089188423
+18,DASHUSDT,2021-03-16 02:00:00,open_loss_cap,open stop-losses 2.964% + this 3.934% = 6.898% > 6.0% of wallet,88.44006089188423
+19,ETCUSDT,2021-03-16 02:00:00,open_loss_cap,open stop-losses 2.964% + this 4.716% = 7.680% > 6.0% of wallet,88.44006089188423
+20,ZECUSDT,2021-03-16 03:00:00,open_loss_cap,open stop-losses 2.964% + this 3.344% = 6.308% > 6.0% of wallet,88.44006089188423
+21,LTCUSDT,2021-03-16 03:00:00,open_loss_cap,open stop-losses 2.964% + this 3.856% = 6.820% > 6.0% of wallet,88.44006089188423
+28,VETUSDT,2021-03-23 08:00:00,stop_vs_liq,stop 7.7805% > 0.7 x (1/10 - mmr 0.006) = 6.5800% of entry,88.39538871027838
+41,DASHUSDT,2021-04-07 12:00:00,open_loss_cap,open stop-losses 2.483% + this 4.641% = 7.124% > 6.0% of wallet,79.49630037751689
+42,IOSTUSDT,2021-04-07 12:00:00,open_loss_cap,open stop-losses 2.483% + this 5.000% = 7.483% > 6.0% of wallet,79.49630037751689
+48,NEOUSDT,2021-04-20 01:00:00,stop_vs_liq,stop 6.5044% > 0.7 x (1/10 - mmr 0.01) = 6.3000% of entry,97.65500070006236
+50,LINKUSDT,2021-04-20 02:00:00,open_loss_cap,open stop-losses 3.393% + this 4.983% = 8.376% > 6.0% of wallet,96.07957570817919
+52,XLMUSDT,2021-04-20 05:00:00,open_loss_cap,open stop-losses 3.207% + this 4.983% = 8.190% > 6.0% of wallet,92.83846004374902
+53,ADAUSDT,2021-04-20 05:00:00,stop_vs_liq,stop 6.7944% > 0.7 x (1/10 - mmr 0.005) = 6.6500% of entry,92.83846004374902
+54,LTCUSDT,2021-04-20 05:00:00,stop_vs_liq,stop 7.0053% > 0.7 x (1/10 - mmr 0.005) = 6.6500% of entry,92.83846004374902
+55,XTZUSDT,2021-04-20 05:00:00,stop_vs_liq,stop 7.1042% > 0.7 x (1/10 - mmr 0.01) = 6.3000% of entry,92.83846004374902
+56,BCHUSDT,2021-04-20 05:00:00,stop_vs_liq,stop 8.4331% > 0.7 x (1/10 - mmr 0.005) = 6.6500% of entry,92.83846004374902
+57,QTUMUSDT,2021-04-20 05:00:00,stop_vs_liq,stop 9.2336% > 0.7 x (1/10 - mmr 0.01) = 6.3000% of entry,92.83846004374902
+58,ONTUSDT,2021-04-20 05:00:00,stop_vs_liq,stop 9.5405% > 0.7 x (1/10 - mmr 0.015) = 5.9500% of entry,92.83846004374902
+59,ETCUSDT,2021-04-20 05:00:00,stop_vs_liq,stop 9.7110% > 0.7 x (1/10 - mmr 0.005) = 6.6500% of entry,92.83846004374902
+63,LINKUSDT,2021-05-04 01:00:00,open_loss_cap,open stop-losses 5.339% + this 3.037% = 8.376% > 6.0% of wallet,102.83042981566044
+64,THETAUSDT,2021-05-04 02:00:00,stop_vs_liq,stop 6.4063% > 0.7 x (1/10 - mmr 0.01) = 6.3000% of entry,102.83042981566044
+65,TRXUSDT,2021-05-04 10:00:00,open_loss_cap,open stop-losses 5.339% + this 4.071% = 9.410% > 6.0% of wallet,102.83042981566044
+67,ZRXUSDT,2021-05-06 00:00:00,open_loss_cap,open stop-losses 4.304% + this 2.759% = 7.063% > 6.0% of wallet,97.26260236707427
+72,ONTUSDT,2021-05-13 00:00:00,open_loss_cap,open stop-losses 4.410% + this 3.447% = 7.858% > 6.0% of wallet,98.60794831991208
+73,DASHUSDT,2021-05-13 00:00:00,open_loss_cap,open stop-losses 4.410% + this 3.571% = 7.981% > 6.0% of wallet,98.60794831991208
+74,ADAUSDT,2021-05-13 01:00:00,stop_vs_liq,stop 7.6307% > 0.7 x (1/10 - mmr 0.005) = 6.6500% of entry,94.2900677148874
+75,LINKUSDT,2021-05-13 01:00:00,stop_vs_liq,stop 9.4696% > 0.7 x (1/10 - mmr 0.005) = 6.6500% of entry,94.2900677148874
+78,IOTAUSDT,2021-05-14 00:00:00,stop_vs_liq,stop 9.6760% > 0.7 x (1/10 - mmr 0.01) = 6.3000% of entry,91.47652877709267
+79,ZILUSDT,2021-05-15 07:00:00,open_loss_cap,open stop-losses 4.996% + this 1.592% = 6.589% > 6.0% of wallet,91.47652877709267
+82,XTZUSDT,2021-05-19 08:00:00,open_loss_cap,open stop-losses 2.954% + this 4.743% = 7.697% > 6.0% of wallet,92.49377188638132
+83,COMPUSDT,2021-05-19 08:00:00,stop_vs_liq,stop 6.6492% > 0.7 x (1/10 - mmr 0.01) = 6.3000% of entry,92.49377188638132
+85,THETAUSDT,2021-06-09 00:00:00,stop_vs_liq,stop 7.0236% > 0.7 x (1/10 - mmr 0.01) = 6.3000% of entry,91.30681240133053
+99,ATOMUSDT,2021-08-03 08:00:00,max_positions,3 positions open (max 3),102.62316822548213
+100,DASHUSDT,2021-08-03 11:00:00,max_positions,3 positions open (max 3),102.62316822548213
+102,NEOUSDT,2021-08-03 13:00:00,open_loss_cap,open stop-losses 4.838% + this 2.520% = 7.359% > 6.0% of wallet,99.19191583277274
+103,FTMUSDT,2021-08-03 13:00:00,open_loss_cap,open stop-losses 4.838% + this 3.063% = 7.901% > 6.0% of wallet,99.19191583277274
+111,KAVAUSDT,2021-08-17 01:00:00,max_positions,3 positions open (max 3),114.37843131672813
+112,MKRUSDT,2021-08-17 01:00:00,max_positions,3 positions open (max 3),114.37843131672813
+113,COMPUSDT,2021-08-17 01:00:00,max_positions,3 positions open (max 3),114.37843131672813
+114,RUNEUSDT,2021-08-17 01:00:00,max_positions,3 positions open (max 3),114.37843131672813
+115,AVAXUSDT,2021-08-17 01:00:00,max_positions,3 positions open (max 3),114.37843131672813
+116,THETAUSDT,2021-08-17 01:00:00,max_positions,3 positions open (max 3),114.37843131672813
+117,BCHUSDT,2021-08-17 02:00:00,max_positions,3 positions open (max 3),114.37843131672813
+118,UNIUSDT,2021-08-17 02:00:00,max_positions,3 positions open (max 3),114.37843131672813
+119,DASHUSDT,2021-08-17 02:00:00,max_positions,3 positions open (max 3),114.37843131672813
+120,ONTUSDT,2021-08-17 02:00:00,max_positions,3 positions open (max 3),114.37843131672813
+121,SNXUSDT,2021-08-17 02:00:00,max_positions,3 positions open (max 3),114.37843131672813
+122,LINKUSDT,2021-08-17 02:00:00,max_positions,3 positions open (max 3),114.37843131672813
+123,RLCUSDT,2021-08-17 02:00:00,max_positions,3 positions open (max 3),114.37843131672813
+124,XLMUSDT,2021-08-17 02:00:00,max_positions,3 positions open (max 3),114.37843131672813
+125,QTUMUSDT,2021-08-17 02:00:00,max_positions,3 positions open (max 3),114.37843131672813
+126,VETUSDT,2021-08-17 02:00:00,max_positions,3 positions open (max 3),114.37843131672813
+134,ATOMUSDT,2021-08-24 03:00:00,max_positions,3 positions open (max 3),100.44841923683948
+142,KAVAUSDT,2021-08-24 14:00:00,max_positions,3 positions open (max 3),94.87760768804549
+145,ADAUSDT,2021-08-24 15:00:00,open_loss_cap,open stop-losses 4.433% + this 2.532% = 6.965% > 6.0% of wallet,90.99543542065666
+146,VETUSDT,2021-08-24 15:00:00,open_loss_cap,open stop-losses 4.433% + this 3.175% = 7.607% > 6.0% of wallet,90.99543542065666
+147,RLCUSDT,2021-08-24 15:00:00,open_loss_cap,open stop-losses 4.433% + this 4.051% = 8.483% > 6.0% of wallet,90.99543542065666
+151,ENJUSDT,2021-08-25 11:00:00,open_loss_cap,open stop-losses 3.083% + this 3.333% = 6.416% > 6.0% of wallet,82.20824232458732
+156,YFIUSDT,2021-08-31 01:00:00,max_positions,3 positions open (max 3),77.15741975094589
+157,XLMUSDT,2021-08-31 01:00:00,max_positions,3 positions open (max 3),77.15741975094589
+158,ETCUSDT,2021-08-31 01:00:00,max_positions,3 positions open (max 3),77.15741975094589
+159,ADAUSDT,2021-08-31 02:00:00,max_positions,3 positions open (max 3),77.15741975094589
+161,QTUMUSDT,2021-08-31 03:00:00,max_positions,3 positions open (max 3),76.0970691337696
+162,ZECUSDT,2021-08-31 03:00:00,max_positions,3 positions open (max 3),76.0970691337696
+163,DASHUSDT,2021-08-31 03:00:00,max_positions,3 positions open (max 3),76.0970691337696
+164,AVAXUSDT,2021-08-31 03:00:00,max_positions,3 positions open (max 3),76.0970691337696
+165,NEOUSDT,2021-08-31 03:00:00,max_positions,3 positions open (max 3),76.0970691337696
+166,KAVAUSDT,2021-08-31 03:00:00,max_positions,3 positions open (max 3),76.0970691337696
+167,BCHUSDT,2021-08-31 04:00:00,max_positions,3 positions open (max 3),76.0970691337696
+168,XTZUSDT,2021-08-31 04:00:00,max_positions,3 positions open (max 3),76.0970691337696
+172,ENJUSDT,2021-09-07 08:00:00,max_positions,3 positions open (max 3),86.84783013274401
+176,LINKUSDT,2021-09-07 11:00:00,open_loss_cap,open stop-losses 4.628% + this 4.997% = 9.625% > 6.0% of wallet,80.14542069937843
+177,RLCUSDT,2021-09-07 11:00:00,stop_vs_liq,stop 7.1498% > 0.7 x (1/10 - mmr 0.015) = 5.9500% of entry,80.14542069937843
+179,KSMUSDT,2021-09-09 14:00:00,stop_vs_liq,stop 6.4708% > 0.7 x (1/10 - mmr 0.015) = 5.9500% of entry,77.21755781177158
+185,AVAXUSDT,2021-09-21 01:00:00,open_loss_cap,open stop-losses 4.197% + this 3.926% = 8.123% > 6.0% of wallet,73.06731567108815
+186,CRVUSDT,2021-09-21 02:00:00,stop_vs_liq,stop 7.6338% > 0.7 x (1/10 - mmr 0.0065) = 6.5450% of entry,73.06731567108815
+187,XTZUSDT,2021-09-21 02:00:00,stop_vs_liq,stop 8.0469% > 0.7 x (1/10 - mmr 0.01) = 6.3000% of entry,73.06731567108815
+190,TRXUSDT,2021-09-24 12:00:00,open_loss_cap,open stop-losses 4.763% + this 4.993% = 9.756% > 6.0% of wallet,68.83464949795248
+191,KSMUSDT,2021-09-24 14:00:00,stop_vs_liq,stop 7.8614% > 0.7 x (1/10 - mmr 0.015) = 5.9500% of entry,68.83464949795248
+194,XTZUSDT,2021-09-28 02:00:00,open_loss_cap,open stop-losses 5.072% + this 3.494% = 8.566% > 6.0% of wallet,65.55027663542887
+195,AVAXUSDT,2021-09-29 05:00:00,qty_zero,target notional 44.744511 / 65.34 floors to 0 at step 1,62.248942252920315
+197,AXSUSDT,2021-10-05 01:00:00,qty_zero,target notional 72.208063 / 135.75 floors to 0 at step 1,72.20806307292032
+206,NEARUSDT,2021-10-06 13:00:00,open_loss_cap,open stop-losses 5.058% + this 4.978% = 10.035% > 6.0% of wallet,66.03438638731225
+213,EGLDUSDT,2021-10-12 05:00:00,max_positions,3 positions open (max 3),69.8410240961386
+214,LTCUSDT,2021-10-12 06:00:00,max_positions,3 positions open (max 3),69.8410240961386
+217,VETUSDT,2021-10-12 21:00:00,open_loss_cap,open stop-losses 4.549% + this 3.853% = 8.403% > 6.0% of wallet,66.36426552216949
+218,FILUSDT,2021-10-12 23:00:00,open_loss_cap,open stop-losses 4.549% + this 2.934% = 7.484% > 6.0% of wallet,66.36426552216949
+232,AXSUSDT,2021-10-27 09:00:00,qty_zero,target notional 51.818010 / 123.45 floors to 0 at step 1,66.91608641090527
+234,VETUSDT,2021-10-28 09:00:00,open_loss_cap,open stop-losses 4.650% + this 4.989% = 9.639% > 6.0% of wallet,66.91608641090527
+241,1INCHUSDT,2021-11-06 12:00:00,open_loss_cap,open stop-losses 4.135% + this 3.572% = 7.707% > 6.0% of wallet,73.29162440775595
+243,XLMUSDT,2021-11-06 23:00:00,max_positions,3 positions open (max 3),73.29162440775595
+247,AXSUSDT,2021-11-09 22:00:00,qty_zero,target notional 78.636050 / 150.86 floors to 0 at step 1,78.63604997400586
+250,AVAXUSDT,2021-11-10 21:00:00,qty_zero,target notional 80.414638 / 84.331 floors to 0 at step 1,80.41463834581681
+255,AVAXUSDT,2021-11-23 14:00:00,qty_zero,target notional 76.068008 / 126.89 floors to 0 at step 1,76.0680083595742
+257,EGLDUSDT,2021-11-27 09:00:00,stop_vs_liq,stop 7.3955% > 0.7 x (1/10 - mmr 0.01) = 6.3000% of entry,76.0680083595742
+260,AXSUSDT,2021-11-30 07:00:00,qty_zero,target notional 71.407987 / 133.37 floors to 0 at step 1,71.40798705874649
+264,AVAXUSDT,2021-12-03 10:00:00,qty_zero,target notional 72.216530 / 109.861 floors to 0 at step 1,72.21653043665012
+267,NEARUSDT,2021-12-15 00:00:00,open_loss_cap,open stop-losses 3.501% + this 4.471% = 7.971% > 6.0% of wallet,81.07406007591052
+268,LRCUSDT,2021-12-15 19:00:00,stop_vs_liq,stop 5.4210% > 0.7 x (1/10 - mmr 0.03) = 4.9000% of entry,78.22766284158467
+269,AVAXUSDT,2021-12-28 01:00:00,qty_zero,target notional 78.227663 / 113.314 floors to 0 at step 1,78.22766284158467
+271,FTMUSDT,2021-12-28 01:00:00,open_loss_cap,open stop-losses 3.224% + this 3.887% = 7.111% > 6.0% of wallet,78.22766284158467
+276,AVAXUSDT,2022-01-04 02:00:00,qty_zero,target notional 77.106714 / 106.113 floors to 0 at step 1,77.10671415945247
+278,SANDUSDT,2022-01-04 08:00:00,open_loss_cap,open stop-losses 2.628% + this 3.436% = 6.064% > 6.0% of wallet,77.10671415945247
+279,SUSHIUSDT,2022-01-04 10:00:00,open_loss_cap,open stop-losses 2.628% + this 4.614% = 7.242% > 6.0% of wallet,77.10671415945247
+283,NEARUSDT,2022-01-08 22:00:00,open_loss_cap,open stop-losses 1.688% + this 4.471% = 6.160% > 6.0% of wallet,68.99804603005
+284,FTMUSDT,2022-01-09 03:00:00,stop_vs_liq,stop 7.6557% > 0.7 x (1/10 - mmr 0.006) = 6.5800% of entry,68.99804603005
+295,AVAXUSDT,2022-03-23 02:00:00,qty_zero,target notional 56.468660 / 83.71 floors to 0 at step 1,56.468659560342395
+297,AXSUSDT,2022-03-29 18:00:00,qty_zero,target notional 54.718253 / 65.34 floors to 0 at step 1,54.718253481057175
+301,BATUSDT,2022-03-30 02:00:00,max_positions,3 positions open (max 3),54.718253481057175
+302,ENJUSDT,2022-03-30 02:00:00,max_positions,3 positions open (max 3),54.718253481057175
+303,CTKUSDT,2022-03-30 02:00:00,max_positions,3 positions open (max 3),54.718253481057175
+304,1INCHUSDT,2022-03-30 02:00:00,max_positions,3 positions open (max 3),54.718253481057175
+305,CELRUSDT,2022-03-30 02:00:00,max_positions,3 positions open (max 3),54.718253481057175
+306,ALGOUSDT,2022-03-30 03:00:00,max_positions,3 positions open (max 3),54.718253481057175
+312,1000SHIBUSDT,2022-04-01 05:00:00,open_loss_cap,open stop-losses 4.053% + this 3.189% = 7.243% > 6.0% of wallet,56.63196374208108
+313,FILUSDT,2022-04-01 07:00:00,open_loss_cap,open stop-losses 4.053% + this 2.738% = 6.791% > 6.0% of wallet,56.63196374208108
+314,KNCUSDT,2022-04-01 08:00:00,open_loss_cap,open stop-losses 4.053% + this 2.980% = 7.033% > 6.0% of wallet,56.63196374208108
+316,WAVESUSDT,2022-04-05 02:00:00,open_loss_cap,open stop-losses 3.187% + this 4.778% = 7.964% > 6.0% of wallet,67.19429091408107
+320,AVAXUSDT,2022-04-06 00:00:00,qty_zero,target notional 61.543193 / 91.01 floors to 0 at step 1,61.54319264571578
+321,AXSUSDT,2022-04-06 00:00:00,qty_zero,target notional 61.543193 / 61.65 floors to 0 at step 1,61.54319264571578
+324,ZECUSDT,2022-04-06 01:00:00,open_loss_cap,open stop-losses 3.601% + this 3.913% = 7.514% > 6.0% of wallet,60.758350830484986
+325,NEARUSDT,2022-04-06 01:00:00,open_loss_cap,open stop-losses 3.601% + this 4.028% = 7.629% > 6.0% of wallet,60.758350830484986
+326,LRCUSDT,2022-04-06 02:00:00,stop_vs_liq,stop 6.0928% > 0.7 x (1/10 - mmr 0.03) = 4.9000% of entry,60.758350830484986
+327,DOTUSDT,2022-04-06 05:00:00,open_loss_cap,open stop-losses 3.601% + this 4.210% = 7.810% > 6.0% of wallet,60.758350830484986
+328,CRVUSDT,2022-04-06 05:00:00,open_loss_cap,open stop-losses 3.601% + this 4.313% = 7.913% > 6.0% of wallet,60.758350830484986
+329,THETAUSDT,2022-04-06 05:00:00,open_loss_cap,open stop-losses 3.601% + this 4.947% = 8.548% > 6.0% of wallet,60.758350830484986
+330,VETUSDT,2022-04-06 06:00:00,open_loss_cap,open stop-losses 3.601% + this 4.997% = 8.598% > 6.0% of wallet,60.758350830484986
+331,KNCUSDT,2022-04-06 06:00:00,open_loss_cap,open stop-losses 3.601% + this 4.766% = 8.367% > 6.0% of wallet,60.758350830484986
+332,RUNEUSDT,2022-04-06 07:00:00,open_loss_cap,open stop-losses 3.601% + this 2.730% = 6.330% > 6.0% of wallet,60.758350830484986
+354,1000SHIBUSDT,2022-08-02 07:00:00,open_loss_cap,open stop-losses 4.960% + this 2.436% = 7.396% > 6.0% of wallet,48.68104667266811
+355,BELUSDT,2022-08-02 07:00:00,open_loss_cap,open stop-losses 4.960% + this 2.904% = 7.865% > 6.0% of wallet,48.68104667266811
+356,FTMUSDT,2022-08-02 07:00:00,open_loss_cap,open stop-losses 4.960% + this 3.077% = 8.037% > 6.0% of wallet,48.68104667266811
+357,SNXUSDT,2022-08-02 07:00:00,open_loss_cap,open stop-losses 4.960% + this 3.865% = 8.825% > 6.0% of wallet,48.68104667266811
+359,ETCUSDT,2022-08-02 08:00:00,open_loss_cap,open stop-losses 3.805% + this 4.996% = 8.801% > 6.0% of wallet,48.54404667266811
+361,SANDUSDT,2022-08-02 15:00:00,open_loss_cap,open stop-losses 5.690% + this 3.185% = 8.875% > 6.0% of wallet,48.03329416581626
+362,KNCUSDT,2022-08-02 15:00:00,open_loss_cap,open stop-losses 5.690% + this 3.787% = 9.477% > 6.0% of wallet,48.03329416581626
+363,DOTUSDT,2022-08-02 15:00:00,open_loss_cap,open stop-losses 5.690% + this 4.559% = 10.249% > 6.0% of wallet,48.03329416581626
+364,UNFIUSDT,2022-08-02 15:00:00,open_loss_cap,open stop-losses 5.690% + this 4.928% = 10.618% > 6.0% of wallet,48.03329416581626
+365,LITUSDT,2022-08-02 17:00:00,open_loss_cap,open stop-losses 5.690% + this 4.988% = 10.678% > 6.0% of wallet,48.03329416581626
+366,DYDXUSDT,2022-08-02 17:00:00,stop_vs_liq,stop 6.8996% > 0.7 x (1/10 - mmr 0.01) = 6.3000% of entry,48.03329416581626
+367,FILUSDT,2022-08-02 17:00:00,stop_vs_liq,stop 9.8231% > 0.7 x (1/10 - mmr 0.01) = 6.3000% of entry,48.03329416581626
+371,SNXUSDT,2022-08-09 07:00:00,open_loss_cap,open stop-losses 3.787% + this 2.458% = 6.245% > 6.0% of wallet,49.20968174582568
+377,UNFIUSDT,2022-08-09 13:00:00,max_positions,3 positions open (max 3),46.449301517070715
+385,FLMUSDT,2022-08-13 13:00:00,stop_vs_liq,stop 8.4103% > 0.7 x (1/10 - mmr 0.05) = 3.5000% of entry,50.64439357851234
+390,FTMUSDT,2022-08-16 04:00:00,max_positions,3 positions open (max 3),50.41169117851235
+391,NEARUSDT,2022-08-16 04:00:00,max_positions,3 positions open (max 3),50.41169117851235
+392,LINKUSDT,2022-08-16 04:00:00,max_positions,3 positions open (max 3),50.41169117851235
+393,GALAUSDT,2022-08-16 04:00:00,max_positions,3 positions open (max 3),50.41169117851235
+396,KNCUSDT,2022-08-16 08:00:00,max_positions,3 positions open (max 3),48.86896022600824
+399,RUNEUSDT,2022-08-16 16:00:00,max_positions,3 positions open (max 3),47.39253109842552
+419,LTCUSDT,2022-09-14 05:00:00,open_loss_cap,open stop-losses 4.940% + this 3.251% = 8.191% > 6.0% of wallet,33.97983760756403
+431,LINKUSDT,2022-11-01 14:00:00,open_loss_cap,open stop-losses 5.018% + this 1.118% = 6.135% > 6.0% of wallet,39.66988787679789
+442,ALGOUSDT,2022-11-08 17:00:00,stop_vs_liq,stop 7.4673% > 0.7 x (1/10 - mmr 0.01) = 6.3000% of entry,38.227214587839306
+443,DYDXUSDT,2022-11-08 17:00:00,stop_vs_liq,stop 7.4854% > 0.7 x (1/10 - mmr 0.01) = 6.3000% of entry,38.227214587839306
+448,MASKUSDT,2022-12-08 08:00:00,open_loss_cap,open stop-losses 4.051% + this 4.636% = 8.687% > 6.0% of wallet,34.99057043116549
+450,FTMUSDT,2022-12-09 07:00:00,open_loss_cap,open stop-losses 4.127% + this 2.650% = 6.778% > 6.0% of wallet,34.33838735717664
+458,AXSUSDT,2023-01-10 03:00:00,max_positions,3 positions open (max 3),35.20458081728117
+459,OCEANUSDT,2023-01-10 04:00:00,max_positions,3 positions open (max 3),35.20458081728117
+468,SUSHIUSDT,2023-01-18 16:00:00,open_loss_cap,open stop-losses 4.693% + this 2.877% = 7.570% > 6.0% of wallet,34.89856964121821
+469,FILUSDT,2023-01-18 16:00:00,open_loss_cap,open stop-losses 4.693% + this 2.973% = 7.666% > 6.0% of wallet,34.89856964121821
+470,LINKUSDT,2023-01-18 16:00:00,open_loss_cap,open stop-losses 4.693% + this 3.698% = 8.391% > 6.0% of wallet,34.89856964121821
+471,AVAXUSDT,2023-01-18 16:00:00,open_loss_cap,open stop-losses 4.693% + this 3.735% = 8.428% > 6.0% of wallet,34.89856964121821
+472,LITUSDT,2023-01-18 16:00:00,open_loss_cap,open stop-losses 4.693% + this 4.527% = 9.220% > 6.0% of wallet,34.89856964121821
+473,GALAUSDT,2023-01-18 16:00:00,open_loss_cap,open stop-losses 4.693% + this 4.995% = 9.688% > 6.0% of wallet,34.89856964121821
+476,FTMUSDT,2023-01-18 17:00:00,open_loss_cap,open stop-losses 5.808% + this 4.832% = 10.640% > 6.0% of wallet,33.27158717531857
+478,NEARUSDT,2023-01-19 20:00:00,open_loss_cap,open stop-losses 4.856% + this 4.975% = 9.831% > 6.0% of wallet,32.73195200031857
+479,TRXUSDT,2023-01-20 18:00:00,open_loss_cap,open stop-losses 4.856% + this 1.622% = 6.478% > 6.0% of wallet,32.73195200031857
+480,ETCUSDT,2023-01-20 18:00:00,open_loss_cap,open stop-losses 4.856% + this 2.794% = 7.651% > 6.0% of wallet,32.73195200031857
+481,AXSUSDT,2023-01-20 18:00:00,open_loss_cap,open stop-losses 4.856% + this 3.582% = 8.438% > 6.0% of wallet,32.73195200031857
+487,SANDUSDT,2023-01-24 19:00:00,max_positions,3 positions open (max 3),35.95259428131876
+492,DOTUSDT,2023-01-24 23:00:00,open_loss_cap,open stop-losses 2.984% + this 3.388% = 6.371% > 6.0% of wallet,32.98921544866554
+495,ATOMUSDT,2023-01-25 13:00:00,open_loss_cap,open stop-losses 5.266% + this 2.979% = 8.244% > 6.0% of wallet,32.001787524813565
+496,FILUSDT,2023-01-25 13:00:00,open_loss_cap,open stop-losses 5.266% + this 3.281% = 8.547% > 6.0% of wallet,32.001787524813565
+498,GALAUSDT,2023-01-25 21:00:00,open_loss_cap,open stop-losses 5.869% + this 4.995% = 10.864% > 6.0% of wallet,31.50817240065371
+503,NEARUSDT,2023-02-01 16:00:00,max_positions,3 positions open (max 3),35.94596383149981
+504,AXSUSDT,2023-02-01 16:00:00,max_positions,3 positions open (max 3),35.94596383149981
+507,SANDUSDT,2023-02-01 19:00:00,max_positions,3 positions open (max 3),35.17063597956846
+508,OCEANUSDT,2023-02-01 20:00:00,max_positions,3 positions open (max 3),35.17063597956846
+514,SUSHIUSDT,2023-02-08 17:00:00,open_loss_cap,open stop-losses 5.925% + this 3.688% = 9.613% > 6.0% of wallet,47.71190374124542
+520,PEOPLEUSDT,2023-02-09 04:00:00,open_loss_cap,open stop-losses 3.128% + this 3.125% = 6.253% > 6.0% of wallet,43.477133215934316
+522,DYDXUSDT,2023-02-09 05:00:00,max_positions,3 positions open (max 3),43.477133215934316
+523,APEUSDT,2023-02-09 06:00:00,max_positions,3 positions open (max 3),43.477133215934316
+524,WAVESUSDT,2023-02-09 06:00:00,max_positions,3 positions open (max 3),43.477133215934316
+536,1000SHIBUSDT,2023-02-21 15:00:00,max_positions,3 positions open (max 3),39.50746130527881
+537,DYDXUSDT,2023-02-21 15:00:00,max_positions,3 positions open (max 3),39.50746130527881
+538,GALAUSDT,2023-02-21 15:00:00,max_positions,3 positions open (max 3),39.50746130527881
+544,NEARUSDT,2023-02-22 03:00:00,max_positions,3 positions open (max 3),37.14564128683343
+545,FTMUSDT,2023-02-22 03:00:00,max_positions,3 positions open (max 3),37.14564128683343
+547,ALGOUSDT,2023-02-22 08:00:00,max_positions,3 positions open (max 3),36.50494385274525
+550,PEOPLEUSDT,2023-02-22 11:00:00,max_positions,3 positions open (max 3),35.26456359256716
+554,TRXUSDT,2023-02-23 03:00:00,max_positions,3 positions open (max 3),33.45530090372225
+557,SFPUSDT,2023-02-26 03:00:00,open_loss_cap,open stop-losses 1.699% + this 4.911% = 6.610% > 6.0% of wallet,31.859331535438944
+563,ALGOUSDT,2023-02-28 13:00:00,max_positions,3 positions open (max 3),33.240405079396744
+564,SFPUSDT,2023-02-28 13:00:00,max_positions,3 positions open (max 3),33.240405079396744
+566,BCHUSDT,2023-02-28 16:00:00,max_positions,3 positions open (max 3),33.02241067939674
+567,NEARUSDT,2023-02-28 16:00:00,max_positions,3 positions open (max 3),33.02241067939674
+585,SANDUSDT,2023-03-22 19:00:00,open_loss_cap,open stop-losses 2.985% + this 4.013% = 6.999% > 6.0% of wallet,35.88028598072587
+592,MASKUSDT,2023-03-28 02:00:00,open_loss_cap,open stop-losses 2.170% + this 4.583% = 6.753% > 6.0% of wallet,37.483155200488895
+600,DYDXUSDT,2023-04-12 05:00:00,max_positions,3 positions open (max 3),35.29587932467234
+601,SANDUSDT,2023-04-12 05:00:00,max_positions,3 positions open (max 3),35.29587932467234
+602,MANAUSDT,2023-04-12 07:00:00,max_positions,3 positions open (max 3),35.29587932467234
+603,CHZUSDT,2023-04-12 07:00:00,max_positions,3 positions open (max 3),35.29587932467234
+604,SNXUSDT,2023-04-12 15:00:00,open_loss_cap,open stop-losses 3.901% + this 2.181% = 6.082% > 6.0% of wallet,36.398893812043845
+609,IMXUSDT,2023-04-18 02:00:00,max_positions,3 positions open (max 3),40.63712780879374
+610,CRVUSDT,2023-04-18 03:00:00,max_positions,3 positions open (max 3),40.63712780879374
+611,ATOMUSDT,2023-04-18 03:00:00,max_positions,3 positions open (max 3),40.63712780879374
+616,CTSIUSDT,2023-05-03 10:00:00,stop_vs_liq,stop 6.1141% > 0.7 x (1/10 - mmr 0.015) = 5.9500% of entry,35.9954955893637
+628,ARPAUSDT,2023-06-28 23:00:00,stop_vs_liq,stop 6.9993% > 0.7 x (1/10 - mmr 0.015) = 5.9500% of entry,33.69808754203092
+629,LINAUSDT,2023-06-30 15:00:00,bracket,10x above bracket max 7x at notional 29.08,33.69808754203092
+634,BCHUSDT,2023-07-04 10:00:00,max_positions,3 positions open (max 3),33.382156256611474
+638,DOTUSDT,2023-07-05 04:00:00,max_positions,3 positions open (max 3),32.15503141086266
+644,MTLUSDT,2023-07-14 19:00:00,open_loss_cap,open stop-losses 4.241% + this 3.974% = 8.215% > 6.0% of wallet,31.12524661809496
+645,WAVESUSDT,2023-07-14 22:00:00,open_loss_cap,open stop-losses 4.241% + this 4.976% = 9.217% > 6.0% of wallet,31.12524661809496
+651,DYDXUSDT,2023-07-18 13:00:00,max_positions,3 positions open (max 3),29.85789790583543
+652,MTLUSDT,2023-07-18 15:00:00,max_positions,3 positions open (max 3),29.85789790583543
+659,TRXUSDT,2023-07-25 10:00:00,max_positions,3 positions open (max 3),34.43970809968804
+667,DYDXUSDT,2023-08-01 13:00:00,open_loss_cap,open stop-losses 5.975% + this 1.089% = 7.064% > 6.0% of wallet,30.757254150238477
+668,LTCUSDT,2023-08-01 14:00:00,open_loss_cap,open stop-losses 5.975% + this 2.163% = 8.137% > 6.0% of wallet,30.757254150238477
+669,STMXUSDT,2023-08-02 00:00:00,bracket,10x above bracket max 8x at notional 33.38,33.38571015023848
+670,COMPUSDT,2023-08-02 00:00:00,open_loss_cap,open stop-losses 2.108% + this 4.992% = 7.100% > 6.0% of wallet,33.38571015023848
+673,STMXUSDT,2023-08-11 05:00:00,bracket,10x above bracket max 8x at notional 31.62,31.622912375675966
+676,LINAUSDT,2023-08-15 09:00:00,bracket,10x above bracket max 7x at notional 31.36,31.362923433486355
+688,STMXUSDT,2023-10-03 02:00:00,bracket,10x above bracket max 8x at notional 44.82,44.82961238512794
+696,MASKUSDT,2023-10-03 16:00:00,open_loss_cap,open stop-losses 4.821% + this 1.723% = 6.545% > 6.0% of wallet,41.08623014478219
+700,ADAUSDT,2023-10-04 07:00:00,open_loss_cap,open stop-losses 5.233% + this 2.418% = 7.651% > 6.0% of wallet,39.467747044205446
+704,STMXUSDT,2023-10-10 21:00:00,bracket,10x above bracket max 8x at notional 38.58,38.581872427591314
+713,STMXUSDT,2023-10-21 00:00:00,bracket,10x above bracket max 8x at notional 40.79,40.7899116515378
+721,BCHUSDT,2023-10-31 09:00:00,open_loss_cap,open stop-losses 4.933% + this 1.738% = 6.671% > 6.0% of wallet,44.91921566225016
+722,APEUSDT,2023-10-31 09:00:00,open_loss_cap,open stop-losses 4.933% + this 2.740% = 7.673% > 6.0% of wallet,44.91921566225016
+723,CRVUSDT,2023-10-31 09:00:00,open_loss_cap,open stop-losses 4.933% + this 2.756% = 7.689% > 6.0% of wallet,44.91921566225016
+724,UNFIUSDT,2023-10-31 09:00:00,open_loss_cap,open stop-losses 4.933% + this 4.849% = 9.782% > 6.0% of wallet,44.91921566225016
+728,GALAUSDT,2023-10-31 14:00:00,max_positions,3 positions open (max 3),43.8886040358058
+729,OPUSDT,2023-10-31 14:00:00,max_positions,3 positions open (max 3),43.8886040358058
+730,LPTUSDT,2023-10-31 14:00:00,max_positions,3 positions open (max 3),43.8886040358058
+732,STMXUSDT,2023-10-31 16:00:00,bracket,10x above bracket max 8x at notional 42.13,42.13661191689155
+743,GALAUSDT,2023-11-07 16:00:00,max_positions,3 positions open (max 3),36.117416483990084
+746,XLMUSDT,2023-11-07 19:00:00,open_loss_cap,open stop-losses 5.692% + this 4.104% = 9.796% > 6.0% of wallet,34.754649630828744
+747,STMXUSDT,2023-11-08 07:00:00,bracket,10x above bracket max 8x at notional 34.75,34.754649630828744
+751,LTCUSDT,2023-11-14 01:00:00,max_positions,3 positions open (max 3),40.552428230828745
+752,ADAUSDT,2023-11-14 02:00:00,max_positions,3 positions open (max 3),40.552428230828745
+753,DYDXUSDT,2023-11-14 02:00:00,max_positions,3 positions open (max 3),40.552428230828745
+754,1000SHIBUSDT,2023-11-14 02:00:00,max_positions,3 positions open (max 3),40.552428230828745
+755,OPUSDT,2023-11-14 02:00:00,max_positions,3 positions open (max 3),40.552428230828745
+756,HBARUSDT,2023-11-14 02:00:00,max_positions,3 positions open (max 3),40.552428230828745
+757,API3USDT,2023-11-14 02:00:00,max_positions,3 positions open (max 3),40.552428230828745
+758,FLMUSDT,2023-11-14 02:00:00,max_positions,3 positions open (max 3),40.552428230828745
+759,CRVUSDT,2023-11-14 02:00:00,max_positions,3 positions open (max 3),40.552428230828745
+760,COMPUSDT,2023-11-14 02:00:00,max_positions,3 positions open (max 3),40.552428230828745
+761,BLZUSDT,2023-11-14 02:00:00,max_positions,3 positions open (max 3),40.552428230828745
+762,FILUSDT,2023-11-14 02:00:00,max_positions,3 positions open (max 3),40.552428230828745
+763,LINKUSDT,2023-11-14 02:00:00,max_positions,3 positions open (max 3),40.552428230828745
+764,AVAXUSDT,2023-11-14 02:00:00,max_positions,3 positions open (max 3),40.552428230828745
+765,DOTUSDT,2023-11-14 03:00:00,max_positions,3 positions open (max 3); replace tried idx 750: still blocked (open_loss_cap),40.552428230828745
+766,UNFIUSDT,2023-11-14 03:00:00,max_positions,3 positions open (max 3); replace tried idx 750: still blocked (open_loss_cap),40.552428230828745
+767,GALAUSDT,2023-11-14 03:00:00,max_positions,3 positions open (max 3); replace tried idx 750: still blocked (open_loss_cap),40.552428230828745
+768,RUNEUSDT,2023-11-14 03:00:00,max_positions,3 positions open (max 3); replace tried idx 750: still blocked (open_loss_cap),40.552428230828745
+769,LPTUSDT,2023-11-14 04:00:00,max_positions,3 positions open (max 3); replace tried idx 750: still blocked (open_loss_cap),40.552428230828745
+770,OGNUSDT,2023-11-14 05:00:00,max_positions,3 positions open (max 3); replace tried idx 750: still blocked (open_loss_cap),40.552428230828745
+771,BAKEUSDT,2023-11-14 05:00:00,max_positions,3 positions open (max 3); replace tried idx 750: still blocked (stop_vs_liq),40.552428230828745
+772,STMXUSDT,2023-11-14 06:00:00,max_positions,3 positions open (max 3),40.552428230828745
+775,APEUSDT,2023-11-14 14:00:00,open_loss_cap,open stop-losses 3.486% + this 3.611% = 7.097% > 6.0% of wallet,38.68127129742514
+779,STMXUSDT,2023-11-21 04:00:00,bracket,10x above bracket max 8x at notional 38.92,38.9287926283326
+783,OPUSDT,2023-11-21 04:00:00,max_positions,3 positions open (max 3),38.9287926283326
+784,FILUSDT,2023-11-21 04:00:00,max_positions,3 positions open (max 3),38.9287926283326
+785,DYDXUSDT,2023-11-21 04:00:00,max_positions,3 positions open (max 3),38.9287926283326
+789,INJUSDT,2023-11-21 09:00:00,max_positions,3 positions open (max 3),37.528246850296824
+792,APTUSDT,2023-11-21 15:00:00,max_positions,3 positions open (max 3),36.3714081331676
+794,XLMUSDT,2023-11-21 17:00:00,open_loss_cap,open stop-losses 5.185% + this 2.323% = 7.508% > 6.0% of wallet,35.27993862226109
+795,COMPUSDT,2023-11-21 17:00:00,open_loss_cap,open stop-losses 5.185% + this 4.212% = 9.397% > 6.0% of wallet,35.27993862226109
+802,LINKUSDT,2023-11-28 07:00:00,max_positions,3 positions open (max 3),35.83638801582547
+803,APEUSDT,2023-11-28 07:00:00,max_positions,3 positions open (max 3),35.83638801582547
+805,UNFIUSDT,2023-11-28 09:00:00,stop_vs_liq,stop 5.7084% > 0.7 x (1/10 - mmr 0.025) = 5.2500% of entry,35.044208885330285
+806,APTUSDT,2023-11-28 10:00:00,open_loss_cap,open stop-losses 4.452% + this 1.901% = 6.353% > 6.0% of wallet,34.58947932630475
+808,INJUSDT,2023-11-28 10:00:00,open_loss_cap,open stop-losses 5.892% + this 3.390% = 9.282% > 6.0% of wallet,34.58947932630475
+809,HBARUSDT,2023-11-28 11:00:00,open_loss_cap,open stop-losses 5.892% + this 1.782% = 7.674% > 6.0% of wallet,34.58947932630475
+810,API3USDT,2023-11-28 12:00:00,open_loss_cap,open stop-losses 5.892% + this 2.966% = 8.857% > 6.0% of wallet,34.58947932630475
+811,GALAUSDT,2023-11-28 17:00:00,open_loss_cap,open stop-losses 5.892% + this 4.049% = 9.941% > 6.0% of wallet,34.58947932630475
+812,CRVUSDT,2023-11-30 12:00:00,open_loss_cap,open stop-losses 4.285% + this 2.072% = 6.357% > 6.0% of wallet,35.93759322630475
+817,RUNEUSDT,2023-12-05 18:00:00,open_loss_cap,open stop-losses 2.980% + this 4.458% = 7.439% > 6.0% of wallet,35.52635111349525
+823,AXSUSDT,2023-12-13 05:00:00,open_loss_cap,open stop-losses 3.736% + this 2.272% = 6.007% > 6.0% of wallet,31.76767666475464
+826,SUSHIUSDT,2023-12-14 14:00:00,open_loss_cap,open stop-losses 4.954% + this 4.896% = 9.850% > 6.0% of wallet,30.585577875427393
+831,AVAXUSDT,2023-12-26 06:00:00,qty_zero,target notional 39.940510 / 46.174 floors to 0 at step 1,39.94050959821387
+833,ETCUSDT,2023-12-26 08:00:00,max_positions,3 positions open (max 3),39.94050959821387
+834,FILUSDT,2023-12-26 08:00:00,max_positions,3 positions open (max 3),39.94050959821387
+837,RUNEUSDT,2023-12-26 11:00:00,max_positions,3 positions open (max 3),38.77045702209875
+838,OPUSDT,2023-12-26 13:00:00,open_loss_cap,open stop-losses 3.322% + this 3.659% = 6.981% > 6.0% of wallet,39.52927149440275
+840,DOTUSDT,2023-12-26 18:00:00,open_loss_cap,open stop-losses 3.636% + this 4.089% = 7.725% > 6.0% of wallet,38.21485348211745
+841,APTUSDT,2023-12-26 18:00:00,open_loss_cap,open stop-losses 3.636% + this 4.998% = 8.633% > 6.0% of wallet,38.21485348211745
+853,GMTUSDT,2024-01-10 06:00:00,stop_vs_liq,stop 8.5887% > 0.7 x (1/10 - mmr 0.015) = 5.9500% of entry,43.98699078597215
+860,LINKUSDT,2024-01-16 15:00:00,max_positions,3 positions open (max 3),42.4461701760645
+861,ETCUSDT,2024-01-16 15:00:00,max_positions,3 positions open (max 3),42.4461701760645
+865,STXUSDT,2024-01-17 20:00:00,max_positions,3 positions open (max 3),43.19279347028067
+869,INJUSDT,2024-01-19 07:00:00,open_loss_cap,open stop-losses 2.207% + this 4.507% = 6.714% > 6.0% of wallet,39.814733725153495
+882,MINAUSDT,2024-02-13 15:00:00,open_loss_cap,open stop-losses 3.726% + this 3.561% = 7.287% > 6.0% of wallet,33.01326935785744
+889,DYDXUSDT,2024-02-20 02:00:00,max_positions,3 positions open (max 3),34.978076691589564
+890,MINAUSDT,2024-02-20 02:00:00,max_positions,3 positions open (max 3),34.978076691589564
+891,FTMUSDT,2024-02-20 02:00:00,max_positions,3 positions open (max 3),34.978076691589564
+892,INJUSDT,2024-02-20 02:00:00,max_positions,3 positions open (max 3),34.978076691589564
+893,BAKEUSDT,2024-02-20 03:00:00,max_positions,3 positions open (max 3),34.978076691589564
+899,OPUSDT,2024-02-20 10:00:00,max_positions,3 positions open (max 3),33.775398728979134
+900,APTUSDT,2024-02-20 10:00:00,max_positions,3 positions open (max 3),33.775398728979134
+903,ETCUSDT,2024-02-20 16:00:00,open_loss_cap,open stop-losses 2.800% + this 3.518% = 6.318% > 6.0% of wallet,33.29705529949887
+904,MASKUSDT,2024-02-20 16:00:00,open_loss_cap,open stop-losses 2.800% + this 3.277% = 6.078% > 6.0% of wallet,33.29705529949887
+912,CFXUSDT,2024-03-05 17:00:00,open_loss_cap,open stop-losses 5.234% + this 3.966% = 9.200% > 6.0% of wallet,29.01509094348551
+913,BAKEUSDT,2024-03-05 17:00:00,stop_vs_liq,stop 5.1446% > 0.7 x (1/10 - mmr 0.05) = 3.5000% of entry,29.01509094348551
+919,1000PEPEUSDT,2024-03-12 18:00:00,stop_vs_liq,stop 8.7948% > 0.7 x (1/10 - mmr 0.0065) = 6.5450% of entry,25.31825487798827
+920,API3USDT,2024-03-14 16:00:00,open_loss_cap,open stop-losses 4.994% + this 1.426% = 6.420% > 6.0% of wallet,25.31825487798827
+921,1000LUNCUSDT,2024-03-14 17:00:00,open_loss_cap,open stop-losses 4.994% + this 3.248% = 8.242% > 6.0% of wallet,25.31825487798827
+925,STXUSDT,2024-03-14 20:00:00,open_loss_cap,open stop-losses 4.210% + this 2.946% = 7.156% > 6.0% of wallet,24.74427305481063
+926,FILUSDT,2024-03-14 20:00:00,open_loss_cap,open stop-losses 4.210% + this 3.703% = 7.913% > 6.0% of wallet,24.74427305481063
+928,BCHUSDT,2024-03-15 04:00:00,open_loss_cap,open stop-losses 4.209% + this 4.921% = 9.130% > 6.0% of wallet,23.687556038331685
+931,BAKEUSDT,2024-03-16 21:00:00,stop_vs_liq,stop 3.8358% > 0.7 x (1/10 - mmr 0.05) = 3.5000% of entry,21.551111271166437
+937,APTUSDT,2024-03-19 02:00:00,max_positions,3 positions open (max 3),20.43744142919583
+939,NEARUSDT,2024-03-19 04:00:00,open_loss_cap,open stop-losses 2.941% + this 3.679% = 6.620% > 6.0% of wallet,19.55359336178279
+940,LTCUSDT,2024-03-19 06:00:00,below_min_notional,qty 0.240 x 81.16 = 19.4784 < minNotional 20,19.55359336178279
+941,SUIUSDT,2024-03-19 08:00:00,stop_vs_liq,stop 8.1142% > 0.7 x (1/10 - mmr 0.01) = 6.3000% of entry,18.98228200572142
+942,1000SHIBUSDT,2024-03-19 17:00:00,stop_vs_liq,stop 7.6430% > 0.7 x (1/10 - mmr 0.0065) = 6.5450% of entry,18.98228200572142
+944,LTCUSDT,2024-03-26 15:00:00,below_min_notional,qty 0.212 x 89.43 = 18.9592 < minNotional 20,18.962824455721417
+945,BCHUSDT,2024-03-26 15:00:00,below_min_notional,qty 0.039 x 482.45 = 18.8156 < minNotional 20,18.962824455721417
+950,FTMUSDT,2024-03-27 10:00:00,max_positions,3 positions open (max 3),18.24815275972043
+959,FTMUSDT,2024-04-02 03:00:00,open_loss_cap,open stop-losses 3.545% + this 3.944% = 7.489% > 6.0% of wallet,17.64779784310917
+960,1000FLOKIUSDT,2024-04-02 03:00:00,open_loss_cap,open stop-losses 3.545% + this 4.276% = 7.821% > 6.0% of wallet,17.64779784310917
+961,STXUSDT,2024-04-02 03:00:00,open_loss_cap,open stop-losses 3.545% + this 4.142% = 7.687% > 6.0% of wallet,17.64779784310917
+962,LTCUSDT,2024-04-02 06:00:00,below_min_notional,qty 0.174 x 97.44 = 16.9546 < minNotional 20,17.024875602551884
+963,BCHUSDT,2024-04-02 15:00:00,below_min_notional,qty 0.018 x 631.15 = 11.3607 < minNotional 20,17.024875602551884
+965,ETCUSDT,2024-04-05 13:00:00,below_min_notional,qty 0.50 x 32.259 = 16.1295 < minNotional 20,16.424600010314016
+967,GALAUSDT,2024-04-07 12:00:00,stop_vs_liq,stop 6.6366% > 0.7 x (1/10 - mmr 0.01) = 6.3000% of entry,16.424600010314016
+968,BCHUSDT,2024-04-09 02:00:00,below_min_notional,qty 0.023 x 681.7 = 15.6791 < minNotional 20,16.148927010314015
+969,LTCUSDT,2024-04-09 09:00:00,below_min_notional,qty 0.161 x 99.76 = 16.0614 < minNotional 20,16.148927010314015
+970,AVAXUSDT,2024-04-09 09:00:00,qty_zero,target notional 16.148927 / 48.308 floors to 0 at step 1,16.148927010314015
+971,ICPUSDT,2024-04-09 09:00:00,qty_zero,target notional 16.148927 / 17.121 floors to 0 at step 1,16.148927010314015
+975,ETCUSDT,2024-04-09 15:00:00,below_min_notional,qty 0.46 x 33.225 = 15.2835 < minNotional 20,15.58433749867535
+982,FETUSDT,2024-04-10 23:00:00,open_loss_cap,open stop-losses 3.121% + this 4.637% = 7.758% > 6.0% of wallet,14.137277577286211
+983,1000PEPEUSDT,2024-04-11 09:00:00,open_loss_cap,open stop-losses 3.121% + this 3.690% = 6.812% > 6.0% of wallet,14.137277577286211
+984,BCHUSDT,2024-04-16 03:00:00,below_min_notional,qty 0.027 x 490.84 = 13.2527 < minNotional 20,13.687775239284969
+986,ICPUSDT,2024-04-23 10:00:00,qty_zero,target notional 13.687775 / 14.784 floors to 0 at step 1,13.687775239284969
+997,LINKUSDT,2024-05-22 15:00:00,below_min_notional,qty 0.81 x 16.388 = 13.2743 < minNotional 20,13.400127136078359
+998,BCHUSDT,2024-05-23 21:00:00,below_min_notional,qty 0.026 x 487.42 = 12.6729 < minNotional 20,13.150780353693696
+1000,ETCUSDT,2024-05-28 01:00:00,below_min_notional,qty 0.41 x 31.615 = 12.9621 < minNotional 20,13.202637070493696
+1005,AVAXUSDT,2024-05-28 05:00:00,qty_zero,target notional 12.351212 / 36.773 floors to 0 at step 1,12.35121233308198
+1007,LTCUSDT,2024-05-28 10:00:00,below_min_notional,qty 0.145 x 83.91 = 12.1669 < minNotional 20,12.23767167739991
+1017,PEOPLEUSDT,2024-06-12 13:00:00,stop_vs_liq,stop 7.8927% > 0.7 x (1/10 - mmr 0.015) = 5.9500% of entry,13.275267963857262
+1022,BCHUSDT,2024-07-16 08:00:00,below_min_notional,qty 0.036 x 375.78 = 13.5281 < minNotional 20,13.736547721292206
+1030,NEARUSDT,2024-07-23 09:00:00,open_loss_cap,open stop-losses 5.122% + this 3.339% = 8.461% > 6.0% of wallet,13.429637796321956
+1031,JASMYUSDT,2024-07-23 09:00:00,open_loss_cap,open stop-losses 5.122% + this 3.879% = 9.002% > 6.0% of wallet,13.429637796321956
+1036,1000PEPEUSDT,2024-07-30 01:00:00,open_loss_cap,open stop-losses 3.833% + this 2.454% = 6.287% > 6.0% of wallet,12.410172801045082
+1039,BCHUSDT,2024-07-31 22:00:00,below_min_notional,qty 0.030 x 419.04 = 12.5712 < minNotional 20,12.630004379911147
+1045,PEOPLEUSDT,2024-08-27 20:00:00,open_loss_cap,open stop-losses 4.580% + this 1.490% = 6.069% > 6.0% of wallet,11.744423817444853
+1048,AAVEUSDT,2024-09-04 02:00:00,qty_zero,target notional 9.849603 / 122.25 floors to 0 at step 0.1,10.905584886122327
+1050,AVAXUSDT,2024-09-11 16:00:00,qty_zero,target notional 10.807186 / 23.317 floors to 0 at step 1,10.807186041394369
+1053,AAVEUSDT,2024-09-17 02:00:00,qty_zero,target notional 11.619676 / 138.48 floors to 0 at step 0.1,11.619675817028968
+1059,LTCUSDT,2024-09-24 03:00:00,below_min_notional,qty 0.196 x 66.6 = 13.0536 < minNotional 20,13.079535198890571
+1061,PEOPLEUSDT,2024-09-24 03:00:00,max_positions,3 positions open (max 3),13.079535198890571
+1065,NEARUSDT,2024-10-01 14:00:00,open_loss_cap,open stop-losses 4.861% + this 1.216% = 6.078% > 6.0% of wallet,16.01148278040377
+1066,WLDUSDT,2024-10-01 14:00:00,open_loss_cap,open stop-losses 4.861% + this 1.640% = 6.502% > 6.0% of wallet,16.01148278040377
+1067,ARBUSDT,2024-10-01 14:00:00,open_loss_cap,open stop-losses 4.861% + this 1.823% = 6.685% > 6.0% of wallet,16.01148278040377
+1068,STMXUSDT,2024-10-01 14:00:00,bracket,10x above bracket max 8x at notional 16.01,16.01148278040377
+1069,TRBUSDT,2024-10-01 14:00:00,open_loss_cap,open stop-losses 4.861% + this 1.898% = 6.759% > 6.0% of wallet,16.01148278040377
+1070,STXUSDT,2024-10-01 14:00:00,open_loss_cap,open stop-losses 4.861% + this 2.181% = 7.042% > 6.0% of wallet,16.01148278040377
+1071,TIAUSDT,2024-10-01 14:00:00,open_loss_cap,open stop-losses 4.861% + this 1.941% = 6.803% > 6.0% of wallet,16.01148278040377
+1075,LTCUSDT,2024-10-06 00:00:00,below_min_notional,qty 0.207 x 66.26 = 13.7158 < minNotional 20,13.774423415373386
+1079,1000PEPEUSDT,2024-10-08 01:00:00,max_positions,3 positions open (max 3),14.212424613525068
+1080,BIGTIMEUSDT,2024-10-08 01:00:00,max_positions,3 positions open (max 3),14.212424613525068
+1081,AAVEUSDT,2024-10-08 02:00:00,max_positions,3 positions open (max 3); replace tried idx 1078: still blocked (qty_zero),14.212424613525068
+1087,REEFUSDT,2024-10-08 13:00:00,stop_vs_liq,stop 5.6156% > 0.7 x (1/10 - mmr 0.02) = 5.6000% of entry,13.034756291460688
+1088,NEARUSDT,2024-10-08 14:00:00,open_loss_cap,open stop-losses 4.260% + this 2.679% = 6.939% > 6.0% of wallet,13.034756291460688
+1089,WLDUSDT,2024-10-08 14:00:00,open_loss_cap,open stop-losses 4.260% + this 3.253% = 7.513% > 6.0% of wallet,13.034756291460688
+1096,AVAXUSDT,2024-10-15 05:00:00,qty_zero,target notional 12.110037 / 28.859 floors to 0 at step 1,12.110036571879167
+1098,AAVEUSDT,2024-10-15 16:00:00,qty_zero,target notional 11.557243 / 155.38 floors to 0 at step 0.1,11.557243088302613
+1103,LTCUSDT,2024-10-22 01:00:00,below_min_notional,qty 0.153 x 70.74 = 10.8232 < minNotional 20,10.89030090024416
+1107,INJUSDT,2024-10-22 01:00:00,max_positions,3 positions open (max 3),10.89030090024416
+1108,1000PEPEUSDT,2024-10-22 01:00:00,max_positions,3 positions open (max 3),10.89030090024416
+1109,FTMUSDT,2024-10-22 01:00:00,max_positions,3 positions open (max 3),10.89030090024416
+1110,OPUSDT,2024-10-22 01:00:00,max_positions,3 positions open (max 3),10.89030090024416
+1111,SEIUSDT,2024-10-22 01:00:00,max_positions,3 positions open (max 3),10.89030090024416
+1112,SUIUSDT,2024-10-22 01:00:00,max_positions,3 positions open (max 3),10.89030090024416
+1113,TIAUSDT,2024-10-22 01:00:00,max_positions,3 positions open (max 3),10.89030090024416
+1114,WLDUSDT,2024-10-22 01:00:00,max_positions,3 positions open (max 3),10.89030090024416
+1115,AAVEUSDT,2024-10-22 10:00:00,qty_zero,target notional 10.613062 / 151.6 floors to 0 at step 0.1,10.613061997863934
+1117,AVAXUSDT,2024-10-22 10:00:00,qty_zero,target notional 10.613062 / 27.458 floors to 0 at step 1,10.613061997863934
+1118,BCHUSDT,2024-10-22 11:00:00,below_min_notional,qty 0.029 x 360.26 = 10.4475 < minNotional 20,10.613061997863934
+1121,ARBUSDT,2024-10-22 15:00:00,max_positions,3 positions open (max 3),10.508268048883059
+1122,1000BONKUSDT,2024-10-22 15:00:00,max_positions,3 positions open (max 3),10.508268048883059
+1123,ORDIUSDT,2024-10-22 15:00:00,max_positions,3 positions open (max 3),10.508268048883059
+1127,LINKUSDT,2024-10-25 00:00:00,below_min_notional,qty 0.82 x 11.616 = 9.5251 < minNotional 20,9.629214390365423
+1131,BCHUSDT,2024-11-01 08:00:00,below_min_notional,qty 0.026 x 345.56 = 8.9846 < minNotional 20,9.157395763867461
+1137,BCHUSDT,2024-11-12 11:00:00,below_min_notional,qty 0.019 x 437.39 = 8.3104 < minNotional 20,8.577511877047165
+1139,APEUSDT,2024-11-12 11:00:00,open_loss_cap,open stop-losses 4.161% + this 3.996% = 8.156% > 6.0% of wallet,8.577511877047165
+1140,PENDLEUSDT,2024-11-12 11:00:00,open_loss_cap,open stop-losses 4.161% + this 2.849% = 7.010% > 6.0% of wallet,8.577511877047165
+1141,FETUSDT,2024-11-12 11:00:00,open_loss_cap,open stop-losses 4.161% + this 4.044% = 8.204% > 6.0% of wallet,8.577511877047165
+1142,FTMUSDT,2024-11-12 11:00:00,open_loss_cap,open stop-losses 4.161% + this 4.821% = 8.981% > 6.0% of wallet,8.577511877047165
+1143,ORDIUSDT,2024-11-12 11:00:00,below_min_notional,qty 0.1 x 41.212 = 4.1212 < minNotional 5,8.577511877047165
+1144,SEIUSDT,2024-11-12 11:00:00,open_loss_cap,open stop-losses 4.161% + this 4.773% = 8.933% > 6.0% of wallet,8.577511877047165
+1145,UNIUSDT,2024-11-12 14:00:00,qty_zero,target notional 8.221081 / 8.986 floors to 0 at step 1,8.221080827326462
+1147,1000SHIBUSDT,2024-11-12 14:00:00,open_loss_cap,open stop-losses 3.308% + this 4.806% = 8.114% > 6.0% of wallet,8.221080827326462
+1148,LINKUSDT,2024-11-13 03:00:00,below_min_notional,qty 0.57 x 13.757 = 7.8415 < minNotional 20,7.9488735254925365
+1150,AVAXUSDT,2024-11-15 00:00:00,qty_zero,target notional 7.687192 / 31.206 floors to 0 at step 1,7.6871920978607085
+1153,ORDIUSDT,2024-11-19 15:00:00,below_min_notional,qty 0.1 x 37.402 = 3.7402 < minNotional 5,7.440095892227586
+1155,LTCUSDT,2024-11-19 15:00:00,below_min_notional,qty 0.085 x 86.8 = 7.3780 < minNotional 20,7.440095892227586
+1157,AVAXUSDT,2024-11-19 15:00:00,qty_zero,target notional 7.440096 / 34.107 floors to 0 at step 1,7.440095892227586
+1158,AAVEUSDT,2024-11-19 18:00:00,qty_zero,target notional 7.440096 / 161.31 floors to 0 at step 0.1,7.440095892227586
+1160,FTMUSDT,2024-11-19 21:00:00,max_positions,3 positions open (max 3),7.440095892227586
+1163,NEARUSDT,2024-11-19 22:00:00,max_positions,3 positions open (max 3),7.2399373385239105
+1164,INJUSDT,2024-11-19 23:00:00,below_min_notional,qty 0.2 x 24.282 = 4.8564 < minNotional 5,7.176084382380327
+1165,1000PEPEUSDT,2024-11-20 00:00:00,open_loss_cap,open stop-losses 3.371% + this 4.480% = 7.851% > 6.0% of wallet,7.176084382380327
+1166,BCHUSDT,2024-11-20 04:00:00,below_min_notional,qty 0.016 x 434.98 = 6.9597 < minNotional 20,7.037805879424935
+1169,WLDUSDT,2024-11-20 04:00:00,max_positions,3 positions open (max 3),7.037805879424935
+1170,APEUSDT,2024-11-20 04:00:00,max_positions,3 positions open (max 3),7.037805879424935
+1171,1000FLOKIUSDT,2024-11-20 04:00:00,max_positions,3 positions open (max 3),7.037805879424935
+1172,PENDLEUSDT,2024-11-20 16:00:00,max_positions,3 positions open (max 3),7.037805879424935
+1174,UNIUSDT,2024-11-20 21:00:00,qty_zero,target notional 6.533811 / 8.83 floors to 0 at step 1,6.533810571186727
+1176,LINKUSDT,2024-11-26 08:00:00,below_min_notional,qty 0.37 x 17.238 = 6.3781 < minNotional 20,6.4148248758683115
+1177,AVAXUSDT,2024-11-26 09:00:00,qty_zero,target notional 6.414825 / 40.357 floors to 0 at step 1,6.4148248758683115
+1179,BCHUSDT,2024-11-26 09:00:00,below_min_notional,qty 0.013 x 487.54 = 6.3380 < minNotional 20,6.4148248758683115
+1181,LTCUSDT,2024-11-26 09:00:00,below_min_notional,qty 0.069 x 91.73 = 6.3294 < minNotional 20,6.4148248758683115
+1183,WLDUSDT,2024-11-26 09:00:00,max_positions,3 positions open (max 3),6.4148248758683115
+1184,FETUSDT,2024-11-26 10:00:00,max_positions,3 positions open (max 3),6.4148248758683115
+1185,1000SHIBUSDT,2024-11-26 10:00:00,max_positions,3 positions open (max 3),6.4148248758683115
+1186,TIAUSDT,2024-11-26 10:00:00,max_positions,3 positions open (max 3),6.4148248758683115
+1188,UNIUSDT,2024-11-26 12:00:00,qty_zero,target notional 6.148721 / 10.714 floors to 0 at step 1,6.148720658658001
+1189,AAVEUSDT,2024-11-26 12:00:00,qty_zero,target notional 6.148721 / 169.25 floors to 0 at step 0.1,6.148720658658001
+1190,ORDIUSDT,2024-11-26 12:00:00,below_min_notional,qty 0.1 x 37.803 = 3.7803 < minNotional 5,6.148720658658001
+1192,1000BONKUSDT,2024-11-26 13:00:00,open_loss_cap,open stop-losses 5.609% + this 4.981% = 10.590% > 6.0% of wallet; replace tried idx 1191: still blocked (below_min_notional),6.148720658658001
+1193,FILUSDT,2024-11-26 15:00:00,open_loss_cap,open stop-losses 5.609% + this 3.380% = 8.989% > 6.0% of wallet,6.148720658658001
+1194,NEARUSDT,2024-11-26 23:00:00,qty_zero,target notional 3.781188 / 6.44 floors to 0 at step 1,5.941256099078767
+1196,APEUSDT,2024-11-27 00:00:00,open_loss_cap,open stop-losses 5.801% + this 4.981% = 10.782% > 6.0% of wallet,5.941256099078767
+1197,1000PEPEUSDT,2024-11-27 03:00:00,open_loss_cap,open stop-losses 5.801% + this 4.085% = 9.886% > 6.0% of wallet,5.941256099078767
+1198,DOTUSDT,2024-11-27 07:00:00,open_loss_cap,open stop-losses 5.801% + this 3.769% = 9.570% > 6.0% of wallet,5.941256099078767
+1201,ENSUSDT,2024-12-03 15:00:00,below_min_notional,qty 0.1 x 39.222 = 3.9222 < minNotional 5,6.899150335312763
+1202,XLMUSDT,2024-12-03 15:00:00,open_loss_cap,open stop-losses 4.621% + this 4.984% = 9.605% > 6.0% of wallet,6.899150335312763
+1203,WIFUSDT,2024-12-03 15:00:00,below_min_notional,qty 1.6 x 3.111 = 4.9776 < minNotional 5,6.899150335312763
+1204,1000FLOKIUSDT,2024-12-03 18:00:00,open_loss_cap,open stop-losses 4.621% + this 4.993% = 9.614% > 6.0% of wallet,6.899150335312763
+1205,1000BONKUSDT,2024-12-03 19:00:00,below_min_notional,qty 114 x 0.041043 = 4.6789 < minNotional 5,6.899150335312763
+1206,1000SHIBUSDT,2024-12-03 21:00:00,below_min_notional,qty 167 x 0.02854 = 4.7662 < minNotional 5,6.899150335312763
+1209,BCHUSDT,2024-12-10 17:00:00,below_min_notional,qty 0.015 x 509.03 = 7.6354 < minNotional 20,7.936747136829066
+1211,ENSUSDT,2024-12-17 02:00:00,below_min_notional,qty 0.1 x 44.488 = 4.4488 < minNotional 5,8.016889355455238
+1212,LINKUSDT,2024-12-17 02:00:00,below_min_notional,qty 0.28 x 28.538 = 7.9906 < minNotional 20,8.016889355455238
+1216,SEIUSDT,2024-12-17 02:00:00,max_positions,3 positions open (max 3),8.016889355455238
+1217,OPUSDT,2024-12-17 02:00:00,max_positions,3 positions open (max 3),8.016889355455238
+1218,NEARUSDT,2024-12-17 02:00:00,max_positions,3 positions open (max 3),8.016889355455238
+1219,FILUSDT,2024-12-17 02:00:00,max_positions,3 positions open (max 3),8.016889355455238
+1220,WLDUSDT,2024-12-17 04:00:00,max_positions,3 positions open (max 3),8.016889355455238
+1221,UNIUSDT,2024-12-17 11:00:00,qty_zero,target notional 7.906508 / 16.236 floors to 0 at step 1,7.906507563186226
+1224,ARBUSDT,2024-12-17 16:00:00,max_positions,3 positions open (max 3),7.792180324298247
+1225,DOTUSDT,2024-12-17 16:00:00,max_positions,3 positions open (max 3),7.792180324298247
+1226,LTCUSDT,2024-12-17 16:00:00,max_positions,3 positions open (max 3),7.792180324298247
+1227,AAVEUSDT,2024-12-17 16:00:00,max_positions,3 positions open (max 3),7.792180324298247
+1228,FTMUSDT,2024-12-17 16:00:00,max_positions,3 positions open (max 3),7.792180324298247
+1230,1000PEPEUSDT,2024-12-17 17:00:00,max_positions,3 positions open (max 3),7.732852372208736
+1233,BCHUSDT,2024-12-18 05:00:00,below_min_notional,qty 0.013 x 522.44 = 6.7917 < minNotional 20,7.189226709102016
+1236,UNIUSDT,2024-12-26 07:00:00,qty_zero,target notional 6.988412 / 13.274 floors to 0 at step 1,6.988412501193939
+1240,LINKUSDT,2024-12-28 00:00:00,below_min_notional,qty 0.30 x 21.558 = 6.4674 < minNotional 20,6.477679913983641
+1241,AAVEUSDT,2024-12-31 14:00:00,qty_zero,target notional 6.477680 / 322.63 floors to 0 at step 0.1,6.477679913983641
+1247,UNIUSDT,2025-01-07 14:00:00,qty_zero,target notional 6.909631 / 14.844 floors to 0 at step 1,6.909630953901157
+1249,AVAXUSDT,2025-01-07 15:00:00,qty_zero,target notional 6.635438 / 42.338 floors to 0 at step 1,6.635437927949192
+1255,WLDUSDT,2025-01-07 23:00:00,below_min_notional,qty 2 x 2.3697 = 4.7394 < minNotional 5,6.142391503633825
+1258,HBARUSDT,2025-01-23 08:00:00,open_loss_cap,open stop-losses 4.565% + this 2.359% = 6.923% > 6.0% of wallet,6.142391503633825
+1259,XLMUSDT,2025-01-23 15:00:00,open_loss_cap,open stop-losses 4.565% + this 3.879% = 8.443% > 6.0% of wallet,6.142391503633825
+1260,LINKUSDT,2025-02-02 14:00:00,below_min_notional,qty 0.26 x 22.448 = 5.8365 < minNotional 20,5.875345814469916
+1261,LTCUSDT,2025-02-02 23:00:00,below_min_notional,qty 0.051 x 108.85 = 5.5514 < minNotional 20,5.875345814469916
+1262,LTCUSDT,2025-02-18 07:00:00,below_min_notional,qty 0.048 x 121.35 = 5.8248 < minNotional 20,5.875345814469916
+1264,TIAUSDT,2025-03-26 15:00:00,below_min_notional,qty 1 x 3.5309 = 3.5309 < minNotional 5,5.807344417519958
+1272,LINKUSDT,2025-04-30 13:00:00,below_min_notional,qty 0.42 x 14.297 = 6.0047 < minNotional 20,6.122145494277935
+1276,1000PEPEUSDT,2025-04-30 15:00:00,open_loss_cap,open stop-losses 3.647% + this 2.405% = 6.052% > 6.0% of wallet,6.053654483939832
+1277,TAOUSDT,2025-04-30 15:00:00,open_loss_cap,open stop-losses 3.647% + this 4.182% = 7.829% > 6.0% of wallet,6.053654483939832
+1278,SUIUSDT,2025-04-30 16:00:00,open_loss_cap,open stop-losses 3.647% + this 4.541% = 8.189% > 6.0% of wallet,6.053654483939832
+1279,WLDUSDT,2025-04-30 16:00:00,below_min_notional,qty 4 x 1.0654 = 4.2616 < minNotional 5,6.053654483939832
+1280,ADAUSDT,2025-04-30 18:00:00,open_loss_cap,open stop-losses 3.647% + this 2.677% = 6.325% > 6.0% of wallet,6.053654483939832
+1281,AVAXUSDT,2025-04-30 21:00:00,qty_zero,target notional 6.053654 / 21.064 floors to 0 at step 1,6.053654483939832
+1282,ONDOUSDT,2025-04-30 21:00:00,open_loss_cap,open stop-losses 3.647% + this 4.922% = 8.570% > 6.0% of wallet,6.053654483939832
+1286,1000BONKUSDT,2025-05-06 15:00:00,open_loss_cap,open stop-losses 4.464% + this 1.946% = 6.409% > 6.0% of wallet,6.237491722385263
+1290,AVAXUSDT,2025-05-13 03:00:00,qty_zero,target notional 6.354929 / 23.824 floors to 0 at step 1,6.354928506992858
+1291,UNIUSDT,2025-05-13 03:00:00,qty_zero,target notional 6.354929 / 6.618 floors to 0 at step 1,6.354928506992858
+1293,BCHUSDT,2025-05-13 03:00:00,below_min_notional,qty 0.016 x 397.09 = 6.3534 < minNotional 20,6.354928506992858
+1295,FILUSDT,2025-05-13 03:00:00,max_positions,3 positions open (max 3),6.354928506992858
+1296,AAVEUSDT,2025-05-13 03:00:00,max_positions,3 positions open (max 3),6.354928506992858
+1297,WLDUSDT,2025-05-13 03:00:00,max_positions,3 positions open (max 3),6.354928506992858
+1298,1000SHIBUSDT,2025-05-13 03:00:00,max_positions,3 positions open (max 3),6.354928506992858
+1301,CAKEUSDT,2025-05-13 05:00:00,below_min_notional,qty 2 x 2.3054 = 4.6108 < minNotional 5,6.142181349348766
+1303,HBARUSDT,2025-05-13 05:00:00,max_positions,3 positions open (max 3),6.142181349348766
+1304,APTUSDT,2025-05-13 05:00:00,max_positions,3 positions open (max 3),6.142181349348766
+1305,LDOUSDT,2025-05-13 05:00:00,max_positions,3 positions open (max 3),6.142181349348766
+1306,1000BONKUSDT,2025-05-13 05:00:00,max_positions,3 positions open (max 3),6.142181349348766
+1307,XLMUSDT,2025-05-13 07:00:00,max_positions,3 positions open (max 3),6.142181349348766
+1308,OPUSDT,2025-05-13 13:00:00,max_positions,3 positions open (max 3),6.142181349348766
+1310,LINKUSDT,2025-05-15 14:00:00,below_min_notional,qty 0.36 x 16.127 = 5.8057 < minNotional 20,5.9286606320114155
+1311,LTCUSDT,2025-05-15 16:00:00,below_min_notional,qty 0.060 x 98.34 = 5.9004 < minNotional 20,5.9286606320114155
+1312,TAOUSDT,2025-05-15 16:00:00,below_min_notional,qty 0.011 x 441.88 = 4.8607 < minNotional 5,5.9286606320114155
+1313,SUIUSDT,2025-05-15 17:00:00,below_min_notional,qty 1.2 x 3.864 = 4.6368 < minNotional 5,5.9286606320114155
+1314,ORDIUSDT,2025-05-16 15:00:00,below_min_notional,qty 0.5 x 9.929 = 4.9645 < minNotional 5,5.814738998867833
+1316,LTCUSDT,2025-05-20 18:00:00,below_min_notional,qty 0.060 x 94.33 = 5.6598 < minNotional 20,5.750900036715924
+1324,WLDUSDT,2025-05-27 02:00:00,max_positions,3 positions open (max 3),6.3776621334009835
+1325,XLMUSDT,2025-05-27 03:00:00,max_positions,3 positions open (max 3),6.3776621334009835
+1326,ADAUSDT,2025-05-27 03:00:00,max_positions,3 positions open (max 3),6.3776621334009835
+1327,RUNEUSDT,2025-05-27 03:00:00,max_positions,3 positions open (max 3),6.3776621334009835
+1328,NEARUSDT,2025-05-27 03:00:00,max_positions,3 positions open (max 3),6.3776621334009835
+1329,BCHUSDT,2025-05-27 04:00:00,max_positions,3 positions open (max 3),6.3776621334009835
+1330,DOTUSDT,2025-05-27 04:00:00,max_positions,3 positions open (max 3),6.3776621334009835
+1331,CRVUSDT,2025-05-27 04:00:00,max_positions,3 positions open (max 3),6.3776621334009835
+1332,SUIUSDT,2025-05-27 04:00:00,max_positions,3 positions open (max 3),6.3776621334009835
+1333,LINKUSDT,2025-05-27 04:00:00,max_positions,3 positions open (max 3),6.3776621334009835
+1334,WIFUSDT,2025-05-27 04:00:00,max_positions,3 positions open (max 3),6.3776621334009835
+1338,CAKEUSDT,2025-05-30 18:00:00,below_min_notional,qty 2 x 2.3527 = 4.7054 < minNotional 5,6.139968214881329
+1339,UNIUSDT,2025-05-31 17:00:00,qty_zero,target notional 6.139968 / 6.156 floors to 0 at step 1,6.139968214881329
+1349,UNIUSDT,2025-06-20 18:00:00,qty_zero,target notional 5.436430 / 7.068 floors to 0 at step 1,5.436430249857539
+1350,UNIUSDT,2025-07-01 07:00:00,qty_zero,target notional 5.371965 / 7.046 floors to 0 at step 1,5.371965131598284
+1352,AAVEUSDT,2025-07-01 08:00:00,qty_zero,target notional 5.371965 / 271.04 floors to 0 at step 0.1,5.371965131598284
+1354,BCHUSDT,2025-07-04 03:00:00,below_min_notional,qty 0.010 x 490.03 = 4.9003 < minNotional 20,5.15654020007159
+1357,LINKUSDT,2025-07-15 02:00:00,below_min_notional,qty 0.33 x 15.611 = 5.1516 < minNotional 20,5.303205339050917
+1361,ENAUSDT,2025-07-15 02:00:00,max_positions,3 positions open (max 3),5.303205339050917
+1362,OPUSDT,2025-07-15 02:00:00,max_positions,3 positions open (max 3),5.303205339050917
+1363,ETHFIUSDT,2025-07-15 02:00:00,max_positions,3 positions open (max 3),5.303205339050917
+1364,1000PEPEUSDT,2025-07-15 02:00:00,max_positions,3 positions open (max 3),5.303205339050917
+1365,WIFUSDT,2025-07-15 02:00:00,max_positions,3 positions open (max 3),5.303205339050917
+1368,LPTUSDT,2025-07-15 05:00:00,below_min_notional,qty 0.7 x 6.558 = 4.5906 < minNotional 5,5.111218172269677
+1370,TRBUSDT,2025-07-15 05:00:00,max_positions,3 positions open (max 3),5.111218172269677
+1371,ARBUSDT,2025-07-15 05:00:00,max_positions,3 positions open (max 3),5.111218172269677
+1372,APTUSDT,2025-07-15 06:00:00,max_positions,3 positions open (max 3); replace tried idx 1367: still blocked (below_min_notional),5.111218172269677
+1373,POPCATUSDT,2025-07-15 07:00:00,max_positions,3 positions open (max 3); replace tried idx 1367: still blocked (below_min_notional),5.111218172269677
+1374,DOTUSDT,2025-07-15 14:00:00,below_min_notional,qty 1.2 x 3.94 = 4.7280 < minNotional 5,4.9472504785423705
+1375,1000SHIBUSDT,2025-07-15 14:00:00,below_min_notional,qty 373 x 0.013231 = 4.9352 < minNotional 5,4.9472504785423705
+1376,FETUSDT,2025-07-15 14:00:00,below_min_notional,qty 6 x 0.7069 = 4.2414 < minNotional 5,4.9472504785423705
+1377,BCHUSDT,2025-07-16 00:00:00,below_min_notional,qty 0.009 x 497.32 = 4.4759 < minNotional 20,4.9472504785423705
+1379,BCHUSDT,2025-07-22 02:00:00,below_min_notional,qty 0.010 x 523.25 = 5.2325 < minNotional 20,5.74412005154237
+1382,TRBUSDT,2025-07-22 06:00:00,below_min_notional,qty 0.1 x 44.15 = 4.4150 < minNotional 5,5.559010451412764
+1384,UNIUSDT,2025-07-22 06:00:00,qty_zero,target notional 5.559010 / 10.405 floors to 0 at step 1,5.559010451412764
+1386,LINKUSDT,2025-07-22 06:00:00,max_positions,3 positions open (max 3),5.559010451412764
+1387,1000PEPEUSDT,2025-07-22 06:00:00,max_positions,3 positions open (max 3),5.559010451412764
+1388,NEARUSDT,2025-07-22 06:00:00,max_positions,3 positions open (max 3),5.559010451412764
+1389,TIAUSDT,2025-07-22 06:00:00,max_positions,3 positions open (max 3),5.559010451412764
+1390,APTUSDT,2025-07-22 06:00:00,max_positions,3 positions open (max 3),5.559010451412764
+1391,FETUSDT,2025-07-22 09:00:00,below_min_notional,qty 6 x 0.7934 = 4.7604 < minNotional 5,5.322563375233085
+1394,ENAUSDT,2025-07-22 10:00:00,below_min_notional,qty 8 x 0.4964 = 3.9712 < minNotional 5,5.322563375233085
+1395,OPUSDT,2025-07-22 11:00:00,open_loss_cap,open stop-losses 4.605% + this 4.630% = 9.235% > 6.0% of wallet,5.322563375233085
+1399,AVAXUSDT,2025-07-26 15:00:00,qty_zero,target notional 5.450093 / 24.703 floors to 0 at step 1,5.450093075135331
+1402,LINKUSDT,2025-07-29 01:00:00,below_min_notional,qty 0.30 x 18.131 = 5.4393 < minNotional 20,5.586269966635331
+1404,ARBUSDT,2025-07-29 01:00:00,max_positions,3 positions open (max 3),5.586269966635331
+1405,ONDOUSDT,2025-07-29 01:00:00,max_positions,3 positions open (max 3),5.586269966635331
+1406,LTCUSDT,2025-07-29 01:00:00,max_positions,3 positions open (max 3),5.586269966635331
+1407,FILUSDT,2025-07-29 01:00:00,max_positions,3 positions open (max 3),5.586269966635331
+1408,ADAUSDT,2025-07-29 01:00:00,max_positions,3 positions open (max 3),5.586269966635331
+1409,LPTUSDT,2025-07-29 01:00:00,max_positions,3 positions open (max 3),5.586269966635331
+1410,1000SHIBUSDT,2025-07-29 01:00:00,max_positions,3 positions open (max 3),5.586269966635331
+1411,UNIUSDT,2025-07-29 01:00:00,max_positions,3 positions open (max 3),5.586269966635331
+1412,ETHFIUSDT,2025-07-29 01:00:00,max_positions,3 positions open (max 3),5.586269966635331
+1413,WLDUSDT,2025-07-29 01:00:00,max_positions,3 positions open (max 3),5.586269966635331
+1414,1000PEPEUSDT,2025-07-29 01:00:00,max_positions,3 positions open (max 3),5.586269966635331
+1415,WIFUSDT,2025-07-29 01:00:00,max_positions,3 positions open (max 3),5.586269966635331
+1416,1000BONKUSDT,2025-07-29 01:00:00,max_positions,3 positions open (max 3),5.586269966635331
+1417,AAVEUSDT,2025-07-29 04:00:00,qty_zero,target notional 5.339756 / 290.12 floors to 0 at step 0.1,5.339755904007176
+1418,AVAXUSDT,2025-07-29 04:00:00,qty_zero,target notional 5.339756 / 25.02 floors to 0 at step 1,5.339755904007176
+1420,BCHUSDT,2025-07-29 13:00:00,below_min_notional,qty 0.009 x 569.43 = 5.1249 < minNotional 20,5.339755904007176
+1423,CRVUSDT,2025-08-05 05:00:00,below_min_notional,qty 5.5 x 0.893 = 4.9115 < minNotional 5,4.9962619213845985
+1424,ONDOUSDT,2025-08-05 09:00:00,below_min_notional,qty 5.3 x 0.9261 = 4.9083 < minNotional 5,4.9962619213845985
+1425,HBARUSDT,2025-08-05 10:00:00,below_min_notional,qty 20 x 0.24667 = 4.9334 < minNotional 5,4.9962619213845985
+1426,1000BONKUSDT,2025-08-05 11:00:00,below_min_notional,qty 192 x 0.02591 = 4.9747 < minNotional 5,4.9962619213845985
+1427,ENAUSDT,2025-08-05 12:00:00,below_min_notional,qty 8 x 0.5912 = 4.7296 < minNotional 5,4.9962619213845985
+1428,XLMUSDT,2025-08-05 15:00:00,below_min_notional,qty 12 x 0.39686 = 4.7623 < minNotional 5,4.9962619213845985
+1429,ADAUSDT,2025-08-05 15:00:00,below_min_notional,qty 6 x 0.7259 = 4.3554 < minNotional 5,4.9962619213845985
+1430,ARBUSDT,2025-08-05 15:00:00,below_min_notional,qty 13.0 x 0.3838 = 4.9894 < minNotional 5,4.9962619213845985
+1431,SUIUSDT,2025-08-05 15:00:00,below_min_notional,qty 1.4 x 3.4136 = 4.7790 < minNotional 5,4.9962619213845985
+1432,LINKUSDT,2025-08-05 17:00:00,below_min_notional,qty 0.30 x 16.319 = 4.8957 < minNotional 20,4.9962619213845985
+1433,BCHUSDT,2025-08-05 22:00:00,below_min_notional,qty 0.009 x 547.72 = 4.9295 < minNotional 20,4.9962619213845985
+1434,LTCUSDT,2025-08-12 05:00:00,below_min_notional,qty 0.041 x 119.79 = 4.9114 < minNotional 20,4.9962619213845985
+1435,ONDOUSDT,2025-08-12 07:00:00,below_min_notional,qty 5.0 x 0.984 = 4.9200 < minNotional 5,4.9962619213845985
+1436,ETHFIUSDT,2025-08-12 07:00:00,below_min_notional,qty 4.2 x 1.1704 = 4.9157 < minNotional 5,4.9962619213845985
+1437,SEIUSDT,2025-08-12 07:00:00,below_min_notional,qty 16 x 0.3043 = 4.8688 < minNotional 5,4.9962619213845985
+1438,ADAUSDT,2025-08-12 12:00:00,below_min_notional,qty 6 x 0.7746 = 4.6476 < minNotional 5,4.9962619213845985
+1439,NEARUSDT,2025-08-12 12:00:00,below_min_notional,qty 1 x 2.602 = 2.6020 < minNotional 5,4.9962619213845985
+1440,CRVUSDT,2025-08-12 12:00:00,below_min_notional,qty 5.4 x 0.913 = 4.9302 < minNotional 5,4.9962619213845985
+1441,ENAUSDT,2025-08-12 12:00:00,below_min_notional,qty 6 x 0.7764 = 4.6584 < minNotional 5,4.9962619213845985
+1442,1000PEPEUSDT,2025-08-14 13:00:00,below_min_notional,qty 445 x 0.0112103 = 4.9886 < minNotional 5,4.9962619213845985
+1443,1000SHIBUSDT,2025-08-14 13:00:00,below_min_notional,qty 384 x 0.012995 = 4.9901 < minNotional 5,4.9962619213845985
+1444,TRBUSDT,2025-08-14 13:00:00,below_min_notional,qty 0.1 x 37.457 = 3.7457 < minNotional 5,4.9962619213845985
+1445,TAOUSDT,2025-08-14 13:00:00,below_min_notional,qty 0.013 x 365.37 = 4.7498 < minNotional 5,4.9962619213845985
+1446,LPTUSDT,2025-08-14 13:00:00,below_min_notional,qty 0.7 x 6.545 = 4.5815 < minNotional 5,4.9962619213845985
+1447,UNIUSDT,2025-08-14 13:00:00,qty_zero,target notional 4.996262 / 10.945 floors to 0 at step 1,4.9962619213845985
+1448,NEIROUSDT,2025-08-14 13:00:00,below_min_notional,qty 11875 x 0.0003975 = 4.7203 < minNotional 5,4.9962619213845985
+1449,MASKUSDT,2025-08-14 14:00:00,below_min_notional,qty 3 x 1.304 = 3.9120 < minNotional 5,4.9962619213845985
+1450,WIFUSDT,2025-08-14 19:00:00,below_min_notional,qty 5.4 x 0.9177 = 4.9556 < minNotional 5,4.9962619213845985
+1451,HBARUSDT,2025-08-15 16:00:00,below_min_notional,qty 20 x 0.24351 = 4.8702 < minNotional 5,4.9962619213845985
+1452,AAVEUSDT,2025-08-16 13:00:00,qty_zero,target notional 4.996262 / 292.73 floors to 0 at step 0.1,4.9962619213845985
+1453,SEIUSDT,2025-08-19 01:00:00,below_min_notional,qty 15 x 0.3283 = 4.9245 < minNotional 5,4.9962619213845985
+1454,OPUSDT,2025-08-19 01:00:00,below_min_notional,qty 6.8 x 0.731 = 4.9708 < minNotional 5,4.9962619213845985
+1455,AAVEUSDT,2025-08-19 05:00:00,qty_zero,target notional 4.996262 / 284.16 floors to 0 at step 0.1,4.9962619213845985
+1456,XLMUSDT,2025-08-19 05:00:00,below_min_notional,qty 12 x 0.40824 = 4.8989 < minNotional 5,4.9962619213845985
+1457,HBARUSDT,2025-08-19 05:00:00,below_min_notional,qty 20 x 0.24027 = 4.8054 < minNotional 5,4.9962619213845985
+1458,ONDOUSDT,2025-08-19 05:00:00,below_min_notional,qty 5.2 x 0.9471 = 4.9249 < minNotional 5,4.9962619213845985
+1459,UNIUSDT,2025-08-19 05:00:00,qty_zero,target notional 4.996262 / 10.349 floors to 0 at step 1,4.9962619213845985
+1460,LINKUSDT,2025-08-19 07:00:00,below_min_notional,qty 0.20 x 24.433 = 4.8866 < minNotional 20,4.9962619213845985
+1461,CRVUSDT,2025-08-19 21:00:00,below_min_notional,qty 5.9 x 0.839 = 4.9501 < minNotional 5,4.9962619213845985
+1462,AVAXUSDT,2025-08-21 00:00:00,qty_zero,target notional 4.996262 / 23.447 floors to 0 at step 1,4.9962619213845985
+1463,FILUSDT,2025-08-24 18:00:00,below_min_notional,qty 2.0 x 2.445 = 4.8900 < minNotional 5,4.9962619213845985
+1464,ADAUSDT,2025-08-26 01:00:00,below_min_notional,qty 6 x 0.8319 = 4.9914 < minNotional 5,4.9962619213845985
+1465,TRXUSDT,2025-08-26 02:00:00,below_min_notional,qty 14 x 0.34252 = 4.7953 < minNotional 5,4.9962619213845985
+1466,BCHUSDT,2025-08-27 00:00:00,below_min_notional,qty 0.009 x 550.61 = 4.9555 < minNotional 20,4.9962619213845985
+1467,ENAUSDT,2025-08-27 02:00:00,below_min_notional,qty 8 x 0.6188 = 4.9504 < minNotional 5,4.9962619213845985
+1468,ARBUSDT,2025-08-27 21:00:00,below_min_notional,qty 9.7 x 0.5138 = 4.9839 < minNotional 5,4.9962619213845985
+1469,AAVEUSDT,2025-08-29 07:00:00,qty_zero,target notional 4.996262 / 310.79 floors to 0 at step 0.1,4.9962619213845985
+1470,HBARUSDT,2025-08-29 11:00:00,below_min_notional,qty 21 x 0.22866 = 4.8019 < minNotional 5,4.9962619213845985
+1471,UNIUSDT,2025-08-29 11:00:00,qty_zero,target notional 4.996262 / 9.609 floors to 0 at step 1,4.9962619213845985
+1472,OPUSDT,2025-08-29 20:00:00,below_min_notional,qty 7.2 x 0.6853 = 4.9342 < minNotional 5,4.9962619213845985
+1473,CFXUSDT,2025-09-02 14:00:00,below_min_notional,qty 28 x 0.17595 = 4.9266 < minNotional 5,4.9962619213845985
+1474,BCHUSDT,2025-09-09 03:00:00,below_min_notional,qty 0.008 x 586.12 = 4.6890 < minNotional 20,4.9962619213845985
+1475,ENAUSDT,2025-09-14 14:00:00,below_min_notional,qty 6 x 0.735 = 4.4100 < minNotional 5,4.9962619213845985
+1476,1000SHIBUSDT,2025-09-16 05:00:00,below_min_notional,qty 384 x 0.013003 = 4.9932 < minNotional 5,4.9962619213845985
+1477,ARBUSDT,2025-09-16 05:00:00,below_min_notional,qty 10.2 x 0.4882 = 4.9796 < minNotional 5,4.9962619213845985
+1478,SEIUSDT,2025-09-16 05:00:00,below_min_notional,qty 15 x 0.3147 = 4.7205 < minNotional 5,4.9962619213845985
+1479,ENAUSDT,2025-09-16 05:00:00,below_min_notional,qty 7 x 0.6973 = 4.8811 < minNotional 5,4.9962619213845985
+1480,TRXUSDT,2025-09-16 20:00:00,below_min_notional,qty 14 x 0.34205 = 4.7887 < minNotional 5,4.9962619213845985
+1481,MOODENGUSDT,2025-09-16 22:00:00,below_min_notional,qty 17 x 0.18288 = 3.1090 < minNotional 5,4.9962619213845985
+1482,LINKUSDT,2025-09-17 13:00:00,below_min_notional,qty 0.21 x 22.966 = 4.8229 < minNotional 20,4.9962619213845985
+1483,CFXUSDT,2025-09-21 10:00:00,below_min_notional,qty 28 x 0.17389 = 4.8689 < minNotional 5,4.9962619213845985
+1484,WLDUSDT,2025-09-21 10:00:00,below_min_notional,qty 3 x 1.4677 = 4.4031 < minNotional 5,4.9962619213845985
+1485,WLDUSDT,2025-09-24 05:00:00,below_min_notional,qty 3 x 1.2941 = 3.8823 < minNotional 5,4.9962619213845985
+1486,NEARUSDT,2025-09-26 00:00:00,below_min_notional,qty 1 x 2.727 = 2.7270 < minNotional 5,4.9962619213845985
+1487,LTCUSDT,2025-10-07 01:00:00,below_min_notional,qty 0.042 x 118.6 = 4.9812 < minNotional 20,4.9962619213845985
+1488,APTUSDT,2025-10-07 04:00:00,below_min_notional,qty 0.9 x 5.2579 = 4.7321 < minNotional 5,4.9962619213845985
+1489,NMRUSDT,2025-10-07 09:00:00,below_min_notional,qty 0.3 x 16.25 = 4.8750 < minNotional 5,4.9962619213845985
+1490,CRVUSDT,2025-10-07 09:00:00,below_min_notional,qty 6.5 x 0.765 = 4.9725 < minNotional 5,4.9962619213845985
+1491,AVAXUSDT,2025-10-07 12:00:00,qty_zero,target notional 4.996262 / 30.0 floors to 0 at step 1,4.9962619213845985
+1492,BCHUSDT,2025-10-07 13:00:00,below_min_notional,qty 0.008 x 594.79 = 4.7583 < minNotional 20,4.9962619213845985
+1493,ONDOUSDT,2025-10-07 16:00:00,below_min_notional,qty 5.4 x 0.9106 = 4.9172 < minNotional 5,4.9962619213845985
+1494,ADAUSDT,2025-10-07 16:00:00,below_min_notional,qty 6 x 0.8327 = 4.9962 < minNotional 5,4.9962619213845985
+1495,ETHFIUSDT,2025-10-07 16:00:00,below_min_notional,qty 2.8 x 1.7665 = 4.9462 < minNotional 5,4.9962619213845985
+1496,NEARUSDT,2025-10-07 17:00:00,below_min_notional,qty 1 x 2.943 = 2.9430 < minNotional 5,4.9962619213845985
+1497,OPUSDT,2025-10-07 17:00:00,below_min_notional,qty 6.9 x 0.7141 = 4.9273 < minNotional 5,4.9962619213845985
+1498,DOTUSDT,2025-10-08 05:00:00,below_min_notional,qty 1.2 x 4.11 = 4.9320 < minNotional 5,4.9962619213845985
+1499,LDOUSDT,2025-10-09 13:00:00,below_min_notional,qty 4 x 1.1634 = 4.6536 < minNotional 5,4.9962619213845985
+1500,LINKUSDT,2025-10-09 15:00:00,below_min_notional,qty 0.23 x 21.496 = 4.9441 < minNotional 20,4.9962619213845985
+1501,TAOUSDT,2025-10-16 10:00:00,below_min_notional,qty 0.009 x 396.65 = 3.5699 < minNotional 5,4.9962619213845985
+1502,BCHUSDT,2025-10-28 06:00:00,below_min_notional,qty 0.009 x 554.84 = 4.9936 < minNotional 20,4.9962619213845985
+1503,NEARUSDT,2025-11-11 01:00:00,below_min_notional,qty 1 x 2.761 = 2.7610 < minNotional 5,4.9962619213845985
+1504,LTCUSDT,2025-11-11 01:00:00,below_min_notional,qty 0.047 x 104.23 = 4.8988 < minNotional 20,4.9962619213845985
+1505,ZECUSDT,2025-11-11 01:00:00,below_min_notional,qty 0.009 x 524.78 = 4.7230 < minNotional 5,4.9962619213845985
+1506,ZECUSDT,2025-11-18 01:00:00,below_min_notional,qty 0.008 x 610.58 = 4.8846 < minNotional 5,4.9962619213845985
+1507,FILUSDT,2025-11-18 14:00:00,below_min_notional,qty 2.5 x 1.927 = 4.8175 < minNotional 5,4.9962619213845985
+1508,BCHUSDT,2025-11-19 22:00:00,below_min_notional,qty 0.010 x 486.65 = 4.8665 < minNotional 20,4.9962619213845985
+1509,UNIUSDT,2025-11-20 00:00:00,qty_zero,target notional 4.116457 / 7.222 floors to 0 at step 1,4.9962619213845985
+1510,ZECUSDT,2025-11-25 06:00:00,below_min_notional,qty 0.009 x 524.4 = 4.7196 < minNotional 5,4.9962619213845985
+1511,BCHUSDT,2025-11-26 14:00:00,below_min_notional,qty 0.009 x 537.87 = 4.8408 < minNotional 20,4.9962619213845985
+1512,TNSRUSDT,2025-12-02 05:00:00,below_min_notional,qty 29.0 x 0.12044 = 3.4928 < minNotional 5,4.9962619213845985
+1513,FARTCOINUSDT,2025-12-09 03:00:00,below_min_notional,qty 13.5 x 0.3698 = 4.9923 < minNotional 5,4.9962619213845985
+1514,BCHUSDT,2025-12-23 15:00:00,below_min_notional,qty 0.008 x 574.16 = 4.5933 < minNotional 20,4.9962619213845985
+1515,ZECUSDT,2025-12-31 14:00:00,below_min_notional,qty 0.009 x 508.27 = 4.5744 < minNotional 5,4.9962619213845985
+1516,PIPPINUSDT,2026-01-01 05:00:00,below_min_notional,qty 12 x 0.39731 = 4.7677 < minNotional 5,4.9962619213845985
+1517,UNIUSDT,2026-01-03 00:00:00,qty_zero,target notional 4.996262 / 6.034 floors to 0 at step 1,4.9962619213845985
+1518,1000BONKUSDT,2026-01-06 18:00:00,below_min_notional,qty 436 x 0.011452 = 4.9931 < minNotional 5,4.9962619213845985
+1519,1000PEPEUSDT,2026-01-06 19:00:00,below_min_notional,qty 757 x 0.0065941 = 4.9917 < minNotional 5,4.9962619213845985
+1520,ZECUSDT,2026-01-07 11:00:00,below_min_notional,qty 0.010 x 487.64 = 4.8764 < minNotional 5,4.9962619213845985
+1521,UNIUSDT,2026-01-07 15:00:00,qty_zero,target notional 4.996262 / 5.795 floors to 0 at step 1,4.9962619213845985
+1522,PENGUUSDT,2026-01-07 15:00:00,below_min_notional,qty 402 x 0.012414 = 4.9904 < minNotional 5,4.9962619213845985
+1523,AVAXUSDT,2026-01-07 17:00:00,qty_zero,target notional 4.996262 / 13.975 floors to 0 at step 1,4.9962619213845985
+1524,ARBUSDT,2026-01-07 17:00:00,below_min_notional,qty 23.6 x 0.2117 = 4.9961 < minNotional 5,4.9962619213845985
+1525,LINKUSDT,2026-01-07 17:00:00,below_min_notional,qty 0.37 x 13.408 = 4.9610 < minNotional 20,4.9962619213845985
+1526,WIFUSDT,2026-01-08 04:00:00,below_min_notional,qty 12.9 x 0.3848 = 4.9639 < minNotional 5,4.9962619213845985
+1527,FILUSDT,2026-01-08 11:00:00,below_min_notional,qty 3.3 x 1.473 = 4.8609 < minNotional 5,4.9962619213845985
+1528,1000SHIBUSDT,2026-01-08 11:00:00,below_min_notional,qty 573 x 0.008711 = 4.9914 < minNotional 5,4.9962619213845985
+1529,FARTCOINUSDT,2026-01-10 05:00:00,below_min_notional,qty 13.5 x 0.3677 = 4.9639 < minNotional 5,4.9962619213845985
+1530,1000PEPEUSDT,2026-01-13 02:00:00,below_min_notional,qty 872 x 0.0057272 = 4.9941 < minNotional 5,4.9962619213845985
+1531,1000BONKUSDT,2026-01-13 04:00:00,below_min_notional,qty 488 x 0.010223 = 4.9888 < minNotional 5,4.9962619213845985
+1532,BCHUSDT,2026-01-13 05:00:00,below_min_notional,qty 0.008 x 615.78 = 4.9262 < minNotional 20,4.9962619213845985
+1533,VIRTUALUSDT,2026-01-13 10:00:00,below_min_notional,qty 4.7 x 0.9917 = 4.6610 < minNotional 5,4.9962619213845985
+1534,PIPPINUSDT,2026-01-13 20:00:00,below_min_notional,qty 15 x 0.32686 = 4.9029 < minNotional 5,4.9962619213845985
+1535,PENGUUSDT,2026-01-16 16:00:00,below_min_notional,qty 426 x 0.011703 = 4.9855 < minNotional 5,4.9962619213845985
+1536,FARTCOINUSDT,2026-01-16 16:00:00,below_min_notional,qty 13.8 x 0.3603 = 4.9721 < minNotional 5,4.9962619213845985
+1537,1000SHIBUSDT,2026-01-16 18:00:00,below_min_notional,qty 601 x 0.008302 = 4.9895 < minNotional 5,4.9962619213845985
+1538,SUIUSDT,2026-01-16 18:00:00,below_min_notional,qty 2.8 x 1.7503 = 4.9008 < minNotional 5,4.9962619213845985
+1539,ZENUSDT,2026-01-20 10:00:00,below_min_notional,qty 0.4 x 10.305 = 4.1220 < minNotional 5,4.9962619213845985
+1540,DASHUSDT,2026-01-20 10:00:00,below_min_notional,qty 0.047 x 72.58 = 3.4113 < minNotional 5,4.9962619213845985
+1541,TRXUSDT,2026-01-23 03:00:00,below_min_notional,qty 16 x 0.30832 = 4.9331 < minNotional 5,4.9962619213845985
+1542,ICPUSDT,2026-01-23 15:00:00,below_min_notional,qty 1 x 3.454 = 3.4540 < minNotional 5,4.9962619213845985
+1543,DASHUSDT,2026-01-29 00:00:00,below_min_notional,qty 0.085 x 58.27 = 4.9530 < minNotional 5,4.9962619213845985
+1544,PIPPINUSDT,2026-02-17 01:00:00,below_min_notional,qty 7 x 0.64792 = 4.5354 < minNotional 5,4.9962619213845985
+1545,BCHUSDT,2026-02-17 15:00:00,below_min_notional,qty 0.009 x 554.96 = 4.9946 < minNotional 20,4.9962619213845985
+1546,JELLYJELLYUSDT,2026-02-25 19:00:00,below_min_notional,qty 81 x 0.0613 = 4.9653 < minNotional 5,4.9962619213845985
+1547,PIPPINUSDT,2026-03-03 06:00:00,below_min_notional,qty 9 x 0.5349 = 4.8141 < minNotional 5,4.9962619213845985
+1548,1000LUNCUSDT,2026-03-04 06:00:00,below_min_notional,qty 118 x 0.04232 = 4.9938 < minNotional 5,4.9962619213845985
+1549,1000LUNCUSDT,2026-03-11 12:00:00,below_min_notional,qty 120 x 0.04131 = 4.9572 < minNotional 5,4.9962619213845985
+1550,BERAUSDT,2026-03-17 14:00:00,below_min_notional,qty 7.6 x 0.6509 = 4.9468 < minNotional 5,4.9962619213845985
+1551,SUIUSDT,2026-03-17 14:00:00,below_min_notional,qty 4.9 x 1.0177 = 4.9867 < minNotional 5,4.9962619213845985
+1552,UNIUSDT,2026-03-17 15:00:00,below_min_notional,qty 1 x 3.974 = 3.9740 < minNotional 5,4.9962619213845985
+1553,TAOUSDT,2026-03-17 16:00:00,below_min_notional,qty 0.018 x 274.2 = 4.9356 < minNotional 5,4.9962619213845985
+1554,1000LUNCUSDT,2026-03-18 12:00:00,below_min_notional,qty 119 x 0.04166 = 4.9575 < minNotional 5,4.9962619213845985
+1555,PENGUUSDT,2026-03-18 14:00:00,below_min_notional,qty 667 x 0.007486 = 4.9932 < minNotional 5,4.9962619213845985
+1556,NEARUSDT,2026-03-19 20:00:00,below_min_notional,qty 3 x 1.342 = 4.0260 < minNotional 5,4.9962619213845985
+1557,TAOUSDT,2026-03-31 08:00:00,below_min_notional,qty 0.016 x 308.27 = 4.9323 < minNotional 5,4.9962619213845985
+1558,DUSKUSDT,2026-04-07 04:00:00,below_min_notional,qty 46 x 0.10782 = 4.9597 < minNotional 5,4.9962619213845985
+1559,HYPEUSDT,2026-04-07 13:00:00,below_min_notional,qty 0.13 x 36.112 = 4.6946 < minNotional 5,4.9962619213845985
+1560,DUSKUSDT,2026-04-14 14:00:00,below_min_notional,qty 33 x 0.14802 = 4.8847 < minNotional 5,4.9962619213845985
+1561,SIRENUSDT,2026-04-14 16:00:00,below_min_notional,qty 6 x 0.71853 = 4.3112 < minNotional 5,4.9962619213845985
+1562,ARCUSDT,2026-04-14 19:00:00,below_min_notional,qty 70 x 0.07089 = 4.9623 < minNotional 5,4.9962619213845985
+1563,NEARUSDT,2026-04-15 09:00:00,below_min_notional,qty 3 x 1.349 = 4.0470 < minNotional 5,4.9962619213845985
+1564,ZECUSDT,2026-04-16 02:00:00,below_min_notional,qty 0.014 x 343.4 = 4.8076 < minNotional 5,4.9962619213845985
+1565,HYPEUSDT,2026-04-21 01:00:00,below_min_notional,qty 0.12 x 40.549 = 4.8659 < minNotional 5,4.9962619213845985
+1566,ENAUSDT,2026-04-21 01:00:00,below_min_notional,qty 44 x 0.1122 = 4.9368 < minNotional 5,4.9962619213845985
+1567,ARCUSDT,2026-04-21 06:00:00,below_min_notional,qty 75 x 0.0661 = 4.9575 < minNotional 5,4.9962619213845985
+1568,DUSKUSDT,2026-04-21 10:00:00,below_min_notional,qty 36 x 0.13836 = 4.9810 < minNotional 5,4.9962619213845985
+1569,VIRTUALUSDT,2026-04-21 21:00:00,below_min_notional,qty 7.4 x 0.6743 = 4.9898 < minNotional 5,4.9962619213845985
+1570,FILUSDT,2026-04-23 18:00:00,below_min_notional,qty 5.4 x 0.913 = 4.9302 < minNotional 5,4.9962619213845985
+1571,FARTCOINUSDT,2026-04-23 18:00:00,below_min_notional,qty 25.6 x 0.195 = 4.9920 < minNotional 5,4.9962619213845985
+1572,XMRUSDT,2026-04-28 06:00:00,below_min_notional,qty 0.013 x 378.79 = 4.9243 < minNotional 5,4.9962619213845985
+1573,VIRTUALUSDT,2026-04-28 14:00:00,below_min_notional,qty 7.3 x 0.6829 = 4.9852 < minNotional 5,4.9962619213845985
+1574,LINKUSDT,2026-04-28 15:00:00,below_min_notional,qty 0.54 x 9.196 = 4.9658 < minNotional 20,4.9962619213845985
+1575,NEARUSDT,2026-04-28 18:00:00,below_min_notional,qty 3 x 1.339 = 4.0170 < minNotional 5,4.9962619213845985
+1576,ARCUSDT,2026-04-28 19:00:00,below_min_notional,qty 74 x 0.06723 = 4.9750 < minNotional 5,4.9962619213845985
+1577,1000SHIBUSDT,2026-04-29 19:00:00,below_min_notional,qty 821 x 0.00608 = 4.9917 < minNotional 5,4.9962619213845985
+1578,1000PEPEUSDT,2026-04-29 19:00:00,below_min_notional,qty 1309 x 0.0038154 = 4.9944 < minNotional 5,4.9962619213845985
+1579,FARTCOINUSDT,2026-04-29 19:00:00,below_min_notional,qty 25.6 x 0.1947 = 4.9843 < minNotional 5,4.9962619213845985
+1580,PUMPUSDT,2026-04-29 20:00:00,below_min_notional,qty 2903 x 0.001721 = 4.9961 < minNotional 5,4.9962619213845985
+1581,1000BONKUSDT,2026-04-29 21:00:00,below_min_notional,qty 817 x 0.006113 = 4.9943 < minNotional 5,4.9962619213845985
+1582,DUSKUSDT,2026-04-29 21:00:00,below_min_notional,qty 41 x 0.12183 = 4.9950 < minNotional 5,4.9962619213845985
+1583,LTCUSDT,2026-04-29 22:00:00,below_min_notional,qty 0.090 x 55.15 = 4.9635 < minNotional 20,4.9962619213845985
+1584,HYPEUSDT,2026-05-02 01:00:00,below_min_notional,qty 0.12 x 41.274 = 4.9529 < minNotional 5,4.9962619213845985
+1585,AXSUSDT,2026-05-03 06:00:00,below_min_notional,qty 3 x 1.344 = 4.0320 < minNotional 5,4.9962619213845985
+1586,SIRENUSDT,2026-05-05 05:00:00,below_min_notional,qty 6 x 0.7466 = 4.4796 < minNotional 5,4.9962619213845985
+1587,ENJUSDT,2026-05-05 06:00:00,below_min_notional,qty 98 x 0.0507 = 4.9686 < minNotional 5,4.9962619213845985
+1588,ORDIUSDT,2026-05-05 09:00:00,below_min_notional,qty 0.9 x 5.026 = 4.5234 < minNotional 5,4.9962619213845985
+1589,NEARUSDT,2026-05-12 02:00:00,below_min_notional,qty 3 x 1.512 = 4.5360 < minNotional 5,4.9962619213845985
+1590,1000PEPEUSDT,2026-05-12 02:00:00,below_min_notional,qty 1168 x 0.0042772 = 4.9958 < minNotional 5,4.9962619213845985
+1591,ZECUSDT,2026-05-12 02:00:00,below_min_notional,qty 0.009 x 553.78 = 4.9840 < minNotional 5,4.9962619213845985
+1592,AXSUSDT,2026-05-12 03:00:00,below_min_notional,qty 3 x 1.396 = 4.1880 < minNotional 5,4.9962619213845985
+1593,LTCUSDT,2026-05-12 03:00:00,below_min_notional,qty 0.085 x 58.18 = 4.9453 < minNotional 20,4.9962619213845985
+1594,UNIUSDT,2026-05-12 03:00:00,below_min_notional,qty 1 x 3.824 = 3.8240 < minNotional 5,4.9962619213845985
+1595,ENAUSDT,2026-05-12 03:00:00,below_min_notional,qty 39 x 0.12642 = 4.9304 < minNotional 5,4.9962619213845985
+1596,HYPEUSDT,2026-05-12 05:00:00,below_min_notional,qty 0.12 x 41.086 = 4.9303 < minNotional 5,4.9962619213845985
+1597,PENGUUSDT,2026-05-12 06:00:00,below_min_notional,qty 494 x 0.010108 = 4.9934 < minNotional 5,4.9962619213845985
+1598,LINKUSDT,2026-05-12 08:00:00,below_min_notional,qty 0.47 x 10.433 = 4.9035 < minNotional 20,4.9962619213845985
+1599,AVAXUSDT,2026-05-12 08:00:00,qty_zero,target notional 4.996262 / 10.008 floors to 0 at step 1,4.9962619213845985
+1600,FARTCOINUSDT,2026-05-12 08:00:00,below_min_notional,qty 19.9 x 0.2508 = 4.9909 < minNotional 5,4.9962619213845985
+1601,ORDIUSDT,2026-05-12 08:00:00,below_min_notional,qty 1.0 x 4.788 = 4.7880 < minNotional 5,4.9962619213845985
+1602,TAOUSDT,2026-05-12 10:00:00,below_min_notional,qty 0.015 x 314.13 = 4.7119 < minNotional 5,4.9962619213845985
+1603,SUIUSDT,2026-05-12 13:00:00,below_min_notional,qty 3.9 x 1.2673 = 4.9425 < minNotional 5,4.9962619213845985
+1604,WIFUSDT,2026-05-12 20:00:00,below_min_notional,qty 22.6 x 0.2204 = 4.9810 < minNotional 5,4.9962619213845985
+1605,VVVUSDT,2026-05-13 09:00:00,below_min_notional,qty 0.33 x 15.008 = 4.9526 < minNotional 5,4.9962619213845985
+1606,PIXELUSDT,2026-05-14 01:00:00,below_min_notional,qty 599 x 0.00834 = 4.9957 < minNotional 5,4.9962619213845985
+1607,ARCUSDT,2026-05-19 09:00:00,below_min_notional,qty 76 x 0.065 = 4.9400 < minNotional 5,4.9962619213845985
+1608,VVVUSDT,2026-05-26 03:00:00,below_min_notional,qty 0.28 x 17.678 = 4.9498 < minNotional 5,4.9962619213845985
+1609,ARCUSDT,2026-05-26 22:00:00,below_min_notional,qty 77 x 0.0641 = 4.9357 < minNotional 5,4.9962619213845985
+1610,TAOUSDT,2026-05-27 05:00:00,below_min_notional,qty 0.018 x 275.16 = 4.9529 < minNotional 5,4.9962619213845985
+1611,NEARUSDT,2026-05-28 13:00:00,below_min_notional,qty 2 x 2.347 = 4.6940 < minNotional 5,4.9962619213845985
+1612,FILUSDT,2026-05-28 13:00:00,below_min_notional,qty 5.2 x 0.953 = 4.9556 < minNotional 5,4.9962619213845985
+1613,WLDUSDT,2026-05-28 14:00:00,below_min_notional,qty 17 x 0.2892 = 4.9164 < minNotional 5,4.9962619213845985
+1614,PLAYUSDT,2026-06-02 09:00:00,below_min_notional,qty 25 x 0.11549 = 2.8872 < minNotional 5,4.9962619213845985
+1615,PUMPUSDT,2026-06-02 17:00:00,below_min_notional,qty 2911 x 0.001716 = 4.9953 < minNotional 5,4.9962619213845985
+1616,HYPEUSDT,2026-06-02 20:00:00,below_min_notional,qty 0.07 x 70.89 = 4.9623 < minNotional 5,4.9962619213845985
+1617,TONUSDT,2026-06-03 22:00:00,below_min_notional,qty 2.5 x 1.9308 = 4.8270 < minNotional 5,4.9962619213845985
+1618,ZECUSDT,2026-06-04 13:00:00,below_min_notional,qty 0.009 x 533.72 = 4.8035 < minNotional 5,4.9962619213845985
+1619,XLMUSDT,2026-06-09 03:00:00,below_min_notional,qty 25 x 0.19905 = 4.9763 < minNotional 5,4.9962619213845985
+1620,VVVUSDT,2026-06-09 05:00:00,below_min_notional,qty 0.31 x 16.034 = 4.9705 < minNotional 5,4.9962619213845985
+1621,SIRENUSDT,2026-06-09 15:00:00,below_min_notional,qty 4 x 1.1255 = 4.5020 < minNotional 5,4.9962619213845985
+1622,HYPEUSDT,2026-06-09 21:00:00,below_min_notional,qty 0.08 x 59.415 = 4.7532 < minNotional 5,4.9962619213845985
+1623,NEARUSDT,2026-06-10 07:00:00,below_min_notional,qty 2 x 2.062 = 4.1240 < minNotional 5,4.9962619213845985
+1624,ONDOUSDT,2026-06-10 13:00:00,below_min_notional,qty 14.3 x 0.3491 = 4.9921 < minNotional 5,4.9962619213845985
+1625,PLAYUSDT,2026-06-10 15:00:00,below_min_notional,qty 62 x 0.0802 = 4.9724 < minNotional 5,4.9962619213845985
+1626,WLDUSDT,2026-06-11 02:00:00,below_min_notional,qty 6 x 0.46 = 2.7600 < minNotional 5,4.9962619213845985
+1627,TAOUSDT,2026-06-16 03:00:00,below_min_notional,qty 0.019 x 261.2 = 4.9628 < minNotional 5,4.9962619213845985
+1628,ONDOUSDT,2026-06-17 22:00:00,below_min_notional,qty 13.7 x 0.3633 = 4.9772 < minNotional 5,4.9962619213845985
+1629,NEARUSDT,2026-06-17 23:00:00,below_min_notional,qty 2 x 2.225 = 4.4500 < minNotional 5,4.9962619213845985
+1630,ZECUSDT,2026-06-18 05:00:00,below_min_notional,qty 0.010 x 466.91 = 4.6691 < minNotional 5,4.9962619213845985
+1631,XLMUSDT,2026-06-23 01:00:00,below_min_notional,qty 24 x 0.2012 = 4.8288 < minNotional 5,4.9962619213845985
+1632,NEARUSDT,2026-06-23 01:00:00,below_min_notional,qty 2 x 2.059 = 4.1180 < minNotional 5,4.9962619213845985
+1633,SKYAIUSDT,2026-06-23 02:00:00,below_min_notional,qty 15 x 0.33279 = 4.9919 < minNotional 5,4.9962619213845985
+1634,WLDUSDT,2026-06-23 05:00:00,below_min_notional,qty 8 x 0.6058 = 4.8464 < minNotional 5,4.9962619213845985
+1635,HYPEUSDT,2026-06-23 06:00:00,below_min_notional,qty 0.07 x 65.324 = 4.5727 < minNotional 5,4.9962619213845985
+1636,AAVEUSDT,2026-06-30 09:00:00,qty_zero,target notional 4.996262 / 89.85 floors to 0 at step 0.1,4.9962619213845985
+1637,VELVETUSDT,2026-07-01 17:00:00,below_min_notional,qty 1 x 1.419 = 1.4190 < minNotional 5,4.9962619213845985
+1638,SYNUSDT,2026-07-07 04:00:00,below_min_notional,qty 13 x 0.36544 = 4.7507 < minNotional 5,4.9962619213845985
+1639,AAVEUSDT,2026-07-08 03:00:00,qty_zero,target notional 4.996262 / 88.47 floors to 0 at step 0.1,4.9962619213845985
+1640,HYPEUSDT,2026-07-08 12:00:00,below_min_notional,qty 0.07 x 68.868 = 4.8208 < minNotional 5,4.9962619213845985
+1641,SYNUSDT,2026-07-14 02:00:00,below_min_notional,qty 21 x 0.236 = 4.9560 < minNotional 5,4.9962619213845985
+1642,HYPEUSDT,2026-07-16 18:00:00,below_min_notional,qty 0.07 x 62.805 = 4.3963 < minNotional 5,4.9962619213845985
+1643,UNIUSDT,2026-07-17 14:00:00,below_min_notional,qty 1 x 3.495 = 3.4950 < minNotional 5,4.9962619213845985
+1644,VELVETUSDT,2026-07-21 09:00:00,below_min_notional,qty 9 x 0.511 = 4.5990 < minNotional 5,4.9962619213845985
+1645,PUMPUSDT,2026-07-22 18:00:00,below_min_notional,qty 2604 x 0.001918 = 4.9945 < minNotional 5,4.9962619213845985
+1646,1000PEPEUSDT,2026-07-23 16:00:00,below_min_notional,qty 1790 x 0.0027909 = 4.9957 < minNotional 5,4.9962619213845985
+1647,INJUSDT,2026-07-25 23:00:00,below_min_notional,qty 0.9 x 5.087 = 4.5783 < minNotional 5,4.9962619213845985
+1648,ONDOUSDT,2026-07-28 02:00:00,below_min_notional,qty 12.7 x 0.3913 = 4.9695 < minNotional 5,4.9962619213845985
+1649,VVVUSDT,2026-07-28 13:00:00,below_min_notional,qty 0.38 x 12.987 = 4.9351 < minNotional 5,4.9962619213845985
+1650,PUMPUSDT,2026-07-28 18:00:00,below_min_notional,qty 2538 x 0.001968 = 4.9948 < minNotional 5,4.9962619213845985
+1651,UNIUSDT,2026-08-04 05:00:00,below_min_notional,qty 1 x 3.874 = 3.8740 < minNotional 5,4.9962619213845985
+1652,AKEUSDT,2026-08-04 06:00:00,below_min_notional,qty 1160 x 0.0043041 = 4.9928 < minNotional 5,4.9962619213845985
+1653,ONDOUSDT,2026-08-04 08:00:00,below_min_notional,qty 13.5 x 0.3693 = 4.9855 < minNotional 5,4.9962619213845985
+1654,INJUSDT,2026-08-04 15:00:00,below_min_notional,qty 1.0 x 4.935 = 4.9350 < minNotional 5,4.9962619213845985
+1655,1000PEPEUSDT,2026-08-06 05:00:00,below_min_notional,qty 1756 x 0.0028437 = 4.9935 < minNotional 5,4.9962619213845985
+1656,ENAUSDT,2026-08-09 14:00:00,below_min_notional,qty 57 x 0.08763 = 4.9949 < minNotional 5,4.9962619213845985
+1657,ADAUSDT,2026-08-11 02:00:00,below_min_notional,qty 26 x 0.1911 = 4.9686 < minNotional 5,4.9962619213845985
+1658,ZECUSDT,2026-08-11 03:00:00,below_min_notional,qty 0.010 x 493.75 = 4.9375 < minNotional 5,4.9962619213845985
+1659,PUMPUSDT,2026-08-11 18:00:00,below_min_notional,qty 1854 x 0.002694 = 4.9947 < minNotional 5,4.9962619213845985
+1660,ENAUSDT,2026-08-12 21:00:00,below_min_notional,qty 57 x 0.08668 = 4.9408 < minNotional 5,4.9962619213845985
+1661,AKEUSDT,2026-08-20 17:00:00,below_min_notional,qty 601 x 0.0083 = 4.9883 < minNotional 5,4.9962619213845985
+1662,AAVEUSDT,2026-08-25 06:00:00,qty_zero,target notional 4.996262 / 131.68 floors to 0 at step 0.1,4.9962619213845985
+1663,NEARUSDT,2026-08-25 08:00:00,below_min_notional,qty 2 x 1.928 = 3.8560 < minNotional 5,4.9962619213845985
+1664,ENAUSDT,2026-08-25 09:00:00,below_min_notional,qty 33 x 0.15068 = 4.9724 < minNotional 5,4.9962619213845985
+1665,LTCUSDT,2026-08-25 10:00:00,below_min_notional,qty 0.097 x 51.26 = 4.9722 < minNotional 20,4.9962619213845985
+1666,XLMUSDT,2026-08-25 10:00:00,below_min_notional,qty 25 x 0.19242 = 4.8105 < minNotional 5,4.9962619213845985
+1667,FILUSDT,2026-08-25 11:00:00,below_min_notional,qty 6.7 x 0.7435 = 4.9814 < minNotional 5,4.9962619213845985
+1668,ADAUSDT,2026-08-25 13:00:00,below_min_notional,qty 22 x 0.2178 = 4.7916 < minNotional 5,4.9962619213845985
+1669,TRUMPUSDT,2026-08-25 13:00:00,below_min_notional,qty 2.12 x 2.352 = 4.9862 < minNotional 5,4.9962619213845985
+1670,AVAXUSDT,2026-08-25 14:00:00,qty_zero,target notional 4.996262 / 7.411 floors to 0 at step 1,4.9962619213845985
+1671,PUMPUSDT,2026-08-25 14:00:00,below_min_notional,qty 1084 x 0.004606 = 4.9929 < minNotional 5,4.9962619213845985
+1672,SUIUSDT,2026-08-25 15:00:00,below_min_notional,qty 6.2 x 0.7931 = 4.9172 < minNotional 5,4.9962619213845985
+1673,1000PEPEUSDT,2026-08-25 15:00:00,below_min_notional,qty 1257 x 0.0039721 = 4.9929 < minNotional 5,4.9962619213845985
+1674,ZECUSDT,2026-08-25 17:00:00,below_min_notional,qty 0.006 x 799.8 = 4.7988 < minNotional 5,4.9962619213845985
+1675,BCHUSDT,2026-08-25 22:00:00,below_min_notional,qty 0.018 x 264.51 = 4.7612 < minNotional 20,4.9962619213845985
+1676,LINKUSDT,2026-08-25 22:00:00,below_min_notional,qty 0.44 x 11.311 = 4.9768 < minNotional 20,4.9962619213845985
+1677,UNIUSDT,2026-08-25 22:00:00,below_min_notional,qty 1 x 4.253 = 4.2530 < minNotional 5,4.9962619213845985
+1678,ONDOUSDT,2026-08-25 23:00:00,below_min_notional,qty 13.6 x 0.3673 = 4.9953 < minNotional 5,4.9962619213845985
+1679,WLDUSDT,2026-08-26 01:00:00,below_min_notional,qty 12 x 0.3879 = 4.6548 < minNotional 5,4.9962619213845985
+1680,INJUSDT,2026-08-28 17:00:00,below_min_notional,qty 0.9 x 5.2 = 4.6800 < minNotional 5,4.9962619213845985
+1681,ASTERUSDT,2026-08-28 17:00:00,below_min_notional,qty 7 x 0.6798 = 4.7586 < minNotional 5,4.9962619213845985
+1682,VVVUSDT,2026-08-29 07:00:00,below_min_notional,qty 0.31 x 16.043 = 4.9733 < minNotional 5,4.9962619213845985
+1683,ACEUSDT,2026-09-01 01:00:00,below_min_notional,qty 30.33 x 0.16472 = 4.9960 < minNotional 5,4.9962619213845985
+1684,TAOUSDT,2026-09-01 13:00:00,below_min_notional,qty 0.022 x 224.56 = 4.9403 < minNotional 5,4.9962619213845985
+1685,TRUMPUSDT,2026-09-01 17:00:00,below_min_notional,qty 2.14 x 2.331 = 4.9883 < minNotional 5,4.9962619213845985
+1686,PUMPUSDT,2026-09-02 03:00:00,below_min_notional,qty 1176 x 0.004245 = 4.9921 < minNotional 5,4.9962619213845985
+1687,LITUSDT,2026-09-02 04:00:00,below_min_notional,qty 1.4 x 3.4842 = 4.8779 < minNotional 5,4.9962619213845985
+1688,LINKUSDT,2026-09-02 10:00:00,below_min_notional,qty 0.45 x 11.06 = 4.9770 < minNotional 20,4.9962619213845985
+1689,ZECUSDT,2026-09-02 10:00:00,below_min_notional,qty 0.006 x 809.88 = 4.8593 < minNotional 5,4.9962619213845985
+1690,1000PEPEUSDT,2026-09-02 11:00:00,below_min_notional,qty 1465 x 0.0034086 = 4.9936 < minNotional 5,4.9962619213845985
+1691,BCHUSDT,2026-09-02 18:00:00,below_min_notional,qty 0.020 x 243.79 = 4.8758 < minNotional 20,4.9962619213845985
+1692,LINKUSDT,2026-09-08 04:00:00,below_min_notional,qty 0.39 x 12.652 = 4.9343 < minNotional 20,4.9962619213845985
+1693,NEARUSDT,2026-09-08 05:00:00,below_min_notional,qty 2 x 2.273 = 4.5460 < minNotional 5,4.9962619213845985
+1694,ONDOUSDT,2026-09-08 06:00:00,below_min_notional,qty 13.2 x 0.3762 = 4.9658 < minNotional 5,4.9962619213845985
+1695,TAOUSDT,2026-09-08 07:00:00,below_min_notional,qty 0.019 x 254.41 = 4.8338 < minNotional 5,4.9962619213845985
+1696,ENAUSDT,2026-09-08 07:00:00,below_min_notional,qty 30 x 0.16234 = 4.8702 < minNotional 5,4.9962619213845985
+1697,TRUMPUSDT,2026-09-08 13:00:00,below_min_notional,qty 2.22 x 2.247 = 4.9883 < minNotional 5,4.9962619213845985
+1698,HYPEUSDT,2026-09-08 23:00:00,below_min_notional,qty 0.05 x 84.957 = 4.2478 < minNotional 5,4.9962619213845985
+1699,UNIUSDT,2026-09-08 23:00:00,qty_zero,target notional 4.996262 / 6.803 floors to 0 at step 1,4.9962619213845985
+1700,ADAUSDT,2026-09-09 16:00:00,below_min_notional,qty 23 x 0.2155 = 4.9565 < minNotional 5,4.9962619213845985
+1701,SUIUSDT,2026-09-09 16:00:00,below_min_notional,qty 6.2 x 0.7942 = 4.9240 < minNotional 5,4.9962619213845985
+1702,XLMUSDT,2026-09-09 18:00:00,below_min_notional,qty 26 x 0.18537 = 4.8196 < minNotional 5,4.9962619213845985
+1703,HEIUSDT,2026-09-09 21:00:00,below_min_notional,qty 37.4 x 0.13328 = 4.9847 < minNotional 5,4.9962619213845985
+1704,WLDUSDT,2026-09-09 23:00:00,below_min_notional,qty 12 x 0.4116 = 4.9392 < minNotional 5,4.9962619213845985
+1705,AVAXUSDT,2026-09-10 00:00:00,qty_zero,target notional 4.996262 / 7.792 floors to 0 at step 1,4.9962619213845985
+1706,BCHUSDT,2026-09-10 00:00:00,below_min_notional,qty 0.019 x 251.63 = 4.7810 < minNotional 20,4.9962619213845985
+1707,ACEUSDT,2026-09-10 07:00:00,below_min_notional,qty 22.54 x 0.16575 = 3.7360 < minNotional 5,4.9962619213845985
+1708,PUMPUSDT,2026-09-10 08:00:00,below_min_notional,qty 1277 x 0.003912 = 4.9956 < minNotional 5,4.9962619213845985
+1709,FILUSDT,2026-09-10 10:00:00,below_min_notional,qty 6.2 x 0.7978 = 4.9464 < minNotional 5,4.9962619213845985
+1710,LITUSDT,2026-09-11 01:00:00,below_min_notional,qty 1.1 x 4.3721 = 4.8093 < minNotional 5,4.9962619213845985
+1711,ZECUSDT,2026-09-11 08:00:00,below_min_notional,qty 0.004 x 1111.24 = 4.4450 < minNotional 5,4.9962619213845985
+1712,AAVEUSDT,2026-09-15 15:00:00,qty_zero,target notional 4.996262 / 124.37 floors to 0 at step 0.1,4.9962619213845985
+1713,LINKUSDT,2026-09-15 15:00:00,below_min_notional,qty 0.44 x 11.176 = 4.9174 < minNotional 20,4.9962619213845985
+1714,TRUMPUSDT,2026-09-15 15:00:00,below_min_notional,qty 2.57 x 1.942 = 4.9909 < minNotional 5,4.9962619213845985
+1715,1000PEPEUSDT,2026-09-15 15:00:00,below_min_notional,qty 1481 x 0.0033731 = 4.9956 < minNotional 5,4.9962619213845985
+1716,HYPEUSDT,2026-09-15 16:00:00,below_min_notional,qty 0.06 x 77.254 = 4.6352 < minNotional 5,4.9962619213845985
+1717,LITUSDT,2026-09-15 18:00:00,below_min_notional,qty 1.2 x 4.1481 = 4.9777 < minNotional 5,4.9962619213845985
+1718,ADAUSDT,2026-09-15 18:00:00,below_min_notional,qty 24 x 0.203 = 4.8720 < minNotional 5,4.9962619213845985
+1719,AVAXUSDT,2026-09-15 19:00:00,qty_zero,target notional 4.996262 / 7.35 floors to 0 at step 1,4.9962619213845985
+1720,XLMUSDT,2026-09-15 19:00:00,below_min_notional,qty 27 x 0.18153 = 4.9013 < minNotional 5,4.9962619213845985
+1721,PUMPUSDT,2026-09-15 19:00:00,below_min_notional,qty 1394 x 0.003583 = 4.9947 < minNotional 5,4.9962619213845985
+1722,UNIUSDT,2026-09-16 16:00:00,qty_zero,target notional 4.996262 / 6.191 floors to 0 at step 1,4.9962619213845985
+1723,TAOUSDT,2026-09-18 00:00:00,below_min_notional,qty 0.021 x 232.36 = 4.8796 < minNotional 5,4.9962619213845985
+1724,HUSDT,2026-09-18 12:00:00,below_min_notional,qty 62 x 0.08046 = 4.9885 < minNotional 5,4.9962619213845985
+1725,LITUSDT,2026-09-22 02:00:00,below_min_notional,qty 1.0 x 4.7082 = 4.7082 < minNotional 5,4.9962619213845985
+1726,BLESSUSDT,2026-09-22 11:00:00,below_min_notional,qty 556 x 0.008982 = 4.9940 < minNotional 5,4.9962619213845985
+1727,ENAUSDT,2026-09-22 11:00:00,below_min_notional,qty 23 x 0.20845 = 4.7943 < minNotional 5,4.9962619213845985
+1728,ONDOUSDT,2026-09-22 15:00:00,below_min_notional,qty 11.6 x 0.4291 = 4.9776 < minNotional 5,4.9962619213845985
+1729,SYNUSDT,2026-09-23 08:00:00,below_min_notional,qty 23 x 0.21327 = 4.9052 < minNotional 5,4.9962619213845985
+1730,PUMPUSDT,2026-09-23 13:00:00,below_min_notional,qty 1191 x 0.004192 = 4.9927 < minNotional 5,4.9962619213845985
+1731,HYPEUSDT,2026-09-23 18:00:00,below_min_notional,qty 0.05 x 93.43 = 4.6715 < minNotional 5,4.9962619213845985
+1732,HEIUSDT,2026-09-24 00:00:00,below_min_notional,qty 33.6 x 0.14838 = 4.9856 < minNotional 5,4.9962619213845985
+1733,LINKUSDT,2026-09-24 08:00:00,below_min_notional,qty 0.40 x 12.472 = 4.9888 < minNotional 20,4.9962619213845985
+1734,AAVEUSDT,2026-09-24 11:00:00,qty_zero,target notional 4.996262 / 137.09 floors to 0 at step 0.1,4.9962619213845985
