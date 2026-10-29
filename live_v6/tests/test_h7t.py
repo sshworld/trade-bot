@@ -226,7 +226,7 @@ def test_h7t_stream_gap_then_touch_seen_is_missed(offline):
     assert not entry_calls(offline, DOGE) and strat.state["bar"][DOGE]["missed"]
 
 
-def test_h7t_killed_right_after_entry_stop_on_exchange(backend, tmp_path):
+def test_h7t_killed_right_after_entry_stop_on_exchange(backend, tmp_path, reports_dir):
     """(2) Process dies right after the MARKET fill: the pre-armed reduceOnly stop is already on the exchange —
     verified by the INDEPENDENT REST script on testnet; restart upgrades protection and never re-enters the bar."""
     eng, strat = h7t_engine(backend)
@@ -240,8 +240,7 @@ def test_h7t_killed_right_after_entry_stop_on_exchange(backend, tmp_path):
                            timeout=60, env={k: v for k, v in __import__("os").environ.items()
                                             if k not in ("BINANCE_API_KEY", "BINANCE_API_SECRET")})
         rep = json.loads(r.stdout)
-        (ROOT / "reports").mkdir(exist_ok=True)
-        (ROOT / "reports" / "h7t_killed_after_entry.json").write_text(json.dumps(rep, indent=1))
+        (reports_dir / "h7t_killed_after_entry.json").write_text(json.dumps(rep, indent=1))
         assert r.returncode == 0 and rep["pass"] and rep["n_positions"] == 1, rep
     backend.assert_safe()
     strat2 = H7T(params=S.Params(h7_min_obs=10 ** 9))
