@@ -56,9 +56,9 @@ def check_frozen(cfg: Settings) -> None:
 
 
 def live_settings(name: str, **kw) -> Settings:
-    """Live Settings per strategy. qr1h (PM 2026-10-30): 4 % risk, 12 % open-risk Σ, max 3 positions, margin ≤ 25 % of
+    """Live Settings per strategy. qrmtf (PM final 2026-10-30): 4 % risk, 12 % open-risk Σ, max 3 positions, margin ≤ 25 % of
     wallet per position, 10x max, longs + shorts, TP1 +1R 50 % → SL entry ± 0.1 %, TP2 +2R, 24 h time exit."""
-    if name == "qr1h":
+    if name == "qrmtf":
         from .sizing import SizingParams
         sizing = SizingParams(risk_pct=4.0, max_risk_pct=5.0, portfolio_risk_cap=0.12, total_risk_cap=0.12, margin_cap=0.25,
                               max_leverage=10)            # max_risk_pct 5 % = 4 % + round-trip fee headroom
@@ -74,12 +74,12 @@ def build(network: str | None = None):
     else:
         url, key, sec = TESTNET_URL, os.environ["BINANCE_TESTNET_API_KEY"], os.environ["BINANCE_TESTNET_API_SECRET"]
     rest = BinanceREST(url, key, sec)          # guard_url refuses mainnet unless explicitly acknowledged
-    name = os.getenv("LIVE_V6_STRATEGY", "qr1h")         # qr1h (2026-10-30); "h7t" = previous live; "v6_h7" = bar-close
+    name = os.getenv("LIVE_V6_STRATEGY", "qrmtf")        # qrmtf (2026-10-30); "h7t" = previous live; "v6_h7" = bar-close
     cfg = live_settings(name, use_streams=True)
     check_frozen(cfg)
     state = os.getenv("LIVE_V6_STATE", f"/var/lib/live_v6/{network}.json")
-    if name == "qr1h":
-        from .strategies.qr1h import QR1H as Strat
+    if name == "qrmtf":
+        from .strategies.qrmtf import QRMTF as Strat
     elif name == "h7t":
         from .strategies.h7t import H7T as Strat
     elif name == "v6_h7":

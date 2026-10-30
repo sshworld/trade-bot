@@ -48,7 +48,7 @@ class SizingParams:
     entry_slippage: float = 0.0004      # loss model: market-entry slippage
     stop_slippage: float = 0.0003       # loss model: stop-fill slippage
     margin_fee_buffer: float = 0.0010   # margin check: round-trip fee buffer on notional
-    margin_cap: float | None = None     # qr1h: position margin (notional / lev) ≤ this × wallet; qty is CAPPED (risk may
+    margin_cap: float | None = None     # qrmtf: position margin (notional / lev) ≤ this × wallet; qty is CAPPED (risk may
                                         # end below risk_pct — accepted, TA 2026-10-30), skip `margin_cap` only below min qty
 
 

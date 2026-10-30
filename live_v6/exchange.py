@@ -353,7 +353,7 @@ class BinanceREST:
         return _norm_algo(self._req("POST", "/fapi/v1/algoOrder", p, critical=True))
 
     def take_profit(self, symbol, side, trigger, client_id, qty) -> dict:
-        """Exchange-side reduceOnly TAKE_PROFIT_MARKET on MARK_PRICE for `qty` (qr1h TP1 / TP2)."""
+        """Exchange-side reduceOnly TAKE_PROFIT_MARKET on MARK_PRICE for `qty` (qrmtf TP1 / TP2)."""
         p = {"algoType": "CONDITIONAL", "symbol": symbol, "side": side, "type": "TAKE_PROFIT_MARKET", "triggerPrice": fmt(trigger),
              "workingType": "MARK_PRICE", "clientAlgoId": client_id, "quantity": fmt(qty), "reduceOnly": "true"}
         return _norm_algo(self._req("POST", "/fapi/v1/algoOrder", p, critical=True))

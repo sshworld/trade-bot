@@ -112,7 +112,7 @@ class Settings:
     slip_alert_bp: float = 10.0
     trade_from_ms: int = 0              # replay harness: no orders before this bar close
     trade_until_ms: int = 1 << 62
-    # qr1h (PM 2026-10-30): exchange-side TP1/TP2 + breakeven after TP1 + time exit. Off by default (legacy H7-T tests);
+    # qrmtf (PM 2026-10-30): exchange-side TP1/TP2 + breakeven after TP1 + time exit. Off by default (legacy H7-T tests);
     # runner.live_settings() turns them on for the live strategy.
     enable_short: bool = False
     take_profit: bool = False           # TP1 = +tp1_r·R for tp1_frac of the qty, TP2 = +tp2_r·R for the rest (reduceOnly)
@@ -685,11 +685,6 @@ class V6Engine:
         """Closing side of a journaled position."""
         return "SELL" if int(j.get("side", 1)) > 0 else "BUY"
 
-    def forming_bar(self, sym, interval):
-        """ctx: the still-forming kline (volume so far) of `interval`, or None."""
-        rows = self.x("klines", sym, interval, 1)
-        return rows[-1] if rows and rows[-1].get("close_time", 0) >= self.now_ms() else None
-
     def _size_fresh(self, sym, stop_dist: Decimal, book: list, fixed_lev: int | None = None, side: int = 1):
         """Read EVERYTHING the order depends on right now (exchangeInfo filters, leverage bracket, book, mark price,
         wallet/available) and size from it. Nothing is taken from the startup cache or an earlier pass. Any failed
@@ -1045,7 +1040,7 @@ class V6Engine:
         self._dirty = True                                  # reconcile re-verifies (qty ≥ position) right away
         return "kept"
 
-    # ───────────────────────── take profit / breakeven (qr1h) ─────────────────────────
+    # ───────────────────────── take profit / breakeven (qrmtf) ─────────────────────────
     def _tp_levels(self, sym, j):
         s, rules = int(j.get("side", 1)), self.rules[sym]
         e = D(j["entry_px"])
