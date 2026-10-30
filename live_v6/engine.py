@@ -1095,12 +1095,11 @@ class V6Engine:
     def _manage_tps(self, sym, j, amt, orders, mk):
         """Every reconcile: missing TP orders re-placed; after TP1 the stop is moved to breakeven (new first)."""
         tp, cids = j["tp"], {o["client_id"] for o in orders}
-        s = int(j.get("side", 1))
-        for w, k in (("t1", "tp1"), ("t2", "tp2")):               # TP missing AND price through it: it most likely just
-            if (tp.get(k) and f"{j['cid']}{w}" not in cids and mk is not None and s * (D(mk) - D(tp[k])) >= 0
-                    and not (w == "t1" and j.get("tp1_done"))):  # fired and `amt` is a stale snapshot -> fresh read first
-                try:                                              # (testnet 2026-10-30: re-placing it -> -2021 -> a 2nd
-                    fresh = self.x("positions", self.cfg.symbols)[sym]["amt"]   # market TP1 closed the remainder)
+        for w, k in (("t1", "tp1"), ("t2", "tp2")):               # a TP missing from open orders most likely just fired:
+            if (tp.get(k) and f"{j['cid']}{w}" not in cids     # `amt` / `mk` may predate it -> fresh position read
+                    and not (w == "t1" and j.get("tp1_done"))):  # first (testnet LINK + PEPE 2026-10-30: re-place ->
+                try:                                              # -2021 -> a 2nd market TP1 closed the remainder)
+                    fresh = self.x("positions", self.cfg.symbols)[sym]["amt"]
                 except ExchangeError:
                     return
                 if abs(fresh) < abs(amt):

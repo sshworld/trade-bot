@@ -429,7 +429,8 @@ def test_tp1_fired_with_stale_position_snapshot_no_double_close(offline, side):
     full = offline.amt(DOGE)
     offline.inner.set_price(DOGE, Decimal(j["tp"]["tp1"]))          # TP1 fires on the exchange
     calls0 = len(offline.fx.calls)
-    eng._manage_tps(DOGE, eng.st["pos"][DOGE], full, offline.inner.open_orders(DOGE), Decimal(j["tp"]["tp1"]))
+    stale_mk = Decimal(j["entry_px"])                                  # mark read before the fire (testnet PEPE)
+    eng._manage_tps(DOGE, eng.st["pos"][DOGE], full, offline.inner.open_orders(DOGE), stale_mk)
     assert not [c for c in offline.fx.calls[calls0:] if c[0] in ("market", "take_profit")]
     assert abs(offline.amt(DOGE)) == Decimal(j["tp"]["q2"])
     eng.reconcile()
