@@ -420,6 +420,24 @@ def test_be_stop_not_confirmed_keeps_old_and_alerts(offline):
     assert eng.st["pos"][DOGE]["be_done"]
 
 
+@pytest.mark.parametrize("side", [1, -1])
+def test_tp1_fired_with_stale_position_snapshot_no_double_close(offline, side):
+    # testnet 2026-10-30 LINK: TP1 fired between the position read and the open-orders read -> TP1 looked missing
+    # with the full qty -> re-place -> -2021 -> reduceOnly market for q1 again -> only 0.01 left. Fresh read must stop it.
+    eng = exit_engine(offline)
+    j = open_pos(offline, eng, side)
+    full = offline.amt(DOGE)
+    offline.inner.set_price(DOGE, Decimal(j["tp"]["tp1"]))          # TP1 fires on the exchange
+    calls0 = len(offline.fx.calls)
+    eng._manage_tps(DOGE, eng.st["pos"][DOGE], full, offline.inner.open_orders(DOGE), Decimal(j["tp"]["tp1"]))
+    assert not [c for c in offline.fx.calls[calls0:] if c[0] in ("market", "take_profit")]
+    assert abs(offline.amt(DOGE)) == Decimal(j["tp"]["q2"])
+    eng.reconcile()
+    eng.reconcile()
+    j = eng.st["pos"][DOGE]
+    assert j["tp1_done"] and j["be_done"] and abs(offline.amt(DOGE)) == Decimal(j["tp"]["q2"])
+
+
 def _be_flat_clean(b, eng):
     assert b.amt(DOGE) == 0 and DOGE not in eng.st["pos"] and not bot_orders(b, DOGE)
     assert eng.meta["trades"][-1]["reason"] == "be_stop_breach"
