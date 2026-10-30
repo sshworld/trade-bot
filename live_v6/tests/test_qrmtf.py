@@ -142,7 +142,27 @@ def test_live_settings_qrmtf():
     assert (c.sizing.risk_pct, c.sizing.portfolio_risk_cap, c.sizing.margin_cap, c.sizing.max_leverage) == (4.0, 0.12, 0.25, 10)
     assert c.max_positions == 3 and c.enable_short and c.take_profit and c.max_hold_s == 24 * 3600
     assert (c.tp1_r, c.tp1_frac, c.tp2_r, c.be_offset) == (1.0, 0.5, 2.0, 0.001)
-    assert c.halt_fraction == 0.75
+    assert c.halt_fraction is None and c.daily_loss_halt == 0.10 and c.daily_halt_s == 24 * 3600   # -25 % total halt removed
+    assert c.bar_stale_s == 180.0
+
+
+def test_bar_guard_qrmtf_1m_text_and_180s(offline):
+    clk = Clock()
+    eng, strat = mtf_engine(offline, clk)
+    del eng.bar_guard                                       # the real guard
+    T = int(clk.t * 1000) // 60000 * 60000
+    eng.meta["last_bar_close"] = T - 60000                  # the decision for T never committed
+    clk.t = (T + 179_000) / 1000
+    eng.bar_guard()
+    assert "bar_stale" not in eng.blocks and eng.entries_allowed()
+    clk.t = (T + 181_000) / 1000
+    eng.bar_guard()
+    assert not eng.entries_allowed()
+    txt = [r["text"] for r in eng.tg.records if r["type"] == "alert"]
+    assert len(txt) == 1 and "1분 봉 마감 180초" in txt[0] and "4시간" not in txt[0], txt
+    eng.meta["last_bar_close"] = T + 180_000                # caught up to the current minute
+    eng.bar_guard()
+    assert eng.entries_allowed() and eng.tg.sent[-1].startswith("✅ 1분 봉 마감 반영 완료") and "4시간" not in eng.tg.sent[-1]
 
 
 # ───────────── engine: entries, seeding, near-miss log ─────────────

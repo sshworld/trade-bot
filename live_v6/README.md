@@ -123,6 +123,12 @@ since start (transfers excluded); margin guard: margin in use + new margin ≤ s
 strategy equity (incl. unrealised, income TRANSFER rows excluded; a breach forces a fresh transfer sync first) ≤
 `halt_fraction` (0.75) × C0. `halt_fraction` is the single source of truth (also §8c L3(a)).
 
+**qrmtf (2026-10-30):** the −25 % total halt is off (`halt_fraction=None`). Daily-loss halt instead (`daily_loss_halt=0.10`):
+equity (wallet + unrealised, transfers excluded) ≤ 0.90 × the equity at 00:00 UTC (09:00 KST, `meta.dl_base`) → close every
+state-file position (unknown ones untouched, TA R4), cancel bot orders, no new entries for 24 h from the trigger
+(`meta.daily_halt`, survives restarts), then auto-resume. One 🚨 (with per-trade coin / side / PnL / entry TF scores) and one ✅
+on resume, live mode only. Daily jsonl: `event=halt` line; `distance_to_halt` = % to the day line.
+
 ## Websocket endpoints (network-specific, `stream.market_url` / `stream.user_url`)
 - Mainnet: legacy `fstream.binance.com/ws` and `/stream` were retired on 2026-04-23 → market data
   `wss://fstream.binance.com/market/stream?streams=…` (markPrice@1s, kline, aggTrade), user data

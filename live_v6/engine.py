@@ -12,6 +12,8 @@ Invariants (ported from the verified live_v1 safety layer, spec v1 §8-10 / v2 �
   * Any reconcile mismatch, API-error burst, unknown order, ledger gap or margin-mode failure blocks NEW entries;
     existing stops are never touched by a block.
   * strategy equity ≤ halt_fraction (0.75) × start capital (transfers excluded) → flatten all + halt (§8e-2). PF < 0.8 after 30 trades = review alert only.
+  * qrmtf (user 2026-10-30): that −25 % total halt is OFF (halt_fraction None); instead daily_loss_halt 0.10 → equity (wallet + uPnL,
+    transfers excluded) ≤ 0.90 × equity at 00:00 UTC (09:00 KST) → close all bot positions, 0 bot orders, no new entries for 24 h, auto-resume.
   * TA R4 (unknown positions): a position on the exchange that is NOT in the state file is never market-closed — not
     by the strategy (model_sync), not by a breach / stop-failure close, not by flatten-all. It is kept in
     st["unknown"]: 🚨 once (Telegram on mainnet only), new entries blocked for THAT coin, its risk counted in the
@@ -53,7 +55,8 @@ KST = timezone(timedelta(hours=9))
 MODEL_EXITS = ("signal_exit", "model_sync", "time_exit")   # strategy-driven exits: the model is already flat
 REASON_KO = {"stop_loss": "손절", "signal_exit": "M20 채널 청산", "model_sync": "모델 동기화 청산", "stop_breach": "손절 미작동 정리",
              "sl_failed": "손절 등록 실패 정리", "stop_lost_breach": "손절 주문 소실 후 손절가 돌파 정리", "emergency": "비상 전체 정리", "dust_entry": "소액 부분 체결 정리",
-             "time_exit": "24시간 보유 청산", "take_profit": "익절", "be_stop_breach": "본절 손절가 돌파 정리"}
+             "time_exit": "24시간 보유 청산", "take_profit": "익절", "be_stop_breach": "본절 손절가 돌파 정리",
+             "daily_loss_halt": "일일 손실 한도 전체 정리"}
 
 # entry-blocking reasons (transient; cleared automatically when the condition clears)
 UNKNOWN_POS = "unknown_position"                    # per-coin entry block (st["unknown"]), never a global block
@@ -90,7 +93,10 @@ class Settings:
     transient_alert_s: float = 60       # §8c L0: alert only when a transient fault lasts longer than this
     api_dead_s: float = 300             # §8c L3(c): API unresponsive this long + unprotected position → flatten all
     capital_fraction: float = 1.0       # §8e-2: trading capital C0 = capital_fraction × S0 (S0 = wallet at live start)
-    halt_fraction: float = 0.75         # §8e-2 / §8c L3(a): flatten all + halt when strategy equity ≤ halt_fraction × C0
+    halt_fraction: float | None = 0.75  # §8e-2 / §8c L3(a): flatten all + halt when strategy equity ≤ halt_fraction × C0 (None = off)
+    daily_loss_halt: float | None = None  # qrmtf (user 2026-10-30): equity (incl. unrealised, transfers excluded) ≤ (1 − x) ×
+                                          # equity at 00:00 UTC → flatten all + cancel orders + no new entries for daily_halt_s
+    daily_halt_s: float = 24 * 3600.0     # daily-loss halt length from the trigger time, then auto-resume (persisted)
     pf_review: float = 0.8
     pf_review_after: int = 30
     ledger_tol_pct: float = 0.5
@@ -124,7 +130,7 @@ class Settings:
 
 
 LOG_INTENT_KEYS = ("signal_px", "path", "risk_pct_used", "order_ms", "prearm_ms", "open_risk_after", "same_side_open")
-EXIT_KIND = {"stop_loss": "exchange_close", "signal_exit": "exit_rule", "model_sync": "exit_rule"}   # live log exit_reason
+EXIT_KIND = {"stop_loss": "exchange_close", "signal_exit": "exit_rule", "model_sync": "exit_rule", "daily_loss_halt": "halt"}   # live log exit_reason
 
 
 class V6Engine:
@@ -264,6 +270,7 @@ class V6Engine:
 
     def resume(self):
         self.meta.pop("halted", None)
+        self.meta.pop("daily_halt", None)
         self.save()
 
     def skip(self, sym, reason, detail="", signal_px=None, signal_ms=None):
@@ -1455,7 +1462,10 @@ class V6Engine:
         c = self.meta.get("log_day", {}).get(day, {})
         w, pk = self.meta.get("wallet"), self.meta.get("peak_wallet")
         try:
-            _, eq, thr = self.drawdown_breached()
+            if self.cfg.daily_loss_halt:                 # distance to the current day −10 % line (00:00 UTC baseline)
+                eq, thr = self._daily_equity()
+            else:
+                _, eq, thr = self.drawdown_breached()
             dist = str(((eq - thr) / eq * 100).quantize(Decimal("0.01"))) if eq and thr is not None else None
         except Exception:  # noqa: BLE001
             eq, dist = self.meta.get("equity"), None
@@ -1514,7 +1524,7 @@ class V6Engine:
                      f"순손익 {net:+.4f} USDT" + (f" · {rec['R']}R" if rec["R"] else "")
                      + f" (수수료 {fees:.4f} · 펀딩 {funding:+.4f})", kind="exit", event_ms=t_x)
         self._emit("trades", lambda: self._trade_line(j, rec, entry_fills, exit_fills, t_x))
-        self.check_halts()
+        self.check_halts(daily=False)   # daily-loss check runs at the end of reconcile
 
     # ───────────────────────── reconcile (exchange → local) ─────────────────────────
     def reconcile(self):
@@ -1827,10 +1837,99 @@ class V6Engine:
         from income TRANSFER rows excluded) ≤ halt_fraction × C0. Single source of truth: Settings.halt_fraction."""
         c0 = self.capital0()
         eq = self.strategy_equity()
+        if self.cfg.halt_fraction is None:               # qrmtf: replaced by the daily-loss halt
+            return False, eq, None
         thr = c0 * D(self.cfg.halt_fraction)
         return c0 > 0 and eq <= thr, eq, thr
 
-    def check_halts(self):
+    # ── daily-loss halt (qrmtf, user 2026-10-30) ──
+    def _daily_equity(self):
+        # (equity incl. unrealised − transfers booked since the day baseline, the day line) or (None, None)
+        b = self.meta.get("dl_base")
+        if not b or self.meta.get("equity") is None:
+            return None, None
+        adj = D(self.meta["equity"]) - (D(self.meta.get("net_transfers", "0")) - D(self.meta.get("dl_tr", "0")))
+        return adj, D(b) * (1 - D(str(self.cfg.daily_loss_halt)))
+
+    def check_daily_halt(self):
+        # daily-loss halt (user 2026-10-30): equity ≤ (1 − daily_loss_halt) × equity at 00:00 UTC → close all, 24 h no entries
+        if not self.cfg.daily_loss_halt or self.meta.get("equity") is None:
+            return
+        now = self.now_ms()
+        dh = self.meta.get("daily_halt")
+        if dh and now >= int(dh["until_ms"]):            # 24 h after the trigger → auto-resume (survives restarts)
+            self.meta.pop("daily_halt")
+            if str(self.meta.get("halted") or "").startswith("daily_loss"):
+                self.meta.pop("halted")
+            self.save()
+            self.notify(f"✅ 일일 손실 중단 해제 — 24시간 경과 · 신규 진입 재개 (중단 시각 {kst(int(dh['trigger_ms']))})",
+                        kind="resume")
+        day = datetime.fromtimestamp(now / 1000, timezone.utc).strftime("%Y-%m-%d")
+        if self.meta.get("dl_day") != day:               # 00:00 UTC (09:00 KST): new baseline = equity now
+            self.meta.update(dl_day=day, dl_base=self.meta["equity"], dl_tr=self.meta.get("net_transfers", "0"))
+            self.save()
+            return
+        if self.meta.get("halted") or self.meta.get("daily_halt"):
+            return
+        adj, line = self._daily_equity()
+        if adj is None or adj > line:
+            return
+        if "start_wallet" in self.meta:                  # fresh transfer sync: a withdrawal must not look like a loss
+            self._last_income = -1e18
+            self.check_ledger()
+            adj, line = self._daily_equity()
+            if adj > line:
+                return
+        self._daily_halt_trigger(now, adj, line)
+
+    def _daily_halt_trigger(self, now, adj, line):
+        base, pct = D(self.meta["dl_base"]), int(round(self.cfg.daily_loss_halt * 100))
+        until = now + int(self.cfg.daily_halt_s * 1000)
+        reason = f"daily_loss: 자산 {adj:.2f} ≤ {line:.2f} (00:00 UTC {base:.2f} −{pct}%)"
+        upnl, marks = {}, dict(self.marks)
+        if self.st["pos"] and not marks:
+            try:
+                marks = self.x("mark_prices")
+            except ExchangeError:
+                pass
+        for sym, j in self.st["pos"].items():
+            m, e = marks.get(sym), j.get("entry_px")
+            if m is not None and e:
+                upnl[sym] = (D(m) - D(e)) * D(j["qty"]) * int(j.get("side", 1))
+        self.meta["halted"] = reason
+        self.meta["daily_halt"] = {"trigger_ms": now, "until_ms": until, "day_start_equity": str(base),
+                                   "equity_at_trigger": str(adj), "line": str(line)}
+        self.save()
+        self._emit("daily", lambda: {"event": "halt", "halt_reason": "daily_loss", "detail": reason, "trigger_time": now,
+                                     "trigger_time_kst": kst(now), "resume_time_kst": kst(until), "day_start_equity": str(base),
+                                     "equity_at_trigger": str(adj), "line": str(line),
+                                     "positions": sorted(self.st["pos"]), "code_commit": self.events.commit})
+        for sym in list(self.st["pos"]):                 # state-file positions only (TA R4: unknown ones keep their stop)
+            self.close(sym, "daily_loss_halt")           # reduceOnly MARKET; _after_flat cancels the bot orders → 0 residual
+        self.alert(f"일일 손실 −{pct}% — 전 포지션 청산 · 24시간 신규 진입 중단",
+                   f"자산 {adj:.2f} ≤ {line:.2f} (오늘 시작 {base:.2f}) · 재개 {kst(until)}\n" + self._daily_halt_lines(now, upnl))
+
+    def _daily_halt_lines(self, now, upnl) -> str:
+        # one line per trade of the UTC day (incl. the ones just closed) + per position still open: coin, side, PnL, entry scores
+        d0 = now // 86_400_000 * 86_400_000
+        fn = getattr(self.strategy, "entry_scores", None)
+        def tside(t):    # trade recs carry no side (fixed schema): gross = side × (exit − entry) × qty
+            mv = D(t["exit_px"]) - D(t["entry_px"])
+            return 1 if mv == 0 or (D(t["gross"]) >= 0) == (mv > 0) else -1
+
+        rows = [(t["sym"], tside(t), f"실현 {D(t['net']):+.2f}", int(t.get("opened_ms") or 0))
+                for t in self.meta.get("trades", []) if int(t.get("closed_ms") or 0) >= d0]
+        rows += [(s, int(j.get("side", 1)), f"미실현 {upnl[s]:+.2f}" if s in upnl else "미실현 ?", int(j.get("opened_ms") or 0))
+                 for s, j in self.st["pos"].items()]
+        out = []
+        for sym, side, pnl, opened in rows[-12:]:
+            sc = fn(sym, opened) if fn else None
+            out.append(f"• {sym.removesuffix('USDT')} {'롱' if side > 0 else '숏'} {pnl}" + (f" · {sc}" if sc else ""))
+        return "\n".join(out) or "오늘 거래 없음"
+
+    def check_halts(self, daily=True):
+        if daily:                                        # not from record_close: a close inside the reconcile loop must not
+            self.check_daily_halt()                      # flatten other coins mid-loop (stale snapshot → false unknown)
         if "start_wallet" not in self.meta:
             return
         hit, adj, thr = self.drawdown_breached()
@@ -1976,20 +2075,24 @@ class V6Engine:
         T, behind = self.bar_lag()
         if T is None:
             return
-        if behind and self.now_ms() - T > self.cfg.bar_stale_s * 1000:
+        mins = self.strategy.decision_interval_ms // 60000
+        tf = f"{mins // 60}시간" if mins >= 60 and mins % 60 == 0 else f"{mins}분"   # 4h → 4시간, qrmtf 1m → 1분
+        lbc = int(self.meta.get("last_bar_close") or 0)
+        due = min(T, lbc + self.strategy.decision_interval_ms) if lbc else T   # oldest uncommitted boundary (1m: T moves every minute)
+        if behind and self.now_ms() - due > self.cfg.bar_stale_s * 1000:
             detail = f"봉 {datetime.fromtimestamp(T / 1000, KST):%m-%d %H:%M} KST 마감 미반영 · " + ", ".join(behind)[:300]
             if BAR_STALE not in self.blocks:
                 self.block(BAR_STALE, detail)
                 self._block_alerted.add(BAR_STALE)
-                self.alert(f"4시간 봉 마감 {self.cfg.bar_stale_s:.0f}초 넘게 미반영 — 신규 진입 차단 (포지션·손절 유지, 정리 안 함)",
-                           detail, event_ms=T)
+                self.alert(f"{tf} 봉 마감 {self.cfg.bar_stale_s:.0f}초 넘게 미반영 — 신규 진입 차단 (포지션·손절 유지, 정리 안 함)",
+                           detail, event_ms=due)
             else:
                 self.blocks[BAR_STALE] = detail
         elif not behind and BAR_STALE in self.blocks:
             self.blocks.pop(BAR_STALE, None)
             self._block_since.pop(BAR_STALE, None)
             self._block_alerted.discard(BAR_STALE)
-            self.notify(f"✅ 4시간 봉 마감 반영 완료 — {'신규 진입 재개' if self.entries_allowed() else '다른 차단 사유 남음: ' + ','.join(self.blocks)}",
+            self.notify(f"✅ {tf} 봉 마감 반영 완료 — {'신규 진입 재개' if self.entries_allowed() else '다른 차단 사유 남음: ' + ','.join(self.blocks)}",
                         kind="recovery")
 
     def healthy(self) -> bool:

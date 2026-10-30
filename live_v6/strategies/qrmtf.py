@@ -191,6 +191,24 @@ class QRMTF(Strategy):
         last = max((int(r.get("closed_ms") or 0) for r in ctx.meta.get("trades", []) if r.get("sym") == sym), default=0)
         return now - last < self.cooldown_ms
 
+    def entry_scores(self, sym, opened_ms, window_ms=600_000) -> str | None:
+        # compact entry scores for the daily-loss halt alert: the latest "entry" record of sym at/before opened_ms
+        # (in-memory records first, then the signal log file, so it survives a restart)
+        def pick(recs):
+            c = [r for r in recs if r.get("kind") == "entry" and r.get("sym") == sym and 0 <= opened_ms - int(r["T"]) <= window_ms]
+            return max(c, key=lambda r: int(r["T"])) if c else None
+        r = pick(self.records)
+        if r is None and self.log_path:
+            try:
+                with open(self.log_path) as f:
+                    r = pick(json.loads(x) for x in f.readlines()[-20000:] if '"entry"' in x)
+            except (OSError, ValueError):
+                r = None
+        if r is None:
+            return None
+        tf = " ".join(f"{k} {v['contrib']:+.1f}" for k, v in ((k, r["tf"][k]) for k in WEIGHTS if k in r["tf"]))   # 1w → 1m
+        return f"big_n {r['big_n']:+.1f} mid {r['mid']:+.1f} fast {r['fast']:+.1f} | {tf}"
+
     def _record(self, kind, sym, T, ev, side, prev, reason="", sd=None):
         rec = {"T": T, "sym": sym, "kind": kind, "side": side, "reason": reason,
                "total": round(ev["total"], 3), "big_n": round(ev["big_n"], 3), "mid": ev["mid"], "fast": ev["fast"],
