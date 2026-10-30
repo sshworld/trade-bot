@@ -1,17 +1,17 @@
 # qrmtf: multi-timeframe score entry (PM final, agreed by TA and QR, 2026-10-30). Replaces qr1h entirely.
 #
 # Every minute (decision_interval 1m), per coin, on closed bars + the FORMING bar of each timeframe:
-#   per TF  s1 = +1 if EMA20 > EMA50 else -1;  s2 = sign(MACD(12,26,9) histogram);  s3 = +1 if RSI14 > 50 else -1;
+#   per TF  s1 = +1 if EMA20 > EMA50 else -1 (1d: +1 if price > 1d EMA50 else -1, forming daily bar);  s2 = sign(MACD(12,26,9) histogram);  s3 = +1 if RSI14 > 50 else -1;
 #           s4 = (+1 if +DI > -DI else -1) if ADX14 >= 20 else 0;   contribution = (s1+s2+s3+s4)/4 x weight
-#   big   = 1h+4h+1d+1w contributions, big_n = big / 58 x 100      long: big_n >= +60   short: big_n <= -60
+#   big   = 1h+4h+1d contributions, big_n = big / 50 x 100 (QR variant; 1d s1 = price vs 1d EMA50)      long: big_n >= +60   short: big_n <= -60
 #   mid   = 15m+30m contributions                                   long: mid <= 0       short: mid >= 0
 #   fast  = 1m+3m+5m contributions; trigger = flip vs the previous minute (long prev <= 0 < now, short prev >= 0 > now).
 #           previous fast is kept in memory only: after a restart (or a missed minute) the first evaluation only seeds.
-#   total = all 9 TFs normalised to 100 (info / logs only).
+#   total = the 8 scored TFs normalised to 100 (info / logs only). 1w: weight kept in WEIGHTS, not fetched / scored.
 #   stop R = max(1.5 x ATR14(closed 1h), 0.8 % of the price); 1 h re-entry cooldown from the persisted trade journal.
 # A TF with fewer than 60 bars contributes 0 (logged). Entries, blocked signals (cooldown / in position / short off) and
 # near-misses (rate-limited: once per coin per 15 min; not on a seeding minute) go to a jsonl next to the state file.
-# Data: 1m/3m/5m klines are refetched every minute; 15m..1w are refetched when their forming bar closes, in between
+# Data: 1m/3m/5m klines are refetched every minute; 15m..1d are refetched when their forming bar closes, in between
 # their forming bar is updated from the 1m rows (high/low/close). 150 bars per request (weight 2 each).
 from __future__ import annotations
 
@@ -25,7 +25,11 @@ from .base import Strategy, enter
 log = logging.getLogger("live_v6.qrmtf")
 M1, H1 = 60_000, 3600_000
 WEIGHTS = {"1w": 8, "1d": 18, "4h": 18, "1h": 14, "30m": 12, "15m": 12, "5m": 7, "3m": 5, "1m": 6}
-BIG, MID, FAST = ("1h", "4h", "1d", "1w"), ("15m", "30m"), ("1m", "3m", "5m")
+BIG, MID, FAST = ("1h", "4h", "1d"), ("15m", "30m"), ("1m", "3m", "5m")
+# QR variant (PM 2026-10-30): 1w out of big (big_n = big / 50 x 100) and not fetched; 1d s1 = price vs 1d EMA50
+# (forming daily bar). Legacy (big incl. 1w / 58, 1d s1 = EMA20 vs EMA50): QRMTF(big_tfs=BIG_LEGACY, d1_s1="ema").
+BIG_LEGACY = ("1h", "4h", "1d", "1w")
+SCORED = BIG + MID + FAST
 
 
 def kline_weight(limit):
@@ -63,7 +67,7 @@ def atr14(bars):
     return rma(true_range(h, l, c), 14)[-1]
 
 
-def tf_signals(bars, adx_min=20.0):
+def tf_signals(bars, adx_min=20.0, s1_mode="ema"):
     # bars ascending (closed + forming); values as of the LAST bar
     h = [b["high"] for b in bars]; l = [b["low"] for b in bars]; c = [b["close"] for b in bars]
     e20, e50 = ema(c, 20)[-1], ema(c, 50)[-1]
@@ -80,7 +84,8 @@ def tf_signals(bars, adx_min=20.0):
         pdi, ndi = (100 * p / t, 100 * n / t) if t > 0 else (0.0, 0.0)
         dx.append(0.0 if pdi + ndi == 0 else 100 * abs(pdi - ndi) / (pdi + ndi))
     adx = rma(dx, 14)[-1]
-    return {"s1": 1 if e20 > e50 else -1, "s2": sign(hist), "s3": 1 if rsi > 50 else -1,
+    s1 = (1 if c[-1] > e50 else -1) if s1_mode == "px_ema50" else (1 if e20 > e50 else -1)
+    return {"s1": s1, "s2": sign(hist), "s3": 1 if rsi > 50 else -1,
             "s4": (1 if pdi > ndi else -1) if adx >= adx_min else 0,
             "ema20": e20, "ema50": e50, "macd_h": hist, "rsi": rsi, "adx": adx, "pdi": pdi, "ndi": ndi}
 
@@ -89,13 +94,13 @@ def contribution(sig, weight):
     return (sig["s1"] + sig["s2"] + sig["s3"] + sig["s4"]) / 4 * weight
 
 
-def evaluate(sigs, weights=None):
-    # sigs: tf -> tf_signals() or None (not enough bars → contributes 0)
+def evaluate(sigs, weights=None, big=BIG):
+    # sigs: tf -> tf_signals() or None (not enough bars → contributes 0); only big+MID+FAST are scored (1w omitted)
     w = weights or WEIGHTS
-    con = {tf: (contribution(sigs[tf], wt) if sigs.get(tf) else 0.0) for tf, wt in w.items()}
-    big = sum(con[t] for t in BIG)
-    return {"contrib": con, "big": big, "big_n": big / sum(w[t] for t in BIG) * 100, "mid": sum(con[t] for t in MID),
-            "fast": sum(con[t] for t in FAST), "total": sum(con.values()) / sum(w.values()) * 100}
+    con = {tf: (contribution(sigs[tf], w[tf]) if sigs.get(tf) else 0.0) for tf in tuple(big) + MID + FAST}
+    b = sum(con[t] for t in big)
+    return {"contrib": con, "big": b, "big_n": b / sum(w[t] for t in big) * 100, "mid": sum(con[t] for t in MID),
+            "fast": sum(con[t] for t in FAST), "total": sum(con.values()) / sum(w[t] for t in con) * 100}
 
 
 def gates(side, ev, big_min=60.0):
@@ -118,9 +123,11 @@ class QRMTF(Strategy):
     max_signal_age_s = 20.0
     fetch, min_bars, big_min, cooldown_ms, near_miss_ms = 150, 60, 60.0, H1, 15 * M1
 
-    def __init__(self, state=None, weights=None, log_path=None, **_kw):
+    def __init__(self, state=None, weights=None, log_path=None, big_tfs=BIG, d1_s1="px_ema50", **_kw):
         super().__init__(state)
         self.weights = dict(weights or WEIGHTS)
+        self.big_tfs, self.d1_s1 = tuple(big_tfs), d1_s1          # config: default = QR variant
+        self.scored = self.big_tfs + MID + FAST
         self.log_path = log_path
         self._bars: dict = {}      # (sym, tf) -> bars incl. the forming one
         self._prev: dict = {}      # sym -> (T, fast) — memory only (restart seeds, no trigger)
@@ -173,14 +180,15 @@ class QRMTF(Strategy):
         now = ctx.now_ms()
         m1 = self._get(ctx, sym, "1m")
         sigs, nbars = {}, {}
-        for tf in self.weights:
+        for tf in self.scored:                                    # 1w not fetched (not scored)
             bars = self._series(ctx, sym, tf, now, m1)
             nbars[tf] = len(bars)
-            sigs[tf] = tf_signals(bars) if len(bars) >= self.min_bars else None
+            mode = self.d1_s1 if tf == "1d" else "ema"
+            sigs[tf] = tf_signals(bars, s1_mode=mode) if len(bars) >= self.min_bars else None
             if sigs[tf] is None and (sym, tf) not in self._short_tf:
                 self._short_tf.add((sym, tf))
                 log.warning("%s %s: only %d bars (< %d) → contributes 0", sym, tf, len(bars), self.min_bars)
-        ev = evaluate(sigs, self.weights)
+        ev = evaluate(sigs, self.weights, self.big_tfs)
         h1 = [b for b in self._bars[(sym, "1h")] if b["close_time"] < now]
         ev.update(sigs=sigs, nbars=nbars, px=m1[-1]["close"] if m1 else None,
                   atr1h=atr14(h1) if len(h1) >= 15 else None)
@@ -206,12 +214,13 @@ class QRMTF(Strategy):
                 r = None
         if r is None:
             return None
-        tf = " ".join(f"{k} {v['contrib']:+.1f}" for k, v in ((k, r["tf"][k]) for k in WEIGHTS if k in r["tf"]))   # 1w → 1m
+        tf = " ".join(f"{k} {v['contrib']:+.1f}" for k, v in ((k, r["tf"][k]) for k in WEIGHTS if k in r["tf"]))   # 1d → 1m (1w not scored)
         return f"big_n {r['big_n']:+.1f} mid {r['mid']:+.1f} fast {r['fast']:+.1f} | {tf}"
 
     def _record(self, kind, sym, T, ev, side, prev, reason="", sd=None):
         rec = {"T": T, "sym": sym, "kind": kind, "side": side, "reason": reason,
                "total": round(ev["total"], 3), "big_n": round(ev["big_n"], 3), "mid": ev["mid"], "fast": ev["fast"],
+               "big_tfs": "+".join(self.big_tfs), "d1_s1": self.d1_s1,
                "prev_fast": prev, "px": ev["px"], "atr1h": ev["atr1h"], "stop_dist": sd,
                "tf": {tf: dict(({k: s[k] for k in ("s1", "s2", "s3", "s4")} if s else {"s1": None, "s2": None, "s3": None,
                                                                                          "s4": None}),

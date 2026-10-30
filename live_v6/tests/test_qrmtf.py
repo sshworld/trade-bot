@@ -77,9 +77,11 @@ def bot_orders(b, sym):
 
 
 # ───────────── pure: s1..s4, weights, normalisation, gates, flip ─────────────
-def test_weights_sum_100_big_58_no_10m():
-    assert sum(Q.WEIGHTS.values()) == 100 and sum(Q.WEIGHTS[t] for t in Q.BIG) == 58
-    assert "10m" not in Q.WEIGHTS and set(Q.WEIGHTS) == set(Q.BIG + Q.MID + Q.FAST) | set()
+def test_weights_sum_100_big_50_no_1w_no_10m():
+    # QR variant (PM 2026-10-30 12:43): big = 1h+4h+1d (50); 1w weight kept in config but not scored / fetched
+    assert sum(Q.WEIGHTS.values()) == 100 and Q.BIG == ("1h", "4h", "1d") and sum(Q.WEIGHTS[t] for t in Q.BIG) == 50
+    assert sum(Q.WEIGHTS[t] for t in Q.BIG_LEGACY) == 58 and "1w" not in Q.SCORED
+    assert "10m" not in Q.WEIGHTS and set(Q.WEIGHTS) == set(Q.SCORED) | {"1w"}
     assert Q.WEIGHTS == {"1w": 8, "1d": 18, "4h": 18, "1h": 14, "30m": 12, "15m": 12, "5m": 7, "3m": 5, "1m": 6}
 
 
@@ -107,12 +109,51 @@ def _sig(v):
 def test_big_n_normalisation_and_total():
     allup = Q.evaluate({tf: _sig(1) for tf in Q.WEIGHTS})
     assert allup["big_n"] == 100 and allup["total"] == 100 and allup["mid"] == 24 and allup["fast"] == 18
-    mix = Q.evaluate({"1h": _sig(1), "4h": _sig(1), "1d": _sig(-1), "1w": _sig(-1)})   # others missing -> 0
-    assert abs(mix["big_n"] - (14 + 18 - 18 - 8) / 58 * 100) < 1e-9 and mix["mid"] == 0 and mix["fast"] == 0
+    assert "1w" not in allup["contrib"]                                      # 1w omitted, not scored
+    mix = Q.evaluate({"1h": _sig(1), "4h": _sig(1), "1d": _sig(-1), "1w": _sig(-1)})   # 1w ignored; others -> 0
+    assert abs(mix["big_n"] - (14 + 18 - 18) / 50 * 100) < 1e-9 and mix["mid"] == 0 and mix["fast"] == 0
     half = Q.evaluate({tf: {"s1": 1, "s2": 1, "s3": 0, "s4": 0} for tf in Q.BIG})
     assert half["big_n"] == 50 and Q.gates(1, half) == (False, True)
-    th = Q.evaluate({"1h": _sig(1), "4h": _sig(1), "1d": _sig(1)})
-    assert round(th["big_n"], 6) == round(50 / 58 * 100, 6)
+    th = Q.evaluate({"1h": _sig(1), "4h": _sig(1), "1d": _sig(1), "1w": _sig(-1)})
+    assert th["big_n"] == 100 and Q.gates(1, th) == (True, True)             # 50 / 50 x 100, 1w no drag
+    edge = Q.evaluate({"1h": _sig(1), "4h": _sig(1), "1d": {"s1": -1, "s2": 1, "s3": 1, "s4": 1}})
+    assert abs(edge["big_n"] - (14 + 18 + 9) / 50 * 100) < 1e-9 and Q.gates(1, edge)[0]   # 82 >= 60
+    old = Q.evaluate({"1h": _sig(1), "4h": _sig(1), "1d": _sig(1)}, big=Q.BIG_LEGACY)       # legacy option
+    assert round(old["big_n"], 6) == round(50 / 58 * 100, 6)
+
+
+def _reversal(up_end, n=150, px=1.0):
+    # long trend one way, then the forming bar jumps through EMA50 the other way: EMA20 still on the old side
+    k = 1 if up_end else -1                                      # up_end: downtrend 1.5 -> 1.0, forming bar 1.25
+    c = [px * (1 + k * 0.5 * (n - 1 - i) / (n - 1)) for i in range(n - 1)] + [px * (1 + k * 0.25)]
+    return [{"open_time": i * 86_400_000, "open": x, "high": x * 1.001, "low": x * 0.999, "close": x, "volume": 1.0,
+             "close_time": (i + 1) * 86_400_000 - 1} for i, x in enumerate(c)]
+
+
+@pytest.mark.parametrize("up_end", [True, False])
+def test_1d_s1_price_vs_ema50_both_signs(up_end):
+    bars = _reversal(up_end)
+    legacy, d1 = Q.tf_signals(bars), Q.tf_signals(bars, s1_mode="px_ema50")
+    want = 1 if up_end else -1
+    assert (bars[-1]["close"] > d1["ema50"]) == up_end and (d1["ema20"] > d1["ema50"]) != up_end   # cases differ
+    assert legacy["s1"] == -want and d1["s1"] == want
+    assert {k: d1[k] for k in ("s2", "s3", "s4")} == {k: legacy[k] for k in ("s2", "s3", "s4")}   # others unchanged
+
+
+def test_strategy_uses_px_ema50_on_1d_only_and_never_fetches_1w(offline):
+    clk = Clock()
+    eng, strat = mtf_engine(offline, clk)
+    now = int(clk.t * 1000)
+    set_market(offline, DOGE, "up", "down", "up", now, px=float(offline.inner.price[DOGE]))
+    offline.inner.kl[(DOGE, "1d")] = _reversal(False, px=float(offline.inner.price[DOGE]))
+    offline.inner.kl[(DOGE, "4h")] = _reversal(False, px=float(offline.inner.price[DOGE]))
+    calls0 = len(offline.fx.calls)
+    ev = strat.snapshot(eng, DOGE)
+    assert not [c for c in offline.fx.calls[calls0:] if c[0] == "klines" and c[1][1] == "1w"]
+    assert "1w" not in ev["sigs"] and "1w" not in ev["contrib"] and "1w" not in ev["nbars"]
+    assert ev["sigs"]["1d"]["s1"] == -1 and ev["sigs"]["4h"]["s1"] == 1     # 1d: price < EMA50; 4h keeps EMA20 vs 50
+    legacy = QRMTF(big_tfs=Q.BIG_LEGACY, d1_s1="ema")
+    assert legacy.scored == Q.BIG_LEGACY + Q.MID + Q.FAST and legacy.d1_s1 == "ema"
 
 
 def test_mid_gate_mirrored():
@@ -178,8 +219,8 @@ def test_long_entry_on_fast_flip_with_big_and_mid(offline):
     assert j["side"] == 1 and Decimal(j["stop_px"]) < Decimal(j["entry_px"])
     rec = [r for r in strat.records if r["kind"] == "entry"][-1]
     assert rec["side"] == 1 and rec["big_n"] == 100 and rec["mid"] == -24 and rec["fast"] == 18 and rec["prev_fast"] == -18
-    assert set(rec["tf"]) == set(Q.WEIGHTS) and rec["tf"]["1h"] == {"s1": 1, "s2": 1, "s3": 1, "s4": 1, "contrib": 14.0, "bars": 150}
-    assert "total" in rec
+    assert set(rec["tf"]) == set(Q.SCORED) and rec["tf"]["1h"] == {"s1": 1, "s2": 1, "s3": 1, "s4": 1, "contrib": 14.0, "bars": 150}
+    assert "total" in rec and rec["big_tfs"] == "1h+4h+1d" and rec["d1_s1"] == "px_ema50"
     oo = offline.inner.open_orders(DOGE)
     assert len([o for o in oo if o["type"] == "TAKE_PROFIT_MARKET"]) == 2
     assert len([o for o in oo if o["type"] == "STOP_MARKET"]) == 1
@@ -283,10 +324,10 @@ def test_short_history_tf_contributes_zero(offline):
     clk = Clock()
     eng, strat = mtf_engine(offline, clk)
     now = int(clk.t * 1000)
-    set_market(offline, DOGE, "up", "down", "up", now, px=float(offline.inner.price[DOGE]), n={"1w": 40})
+    set_market(offline, DOGE, "up", "down", "up", now, px=float(offline.inner.price[DOGE]), n={"1d": 40})
     ev = strat.snapshot(eng, DOGE)
-    assert ev["sigs"]["1w"] is None and ev["contrib"]["1w"] == 0 and ev["nbars"]["1w"] == 40
-    assert abs(ev["big_n"] - 50 / 58 * 100) < 1e-9 and (DOGE, "1w") in strat._short_tf
+    assert ev["sigs"]["1d"] is None and ev["contrib"]["1d"] == 0 and ev["nbars"]["1d"] == 40
+    assert abs(ev["big_n"] - 32 / 50 * 100) < 1e-9 and (DOGE, "1d") in strat._short_tf
 
 
 def test_rest_weight_per_minute_steady_state(offline):
@@ -296,7 +337,7 @@ def test_rest_weight_per_minute_steady_state(offline):
         set_market(offline, s, "up", "down", "up", int(clk.t * 1000), px=0.15)
     strat.on_bar_close(0, eng)
     w0 = strat.rest_weight
-    assert w0 == len(eng.cfg.symbols) * 9 * 2                  # cold start: every TF once (150 bars = weight 2)
+    assert w0 == len(eng.cfg.symbols) * 8 * 2                  # cold start: every scored TF once (no 1w) (150 bars = weight 2)
     clk.t += 60
     for s in eng.cfg.symbols:
         offline.inner.kl[(s, "1m")] = series("up", 0.15, 150, M1, int(clk.t * 1000))
