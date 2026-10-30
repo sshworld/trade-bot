@@ -1100,14 +1100,18 @@ class V6Engine:
         if f"{j['cid']}t2" not in cids:
             self._place_tp(sym, j, "t2", D(tp["tp2"]), abs(amt) if j.get("tp1_done") else D(tp["q2"]))
         if j.get("tp1_done") and tp.get("tp1") and not j.get("be_done"):
-            self._move_stop_be(sym, j, amt, orders)
+            self._move_stop_be(sym, j, amt, orders, mk)
 
-    def _move_stop_be(self, sym, j, amt, orders):
+    def _move_stop_be(self, sym, j, amt, orders, mk=None):
         s, e = int(j.get("side", 1)), D(j["entry_px"])
         tgt = self.rules[sym].price(e * (1 + s * D(str(self.cfg.be_offset))), "up" if s > 0 else "down")
         if s * (tgt - D(j["stop_px"])) <= 0:
             j["be_done"] = True                                   # stop already at/above breakeven
             self.save()
+            return
+        if mk is not None and s * (D(mk) - tgt) <= 0:             # price already at/through breakeven: a stop there would
+            log.warning("%s mark %s already beyond BE %s → close remainder", sym, mk, tgt)   # fire at once → close now
+            self.close(sym, "be_stop_breach")                     # (old stop stays until flat; _after_flat cleans up)
             return
         seq = int(j.get("stop_seq", 0))
         j["stop_seq"] = seq + 1
@@ -1124,7 +1128,15 @@ class V6Engine:
             new = next((o for o in self.x("open_orders", sym) if o["client_id"] == cid), None)
         except ExchangeError:
             new = None
-        if new is None:                                           # not confirmed → old stop stays, 🚨, retried
+        if new is None:
+            try:                                                  # accepted but fired at once (instant fire)?
+                flat = self.x("positions", self.cfg.symbols)[sym]["amt"] == 0
+            except ExchangeError:
+                flat = False
+            if flat:                                              # remainder already gone → cancel old stop + TPs, record
+                self.close(sym, "be_stop_breach")
+                return
+                                                                  # not confirmed → old stop stays, 🚨, retried
             if not j.get("be_alerted"):
                 j["be_alerted"] = True
                 self.alert(f"본절 손절 이동 미확인 — 기존 손절 유지 ({sym})", f"목표 {tgt} · 기존 {j['stop_px']} · 대조 루프가 재시도")

@@ -1,5 +1,6 @@
 # qrmtf (PM final 2026-10-30): multi-timeframe score entry + the exchange-side exits kept from 2de6eca
 # (TP1 +1R 50 % -> SL entry +/- 0.1 % new stop first, TP2 +2R, 24 h time exit, 25 % margin cap, 0 residual). Offline.
+import pytest
 import json
 import time
 from decimal import Decimal
@@ -417,6 +418,59 @@ def test_be_stop_not_confirmed_keeps_old_and_alerts(offline):
     assert any("본절" in str(a) for a in offline.notifiers[-1].sent)
     eng.reconcile()
     assert eng.st["pos"][DOGE]["be_done"]
+
+
+def _be_flat_clean(b, eng):
+    assert b.amt(DOGE) == 0 and DOGE not in eng.st["pos"] and not bot_orders(b, DOGE)
+    assert eng.meta["trades"][-1]["reason"] == "be_stop_breach"
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_be_price_already_beyond_be_closes_remainder(offline, side):
+    # TP1 filled, then price came back through breakeven (still inside the old stop) before the BE move:
+    # a BE stop would fire at once → remainder closed at market, old stop + TP2 cancelled, 0 orders left
+    eng = exit_engine(offline)
+    j = open_pos(offline, eng, side)
+    e = Decimal(j["entry_px"])
+    offline.inner.set_price(DOGE, Decimal(j["tp"]["tp1"]))
+    assert abs(offline.amt(DOGE)) == Decimal(j["tp"]["q2"])
+    offline.inner.set_price(DOGE, e * (1 - side * Decimal("0.0005")))   # beyond BE (entry ± 0.1 %), inside the old stop
+    calls0 = len(offline.fx.calls)
+    eng.reconcile()
+    assert not [c for c in offline.fx.calls[calls0:] if c[0] == "stop"]   # no doomed BE stop sent
+    _be_flat_clean(offline, eng)
+
+
+def test_be_stop_would_trigger_reject_closes_remainder(offline):
+    # engine mark stale (says fine), exchange rejects the BE stop with -2021 → close at market + clean up
+    eng = exit_engine(offline)
+    j = open_pos(offline, eng)
+    offline.inner.set_price(DOGE, Decimal(j["tp"]["tp1"]))
+    offline.inner.set_price(DOGE, Decimal(j["entry_px"]) * Decimal("0.9995"))
+    j = eng.st["pos"][DOGE]
+    j["tp1_done"] = True
+    eng._move_stop_be(DOGE, j, offline.amt(DOGE), offline.inner.open_orders(DOGE), mk=None)
+    _be_flat_clean(offline, eng)
+
+
+def test_be_stop_instant_fire_cleans_up(offline):
+    # exchange accepts the BE stop and it fires at once: read-back finds no stop and the position is gone →
+    # old stop + TP2 cancelled, trade recorded, 0 orders (no false "BE not confirmed" alert)
+    eng = exit_engine(offline)
+    j = open_pos(offline, eng)
+    offline.inner.set_price(DOGE, Decimal(j["tp"]["tp1"]))
+    real = offline.inner.stop
+
+    def fire(s, side, trigger, cid, qty=None):
+        o = real(s, side, trigger, cid, qty=qty)
+        offline.inner.algos.pop(o["id"])
+        offline.inner.market(s, side, abs(offline.amt(s)), cid + "f", True)
+        return o
+    offline.inner.stop = fire
+    eng.reconcile()
+    offline.inner.stop = real
+    _be_flat_clean(offline, eng)
+    assert not any("본절 손절 이동 미확인" in m for m in offline.notifiers[-1].sent)
 
 
 def test_short_stop_out_zero_residual(offline):

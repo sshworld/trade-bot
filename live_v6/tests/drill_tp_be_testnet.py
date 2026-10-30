@@ -30,9 +30,9 @@ OUT = sys.argv[1]
 os.makedirs(OUT, exist_ok=True)
 SYM = os.getenv("DRILL_SYM", "LTCUSDT")      # testnet book trades at mark (ADA testnet fills ~0.3 % off mark → TP1/BE race); liquid, NOT one of the six citest coins (shared testnet account)
 WALLET = D(os.getenv("DRILL_WALLET", "40"))  # injected: 4 % risk of 40 USDT at a 1.5 % stop, margin cap → ~100 USDT notional
-STOP_PCT = D("0.015")
+STOP_PCT = D(os.getenv("DRILL_STOP_PCT", "0.015"))   # retry 2026-10-30 11:04: 0.03 (stop ~3 % away, never first)
 TP1_R = float(os.getenv("DRILL_TP1_R", "0.15"))   # TP1 = entry ± 0.1 R = ± 0.15 % (BE stop at ± 0.1 % stays placeable)
-WAIT_TP1_S = int(os.getenv("DRILL_WAIT_S", "900"))
+WAIT_TP1_S = int(os.getenv("DRILL_WAIT_S", "900"))         # retry: 1800 (~30 min per leg)
 SIDES = tuple(int(x) for x in os.getenv("DRILL_SIDES", "1,-1").split(","))   # e.g. DRILL_SIDES=1 to rerun only the long
 key, sec = os.environ["BINANCE_TESTNET_API_KEY"], os.environ["BINANCE_TESTNET_API_SECRET"]
 rest = BinanceREST(TESTNET_URL, key, sec)
@@ -49,6 +49,9 @@ class Cap(logging.Handler):
 
 
 logging.getLogger().addHandler(Cap())
+_fh = logging.FileHandler(os.path.join(OUT, "engine_log.txt"), encoding="utf-8")   # full engine log → evidence
+_fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+logging.getLogger().addHandler(_fh)
 logging.getLogger().setLevel(logging.INFO)
 
 
