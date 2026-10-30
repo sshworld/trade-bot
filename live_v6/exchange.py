@@ -200,7 +200,7 @@ class BinanceREST:
     def klines(self, symbol, interval, limit=100) -> list[dict]:
         rows = self._req("GET", "/fapi/v1/klines", {"symbol": symbol, "interval": interval, "limit": limit}, signed=False)
         return [{"open_time": int(r[0]), "open": float(r[1]), "high": float(r[2]), "low": float(r[3]),
-                 "close": float(r[4]), "close_time": int(r[6])} for r in rows]
+                 "close": float(r[4]), "volume": float(r[5]), "close_time": int(r[6])} for r in rows]
 
     def funding(self, symbol, start_ms) -> list[tuple[int, float]]:
         """Settled funding [(t rounded to the minute, rate)] since start_ms (paginated, 1000/page)."""
@@ -350,6 +350,12 @@ class BinanceREST:
             p["closePosition"] = "true"
         else:
             p["quantity"], p["reduceOnly"] = fmt(qty), "true"
+        return _norm_algo(self._req("POST", "/fapi/v1/algoOrder", p, critical=True))
+
+    def take_profit(self, symbol, side, trigger, client_id, qty) -> dict:
+        """Exchange-side reduceOnly TAKE_PROFIT_MARKET on MARK_PRICE for `qty` (qr1h TP1 / TP2)."""
+        p = {"algoType": "CONDITIONAL", "symbol": symbol, "side": side, "type": "TAKE_PROFIT_MARKET", "triggerPrice": fmt(trigger),
+             "workingType": "MARK_PRICE", "clientAlgoId": client_id, "quantity": fmt(qty), "reduceOnly": "true"}
         return _norm_algo(self._req("POST", "/fapi/v1/algoOrder", p, critical=True))
 
     def get_order(self, symbol, client_id) -> dict | None:

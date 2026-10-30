@@ -26,7 +26,7 @@ class Clock:
 def test_full_runner_simulated_clock(monkeypatch, tmp_path):
     for k, v in {"BINANCE_TESTNET_API_KEY": "k", "BINANCE_TESTNET_API_SECRET": "s", "LIVE_V6_NETWORK": "testnet",
                  "LIVE_V6_STATE": str(tmp_path / "st.json"), "LIVE_V6_ALERT_LOG": str(tmp_path / "alerts.jsonl"),
-                 "HEARTBEAT_URL": "https://hc.example/x"}.items():
+                 "HEARTBEAT_URL": "https://hc.example/x", "LIVE_V6_STRATEGY": "h7t"}.items():
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     rest, eng = runner.build()

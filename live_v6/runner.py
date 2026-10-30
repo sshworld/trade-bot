@@ -55,6 +55,18 @@ def check_frozen(cfg: Settings) -> None:
         raise SystemExit(f"entry_order {cfg.entry_order} != frozen ENTRY_ORDER {ENTRY_ORDER}")
 
 
+def live_settings(name: str, **kw) -> Settings:
+    """Live Settings per strategy. qr1h (PM 2026-10-30): 4 % risk, 12 % open-risk Σ, max 3 positions, margin ≤ 25 % of
+    wallet per position, 10x max, longs + shorts, TP1 +1R 50 % → SL entry ± 0.1 %, TP2 +2R, 24 h time exit."""
+    if name == "qr1h":
+        from .sizing import SizingParams
+        sizing = SizingParams(risk_pct=4.0, max_risk_pct=5.0, portfolio_risk_cap=0.12, total_risk_cap=0.12, margin_cap=0.25,
+                              max_leverage=10)            # max_risk_pct 5 % = 4 % + round-trip fee headroom
+        kw = dict(dict(sizing=sizing, max_positions=3, enable_short=True, take_profit=True, tp1_r=1.0, tp1_frac=0.5,
+                       tp2_r=2.0, be_offset=0.001, max_hold_s=24 * 3600, bar_delay_s=3), **kw)
+    return Settings(**kw)
+
+
 def build(network: str | None = None):
     network = network or os.getenv("LIVE_V6_NETWORK", "testnet")
     if network == "mainnet":
@@ -62,11 +74,13 @@ def build(network: str | None = None):
     else:
         url, key, sec = TESTNET_URL, os.environ["BINANCE_TESTNET_API_KEY"], os.environ["BINANCE_TESTNET_API_SECRET"]
     rest = BinanceREST(url, key, sec)          # guard_url refuses mainnet unless explicitly acknowledged
-    cfg = Settings(use_streams=True)
+    name = os.getenv("LIVE_V6_STRATEGY", "qr1h")         # qr1h (2026-10-30); "h7t" = previous live; "v6_h7" = bar-close
+    cfg = live_settings(name, use_streams=True)
     check_frozen(cfg)
     state = os.getenv("LIVE_V6_STATE", f"/var/lib/live_v6/{network}.json")
-    name = os.getenv("LIVE_V6_STRATEGY", "h7t")          # §8d: live v1 = H7-T; "v6_h7" = bar-close entries
-    if name == "h7t":
+    if name == "qr1h":
+        from .strategies.qr1h import QR1H as Strat
+    elif name == "h7t":
         from .strategies.h7t import H7T as Strat
     elif name == "v6_h7":
         from .strategies.v6_h7 import V6H7 as Strat

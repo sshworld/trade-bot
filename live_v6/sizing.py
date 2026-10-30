@@ -17,7 +17,7 @@ passed in. Single market entry, single exit: this module never splits an order.
 `precheck_order` is the pure pre-order gate (rule 9 / 10): it returns a skip label or None.
 Skip labels: qty_zero, below_min_qty, qty_step, max_qty, below_min_notional, percent_price, tick, stop_trigger,
 bracket, margin, leverage, liq_guard, risk_cap, min_order_risk_over_cap, risk_cap_portfolio, total_risk_cap,
-filter_read_failed (engine: exchangeInfo / bracket / price read failed).
+margin_cap, filter_read_failed (engine: exchangeInfo / bracket / price read failed).
 Only these spec names are ever logged / recorded; `qty_zero` = the minimum-quantity path cannot be reached at all.
 """
 # Label policy (TA): PM-side aliases loss_cap (= min_order_risk_over_cap) and open_risk_cap (= total_risk_cap) appear in comments only,
@@ -48,6 +48,8 @@ class SizingParams:
     entry_slippage: float = 0.0004      # loss model: market-entry slippage
     stop_slippage: float = 0.0003       # loss model: stop-fill slippage
     margin_fee_buffer: float = 0.0010   # margin check: round-trip fee buffer on notional
+    margin_cap: float | None = None     # qr1h: position margin (notional / lev) ≤ this × wallet; qty is CAPPED (risk may
+                                        # end below risk_pct — accepted, TA 2026-10-30), skip `margin_cap` only below min qty
 
 
 @dataclass
@@ -170,6 +172,12 @@ def size_entry(rules: SymbolRules, brackets: list[dict], wallet, available, ref,
         return Sized("leverage", f"stop {stop_frac:.4%} mmr {mmr}: L<1 (or confirmed leverage above bracket max)")
     if not liquidation_ok(stop_frac, lev, mmr, p.liq_ratio):
         return Sized("liq_guard", f"stop {stop_frac:.4%} > {p.liq_ratio}x liq distance at {lev}x")
+    if p.margin_cap is not None and notional / lev > wallet * D(p.margin_cap):
+        qty = floor_to(wallet * D(p.margin_cap) * lev / ref, step)
+        if qty <= 0 or qty < lo or qty * worst < rules.min_notional:
+            return Sized("margin_cap", f"margin cap {p.margin_cap:.0%} of {wallet} → qty {qty} below the exchange minimum",
+                         q0=q0, path=path, loss_frac=loss_frac)
+        notional = qty * ref
     if path == "q0":
         risk_after = qty * risk_dist + notional * fee_rt
         if risk_after > wallet * D(p.max_risk_pct) / 100:
@@ -186,3 +194,4 @@ def size_entry(rules: SymbolRules, brackets: list[dict], wallet, available, ref,
     return Sized(None, qty=qty, notional=notional, lev=int(lev), mmr=float(mmr), stop_px=est_stop, risk_usdt=risk,
                  risk_frac=rf, risk_pct_used=rp, margin=notional / lev, path=path, q0=q0, loss_frac=loss_frac,
                  cap_frac=cap, cap_label=label)
+

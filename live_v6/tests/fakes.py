@@ -53,6 +53,7 @@ class FakeExchange:
         self.accepted = {}     # client id -> times accepted (duplicate detector)
         self.stops_fire = True # False: exchange stop "does not fire" (breach test)
         self._id = itertools.count(1)
+        self.kl = {}           # (sym, interval) -> kline rows (tests set them; forming bar = close_time in the future)
 
     def __repr__(self):
         return "FakeExchange"
@@ -92,7 +93,7 @@ class FakeExchange:
         return {"bid": self.price[s], "ask": self.price[s]}
 
     def klines(self, s, interval, limit):
-        return []
+        return [dict(r) for r in self.kl.get((s, interval), [])[-limit:]]
 
     def funding(self, s, start_ms):
         return []
@@ -201,6 +202,18 @@ class FakeExchange:
         self.accepted[cid] = self.accepted.get(cid, 0) + 1
         return dict(self.algos[aid])
 
+    def take_profit(self, s, side, trigger, cid, qty):
+        if any(o["client_id"] == cid for o in self.algos.values()):
+            raise OrderRejected(-4116, "duplicated clientAlgoId")
+        p, trigger = self.pos.get(s), Decimal(trigger)
+        if p and ((p["amt"] > 0 and self.price[s] >= trigger) or (p["amt"] < 0 and self.price[s] <= trigger)):
+            raise WouldTrigger(-2021, "Order would immediately trigger.")
+        aid = str(next(self._id))
+        self.algos[aid] = {"kind": "algo", "id": aid, "client_id": cid, "symbol": s, "type": "TAKE_PROFIT_MARKET", "side": side,
+                           "stop_price": trigger, "close_position": False, "reduce_only": True, "qty": Decimal(qty)}
+        self.accepted[cid] = self.accepted.get(cid, 0) + 1
+        return dict(self.algos[aid])
+
     def cancel(self, s, o):
         self.algos.pop(o["id"], None)
 
@@ -211,11 +224,18 @@ class FakeExchange:
         p = self.pos.get(s)
         if not p or not self.stops_fire:
             return
+        px = self.price[s]
         for o in list(self.algos.values()):
-            if o["symbol"] == s and p["amt"] > 0 and self.price[s] <= o["stop_price"]:
-                q = p["amt"] if o["close_position"] else min(p["amt"], o["qty"])
+            if o["symbol"] != s:
+                continue
+            tp = o["type"] == "TAKE_PROFIT_MARKET"
+            long_ = p["amt"] > 0
+            hit = (px >= o["stop_price"] if long_ else px <= o["stop_price"]) if tp else \
+                  (px <= o["stop_price"] if long_ else px >= o["stop_price"])
+            if hit and o["side"] == ("SELL" if long_ else "BUY"):
+                q = abs(p["amt"]) if o["close_position"] else min(abs(p["amt"]), o["qty"])
                 self.algos.pop(o["id"], None)
-                self._fill(s, -q, self.price[s])
+                self._fill(s, -q if long_ else q, px)
                 return
 
     def open_position_raw(self, s, amt, px=None):
