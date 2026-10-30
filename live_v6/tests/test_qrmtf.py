@@ -550,3 +550,84 @@ def test_time_exit_24h(offline):
     eng.reconcile()
     assert offline.amt(DOGE) == 0 and not bot_orders(offline, DOGE)
     assert eng.meta["trades"][-1]["reason"] == "time_exit"
+
+
+# ── fill detection from exchange order status (TA deploy condition 2026-10-30): an exit order missing from the open
+# orders is looked up (algo status + resulting order executedQty) before anything is re-placed or sent at market.
+def _fire_between_reads(b, px):
+    # the exchange fires a stop / TP AFTER the engine read positions + marks and BEFORE it reads the open orders
+    def fire_then_read(fn, *a, **kw):
+        b.inner.set_price(DOGE, px)
+        return fn(*a, **kw)
+    b.fx.inject("open_orders", fire_then_read, times=1, match=lambda s, *a, **k: s == DOGE)
+
+
+def _no_resend(b, calls0):
+    return not [c for c in b.fx.calls[calls0:] if c[0] in ("market", "stop", "take_profit")]
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_stop_fills_between_position_and_order_read(offline, side):
+    eng = exit_engine(offline)
+    j = open_pos(offline, eng, side)
+    calls0 = len(offline.fx.calls)
+    _fire_between_reads(offline, Decimal(j["stop_px"]))
+    eng.reconcile()
+    eng.reconcile()
+    assert _no_resend(offline, calls0)                              # no stop re-place, no market close
+    assert offline.amt(DOGE) == 0 and DOGE not in eng.st["pos"] and not bot_orders(offline, DOGE)
+    assert eng.meta["trades"][-1]["reason"] == "stop_loss" and eng.meta["trades"][-1]["source"] == "exchange"
+    assert not any("손절 주문 없음" in str(a) for a in offline.notifiers[-1].sent)
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_tp2_fills_between_position_and_order_read(offline, side):
+    eng = exit_engine(offline)
+    open_pos(offline, eng, side)
+    j = _tp1_then_be(offline, eng, side)
+    calls0 = len(offline.fx.calls)
+    _fire_between_reads(offline, Decimal(j["tp"]["tp2"]))
+    eng.reconcile()
+    eng.reconcile()
+    assert _no_resend(offline, calls0)
+    assert offline.amt(DOGE) == 0 and DOGE not in eng.st["pos"] and not bot_orders(offline, DOGE)   # BE stop cancelled
+    assert eng.meta["trades"][-1]["reason"] == "take_profit"
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_be_stop_fills_between_position_and_order_read(offline, side):
+    eng = exit_engine(offline)
+    open_pos(offline, eng, side)
+    j = _tp1_then_be(offline, eng, side)
+    calls0 = len(offline.fx.calls)
+    _fire_between_reads(offline, Decimal(j["stop_px"]))
+    eng.reconcile()
+    eng.reconcile()
+    assert _no_resend(offline, calls0)
+    assert offline.amt(DOGE) == 0 and DOGE not in eng.st["pos"] and not bot_orders(offline, DOGE)   # TP2 cancelled
+    assert eng.meta["trades"][-1]["reason"] == "be_stop"
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_tp1_fill_booked_from_order_status_in_the_race(offline, side):
+    eng = exit_engine(offline)
+    j = open_pos(offline, eng, side)
+    calls0 = len(offline.fx.calls)
+    _fire_between_reads(offline, Decimal(j["tp"]["tp1"]))
+    eng.reconcile()
+    j = eng.st["pos"][DOGE]
+    assert not [c for c in offline.fx.calls[calls0:] if c[0] in ("market", "take_profit")]
+    assert j["tp1_done"] and Decimal(j["qty"]) == Decimal(j["tp"]["q2"]) == abs(offline.amt(DOGE))
+    assert "reconcile_mismatch" not in eng.blocks
+    eng.reconcile()
+    assert eng.st["pos"][DOGE]["be_done"] and abs(offline.amt(DOGE)) == Decimal(j["tp"]["q2"])
+
+
+def test_missing_stop_not_filled_is_replaced(offline):
+    # status says CANCELED (not filled) → the normal re-protect path still runs
+    eng = exit_engine(offline)
+    open_pos(offline, eng)
+    sl = next(o for o in offline.inner.open_orders(DOGE) if o["type"] == "STOP_MARKET")
+    offline.inner.cancel(DOGE, sl)
+    eng.reconcile()
+    assert offline.amt(DOGE) != 0 and [o for o in offline.inner.open_orders(DOGE) if o["type"] == "STOP_MARKET"]

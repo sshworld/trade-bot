@@ -55,7 +55,7 @@ KST = timezone(timedelta(hours=9))
 MODEL_EXITS = ("signal_exit", "model_sync", "time_exit")   # strategy-driven exits: the model is already flat
 REASON_KO = {"stop_loss": "손절", "signal_exit": "M20 채널 청산", "model_sync": "모델 동기화 청산", "stop_breach": "손절 미작동 정리",
              "sl_failed": "손절 등록 실패 정리", "stop_lost_breach": "손절 주문 소실 후 손절가 돌파 정리", "emergency": "비상 전체 정리", "dust_entry": "소액 부분 체결 정리",
-             "time_exit": "24시간 보유 청산", "take_profit": "익절", "be_stop_breach": "본절 손절가 돌파 정리",
+             "time_exit": "24시간 보유 청산", "take_profit": "익절", "be_stop": "본절 손절", "be_stop_breach": "본절 손절가 돌파 정리",
              "daily_loss_halt": "일일 손실 한도 전체 정리"}
 
 # entry-blocking reasons (transient; cleared automatically when the condition clears)
@@ -130,7 +130,7 @@ class Settings:
 
 
 LOG_INTENT_KEYS = ("signal_px", "path", "risk_pct_used", "order_ms", "prearm_ms", "open_risk_after", "same_side_open")
-EXIT_KIND = {"stop_loss": "exchange_close", "signal_exit": "exit_rule", "model_sync": "exit_rule", "daily_loss_halt": "halt"}   # live log exit_reason
+EXIT_KIND = {"stop_loss": "exchange_close", "be_stop": "exchange_close", "take_profit": "exchange_close", "signal_exit": "exit_rule", "model_sync": "exit_rule", "daily_loss_halt": "halt"}   # live log exit_reason
 
 
 class V6Engine:
@@ -1112,6 +1112,53 @@ class V6Engine:
         if j.get("tp1_done") and tp.get("tp1") and not j.get("be_done"):
             self._move_stop_be(sym, j, amt, orders, mk)
 
+    def _exit_fills(self, sym, j, amt, orders):
+        """Fill detection from the exchange order status, not from position-qty diffs (TA 2026-10-30): our SL / BE stop /
+        TP1 / TP2 missing from `orders` is looked up (algo status → resulting order executedQty). `amt` / `orders` may
+        predate a fire (testnet: it fires between the position read and the open-orders read), so after a fill both
+        are read again. Returns (amt, orders, filled kinds) | None (nothing missing, or status unreadable → legacy
+        path) | False (a closing fill is not reflected in the position yet → skip this symbol, nothing re-placed)."""
+        cid, open_ = j["cid"], {o["client_id"] for o in orders}
+        cand = {}
+        if not self.find_stop(amt, orders):
+            cand.update({c: "stop" for c in [f"{cid}p"] + [f"{cid}s{i}" for i in range(int(j.get("stop_seq", 0)))]})
+        if j.get("tp"):
+            if j["tp"].get("tp1") and not j.get("tp1_done"):
+                cand[f"{cid}t1"] = "tp1"
+            if j["tp"].get("tp2"):
+                cand[f"{cid}t2"] = "tp2"
+        cand = {c: k for c, k in cand.items() if c not in open_}
+        if not cand:
+            return None
+        filled = {}
+        for c, k in cand.items():
+            try:
+                st = self.x("algo_order", sym, c)
+            except ExchangeError as e:
+                log.error("%s order status %s unreadable (%s) → position-based fallback", sym, c, e)
+                return None
+            if st and st["executed_qty"] > 0:
+                filled[k] = filled.get(k, Decimal(0)) + st["executed_qty"]
+        if not filled:
+            return None
+        try:
+            amt = self.x("positions", self.cfg.symbols)[sym]["amt"]
+            orders = self.x("open_orders", sym)
+        except ExchangeError:
+            return False
+        log.info("%s exit fill from order status: %s → position %s", sym, filled, amt)
+        if "stop" in filled or "tp2" in filled:
+            j["exit_fill"] = ("be_stop" if j.get("be_done") else "stop_loss") if "stop" in filled else "take_profit"
+            self.save()
+            if amt != 0 and "tp1" not in filled:
+                self._dirty = True
+                return False
+        if "tp1" in filled and not j.get("tp1_done") and amt != 0:
+            j.update(tp1_done=True, qty=str(abs(amt)))           # TP1 filled (status FINISHED + executedQty)
+            self.save()
+            self.notify(f"🔵 {sym} TP1 체결 {filled['tp1']} → 남은 수량 {abs(amt)} · 손절을 본절로 이동", kind="exit")
+        return amt, orders, filled
+
     def _move_stop_be(self, sym, j, amt, orders, mk=None):
         s, e = int(j.get("side", 1)), D(j["entry_px"])
         tgt = self.rules[sym].price(e * (1 + s * D(str(self.cfg.be_offset))), "up" if s > 0 else "down")
@@ -1565,9 +1612,20 @@ class V6Engine:
             amt = pos[sym]["amt"]
             j = self.st["pos"].get(sym)
             orders = self.x("open_orders", sym)
+            filled = None
+            if j and amt != 0:                                  # exit order missing → its exchange status decides
+                r = self._exit_fills(sym, j, amt, orders)
+                if r is False:
+                    continue                                    # closing fill still being applied → next reconcile
+                if r is not None:
+                    amt, orders, filled = r
+                    try:                                        # the mark predates the fill too → re-read
+                        marks[sym] = self.x("mark_prices")[sym]
+                    except (ExchangeError, KeyError):
+                        marks.pop(sym, None)
             if amt == 0:
                 if j:
-                    self.record_close(sym, j.get("close_reason") or "stop_loss")
+                    self.record_close(sym, j.get("close_reason") or j.get("exit_fill") or "stop_loss")
                 u = self.st["unknown"].pop(sym, None)
                 if u is not None:                               # TA R4: resolved by hand (or its stop fired)
                     self.save()
@@ -1607,8 +1665,8 @@ class V6Engine:
                 self.save()
             if (amt > 0) != (int(j.get("side", 1)) > 0):
                 mismatch.append(f"{sym} 방향 불일치 로컬 {j.get('side', 1)} / 거래소 {amt}")
-            if j.get("tp") and not j.get("tp1_done") and abs(amt) < D(j["qty"]) and not any(
-                    o["client_id"] == f"{j['cid']}t1" for o in orders):
+            if filled is None and j.get("tp") and not j.get("tp1_done") and abs(amt) < D(j["qty"]) and not any(
+                    o["client_id"] == f"{j['cid']}t1" for o in orders):   # fallback only: order status unreadable
                 j.update(tp1_done=True, qty=str(abs(amt)))  # TP1 filled (partial close) — expected, not a mismatch
                 self.save()
                 self.notify(f"🔵 {sym} TP1 체결 → 남은 수량 {abs(amt)} · 손절을 본절로 이동", kind="exit")

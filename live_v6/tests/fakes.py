@@ -46,6 +46,7 @@ class FakeExchange:
         self.pos = {}          # sym -> {"amt", "entry", "margin"}
         self.orders = {}       # client id -> normalized order
         self.algos = {}        # algo id -> stop
+        self.algo_hist = {}    # client algo id -> GET /fapi/v1/algoOrder view (status + resulting fill)
         self.lev = {s: 20 for s in FILTERS}
         self.mt = {s: "CROSSED" for s in FILTERS}
         self.fills = []
@@ -103,6 +104,12 @@ class FakeExchange:
 
     def get_order(self, s, cid):
         return dict(self.orders[cid]) if cid in self.orders else None
+
+    def algo_order(self, s, cid):
+        return dict(self.algo_hist[cid]) if cid in self.algo_hist else None
+
+    def _algo_end(self, o, status, oid=None, q=Decimal(0), px=Decimal(0)):
+        self.algo_hist[o["client_id"]] = {"status": status, "order_id": oid, "executed_qty": q, "avg_price": px}
 
     def user_trades(self, s, start_ms):
         return [f for f in self.fills if f["symbol"] == s and f["time"] >= start_ms]
@@ -176,7 +183,7 @@ class FakeExchange:
             if p["amt"] == 0:
                 del self.pos[s]
                 for k in [k for k, o in self.algos.items() if o["symbol"] == s and o["close_position"]]:
-                    del self.algos[k]                          # closePosition stops auto-cancel when flat
+                    self._algo_end(self.algos.pop(k), "EXPIRED")                          # closePosition stops auto-cancel when flat
         self.fills.append({"symbol": s, "order_id": oid, "side": "BUY" if signed > 0 else "SELL", "price": px,
                            "qty": abs(signed), "commission": fee, "realized_pnl": rpnl, "time": now})
         self.incomes += [{"type": "COMMISSION", "amount": -fee, "time": now, "symbol": s, "tran_id": str(next(self._id))}]
@@ -200,6 +207,7 @@ class FakeExchange:
                            "stop_price": trigger, "close_position": qty is None, "reduce_only": True,
                            "qty": Decimal(qty) if qty is not None else Decimal(0)}
         self.accepted[cid] = self.accepted.get(cid, 0) + 1
+        self._algo_end(self.algos[aid], "NEW")
         return dict(self.algos[aid])
 
     def take_profit(self, s, side, trigger, cid, qty):
@@ -212,10 +220,12 @@ class FakeExchange:
         self.algos[aid] = {"kind": "algo", "id": aid, "client_id": cid, "symbol": s, "type": "TAKE_PROFIT_MARKET", "side": side,
                            "stop_price": trigger, "close_position": False, "reduce_only": True, "qty": Decimal(qty)}
         self.accepted[cid] = self.accepted.get(cid, 0) + 1
+        self._algo_end(self.algos[aid], "NEW")
         return dict(self.algos[aid])
 
     def cancel(self, s, o):
-        self.algos.pop(o["id"], None)
+        if self.algos.pop(o["id"], None) is not None:
+            self._algo_end(o, "CANCELED")
 
     # test helpers
     def set_price(self, s, px):
@@ -235,7 +245,9 @@ class FakeExchange:
             if hit and o["side"] == ("SELL" if long_ else "BUY"):
                 q = abs(p["amt"]) if o["close_position"] else min(abs(p["amt"]), o["qty"])
                 self.algos.pop(o["id"], None)
-                self._fill(s, -q if long_ else q, px)
+                oid = str(next(self._id))
+                self._algo_end(o, "FINISHED", oid, q, px)
+                self._fill(s, -q if long_ else q, px, oid)
                 return
 
     def open_position_raw(self, s, amt, px=None):

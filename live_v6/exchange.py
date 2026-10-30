@@ -366,6 +366,22 @@ class BinanceREST:
                 return None
             raise
 
+    def algo_order(self, symbol, client_id) -> dict | None:
+        """Conditional (algo) order status by clientAlgoId and, once triggered, the resulting order's fill
+        (GET /fapi/v1/algoOrder → actualOrderId → GET /fapi/v1/order). None = unknown order."""
+        try:
+            a = self._req("GET", "/fapi/v1/algoOrder", {"clientAlgoId": client_id}, critical=True)
+        except OrderRejected as e:
+            if e.code in (-2011, -2013):
+                return None
+            raise
+        oid = str(a.get("actualOrderId") or "")
+        out = {"status": a.get("algoStatus"), "order_id": oid or None, "executed_qty": Decimal(0), "avg_price": Decimal(0)}
+        if oid and oid != "0":
+            o = _norm_order(self._req("GET", "/fapi/v1/order", {"symbol": symbol, "orderId": oid}, critical=True))
+            out.update(executed_qty=o["executed_qty"], avg_price=o["avg_price"], order_status=o["status"])
+        return out
+
     def cancel(self, symbol, order: dict):
         try:
             if order.get("kind") == "algo":
