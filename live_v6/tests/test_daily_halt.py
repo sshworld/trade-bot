@@ -183,3 +183,14 @@ def test_qrmtf_entry_scores_from_records_and_log(tmp_path):
     p.write_text(json.dumps(rec) + "\n")
     s2 = QRMTF(log_path=str(p))                                          # after a restart: read from the signal log
     assert s2.entry_scores(DOGE, 1_020_000).startswith("big_n -72.0")
+
+
+def test_first_baseline_backs_out_todays_realised_income(offline):
+    """First start mid-day: baseline = equity now minus today's (00:00 UTC) non-transfer income."""
+    t = [T0]
+    day0 = int(datetime(2026, 10, 30, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+    _lose(offline, "30", [day0 / 1000 + 60])                   # lost 30 after 00:00 UTC, before the bot started
+    offline.inner.incomes.append({"type": "REALIZED_PNL", "amount": -D(5), "time": day0 - 60000, "symbol": DOGE,
+                                  "tran_id": "yesterday"})      # yesterday: not counted
+    eng = _eng(offline, t)
+    assert eng.meta["dl_day"] == "2026-10-30" and D(eng.meta["dl_base"]) == 1000

@@ -83,3 +83,49 @@ def test_rest_set_leverage_echo_and_symbolconfig_parse():
     assert r.leverage("BNBUSDT") == 10
     assert [(m, p) for m, p, _ in seen] == [("POST", "/fapi/v1/leverage"), ("GET", "/fapi/v1/symbolConfig")]
     assert seen[1][2]["symbol"] == "BNBUSDT"
+
+
+# ───────────── live 2026-10-30 15:07 KST SOLUSDT: symbolConfig itself lagged right after the set ─────────────
+def _cfg_lag(fx, old, n):
+    """The next `n` symbolConfig reads still report the old leverage."""
+    fx.inject("leverage", lambda fn, s: old, times=n)
+
+
+def test_symbolconfig_lag_retried_then_enters(offline):
+    eng = ready(offline)
+    old = offline.inner.lev[DOGE]
+    _stale_positions_after_set(offline.fx, old)
+    _cfg_lag(offline.fx, old, 3)                    # reads 1-3 stale, read 4 shows the new value
+    assert eng.enter(DOGE, offline.stop_dist(), unique_T()), eng.meta.get("skip_log", [])[-1:]
+    assert sum(1 for c in offline.fx.calls if c == ("leverage", (DOGE,))) == 4
+    assert not alerts(eng) and DOGE in eng.st["pos"]
+
+
+def test_symbolconfig_still_wrong_after_5_reads_skips_with_alert(offline):
+    eng = ready(offline)
+    old = offline.inner.lev[DOGE]
+    _stale_positions_after_set(offline.fx, old)
+    _cfg_lag(offline.fx, old, 10)
+    assert not eng.enter(DOGE, offline.stop_dist(), unique_T())
+    assert sum(1 for c in offline.fx.calls if c == ("leverage", (DOGE,))) == 5
+    assert eng.meta["skip_log"][-1][2] == "leverage" and f"symbolConfig {old}x" in eng.meta["skip_log"][-1][3]
+    assert len([a for a in alerts(eng) if "레버리지" in a]) == 1 and DOGE not in eng.st["pos"]
+
+
+def test_startup_leverage_sets_flat_coins_idempotent(offline):
+    eng = offline.engine(startup_leverage=7)
+    eng.startup()
+    syms = eng.cfg.symbols
+    assert all(offline.inner.lev[s] == 7 for s in syms)
+    sets = [c for c in offline.fx.calls if c[0] == "set_leverage"]
+    assert sorted(c[1][0] for c in sets) == sorted(s for s in syms)
+    eng2 = offline.engine(startup_leverage=7)       # second start: nothing to change -> no set call
+    n = len(offline.fx.calls)
+    eng2.startup()
+    assert not [c for c in offline.fx.calls[n:] if c[0] == "set_leverage"]
+
+
+def test_startup_leverage_off_by_default(offline):
+    eng = offline.engine()
+    eng.startup()
+    assert not [c for c in offline.fx.calls if c[0] == "set_leverage"]

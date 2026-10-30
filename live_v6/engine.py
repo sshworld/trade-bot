@@ -127,6 +127,11 @@ class Settings:
     tp2_r: float = 2.0
     be_offset: float = 0.001            # after TP1: SL → entry ± 0.1 % (new stop first, then cancel the old one)
     max_hold_s: float = 0               # > 0: reduceOnly market close after this long (24 h live)
+    # live 2026-10-30 15:07 KST SOLUSDT: set 10x echoed, symbolConfig still 20x right after → entry skipped; re-read
+    # symbolConfig up to lev_confirm_reads times (lev_confirm_wait_s apart) while it shows the wrong value
+    lev_confirm_reads: int = 5
+    lev_confirm_wait_s: float = 1.0
+    startup_leverage: int | None = None  # set this leverage at startup on every flat coin (qrmtf live: 10)
 
 
 LOG_INTENT_KEYS = ("signal_px", "path", "risk_pct_used", "order_ms", "prearm_ms", "open_risk_after", "same_side_open")
@@ -300,6 +305,7 @@ class V6Engine:
                 if s not in self.st["pos"] and s not in self.st["unknown"]:
                     self.pace()
                     self.ensure_isolated(s)
+            self.startup_leverage()
             if "start_wallet" not in self.meta:
                 a = self.x("account")
                 self.meta.update(start_wallet=str(a["wallet"]), capital0=str(D(a["wallet"]) * D(self.cfg.capital_fraction)),
@@ -315,6 +321,33 @@ class V6Engine:
                          f"{'중단 상태: ' + self.meta['halted'] if self.meta.get('halted') else '진입 가능' if self.entries_allowed() else '진입 차단: ' + ','.join(self.blocks)}")
         except ExchangeError as e:
             log.error("startup failed, entries stay blocked: %s", e)
+
+    def startup_leverage(self):
+        """Idempotent config write: every coin without a position gets cfg.startup_leverage (so the first entry does not
+        depend on an immediate read-back of a fresh change). Logged per coin; failures only logged (the entry path
+        still sets + confirms leverage itself)."""
+        lev = self.cfg.startup_leverage
+        if not lev:
+            return
+        try:
+            pos = self.x("positions", self.cfg.symbols)
+        except ExchangeError as e:
+            log.warning("startup leverage: positions read failed: %s", e)
+            return
+        for s in self.cfg.symbols:
+            if s in self.st["pos"] or s in self.st["unknown"] or pos.get(s, {}).get("amt", 0) != 0:
+                log.info("startup leverage %s: position open, left at %sx", s, pos.get(s, {}).get("leverage"))
+                continue
+            was = pos.get(s, {}).get("leverage")
+            try:
+                if was == lev:
+                    log.info("startup leverage %s: already %sx", s, lev)
+                    continue
+                echoed = self.x("set_leverage", s, lev)
+                cfg_lev = self.x("leverage", s)
+                log.info("startup leverage %s: %sx -> set response %sx, symbolConfig %sx", s, was, echoed, cfg_lev)
+            except ExchangeError as e:
+                log.warning("startup leverage %s: %sx -> set %sx failed: %s", s, was, lev, str(e)[:80])
 
     def load_rules(self):
         info = self.x("exchange_info")
@@ -438,7 +471,7 @@ class V6Engine:
             return
         try:
             dec = self.strategy.bar_decisions(T, self, before, intents)
-            t_open = datetime.fromtimestamp((T - H4) / 1000, KST).strftime("%Y-%m-%d %H:%M")
+            t_open = datetime.fromtimestamp((T - (self.strategy.decision_interval_ms or H4)) / 1000, KST).strftime("%Y-%m-%d %H:%M")
             log.info("bar_close model=%s bar_open=%s KST %s", self.strategy.name, t_open,
                      " ".join(f"{s}={dec.get(s, 'no_signal')}" for s in self.cfg.symbols))
         except Exception:  # noqa: BLE001  logging must never break the trading loop
@@ -673,16 +706,25 @@ class V6Engine:
         symbolConfig read (timeout / 5xx / 429 / 418 / backoff / rejected / malformed body) = NOT confirmed — this
         method never raises, so the entry flow (and the other coins of the same bar) is not interrupted."""
         cfg_lev, cfg_err = None, ""
-        if echoed == lev:
-            try:
+        reads = 0
+        while echoed == lev and reads < max(1, self.cfg.lev_confirm_reads):
+            if reads:
+                self.sleep(self.cfg.lev_confirm_wait_s)
+            reads += 1
+            try:                                        # a FAILED read is not retried (no hammering on 429/418)
                 cfg_lev = self.x("leverage", sym)
             except ExchangeError as e:
                 cfg_err = f"symbolConfig failed: {str(e)[:70]}"
+                break
             except Exception as e:  # noqa: BLE001  malformed response must not escape into execute()
                 log.exception("%s symbolConfig read failed", sym)
                 cfg_err = f"symbolConfig failed: {type(e).__name__}"
+                break
+            if cfg_lev == lev:
+                break
         cfg_txt = cfg_err or (f"symbolConfig {cfg_lev}x" if cfg_lev is not None else "symbolConfig not read")
-        log.warning("%s leverage %sx: set response %sx, positionRisk %sx, %s", sym, lev, echoed, pr_lev, cfg_txt)
+        log.warning("%s leverage %sx: set response %sx, positionRisk %sx, %s (reads %d)", sym, lev, echoed, pr_lev, cfg_txt,
+                    reads)
         if echoed == lev and cfg_lev == lev:
             return ""
         return f"read-back {pr_lev}x, {cfg_txt} (set response {echoed}x)"
@@ -1946,7 +1988,14 @@ class V6Engine:
                         kind="resume")
         day = datetime.fromtimestamp(now / 1000, timezone.utc).strftime("%Y-%m-%d")
         if self.meta.get("dl_day") != day:               # 00:00 UTC (09:00 KST): new baseline = equity now
-            self.meta.update(dl_day=day, dl_base=self.meta["equity"], dl_tr=self.meta.get("net_transfers", "0"))
+            base = D(self.meta["equity"])
+            if self.meta.get("dl_day") is None:          # first start mid-day: back out today's realised income (one
+                try:                                     # income read; uPnL of positions open at 00:00 is not known)
+                    d0 = int(datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
+                    base -= sum((r["amount"] for r in self.x("income", None, None, d0) if r["type"] != "TRANSFER"), D(0))
+                except ExchangeError as e:
+                    log.warning("daily halt: income read failed, baseline = equity now: %s", e)
+            self.meta.update(dl_day=day, dl_base=str(base), dl_tr=self.meta.get("net_transfers", "0"))
             self.save()
             return
         if self.meta.get("halted") or self.meta.get("daily_halt"):

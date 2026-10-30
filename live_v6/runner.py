@@ -64,7 +64,7 @@ def live_settings(name: str, **kw) -> Settings:
                               max_leverage=10)            # max_risk_pct 5 % = 4 % + round-trip fee headroom
         kw = dict(dict(sizing=sizing, max_positions=3, enable_short=True, take_profit=True, tp1_r=1.0, tp1_frac=0.5,
                        tp2_r=2.0, be_offset=0.001, max_hold_s=24 * 3600, bar_delay_s=3,
-                       halt_fraction=None, daily_loss_halt=0.10,   # user 2026-10-30: -25 % total halt removed → daily -10 %, 24 h
+                       halt_fraction=None, daily_loss_halt=0.10, startup_leverage=10,   # user 2026-10-30: -25 % total halt removed → daily -10 %, 24 h
                        bar_stale_s=180.0), **kw)   # bar_stale 180 s: 1m cadence, 3 missed minutes → block new entries
     return Settings(**kw)
 
