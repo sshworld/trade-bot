@@ -182,15 +182,17 @@ def size_entry(rules: SymbolRules, brackets: list[dict], wallet, available, ref,
         risk_after = qty * risk_dist + notional * fee_rt
         if risk_after > wallet * D(p.max_risk_pct) / 100:
             return Sized("risk_cap", f"risk incl. fees {risk_after:.4f} > {p.max_risk_pct}% of {wallet}")
-    why, detail = precheck_order(rules, brackets, qty, ref, lev, est_stop, available, side, bid=bid, mark=mark, p=p)
-    if why:
-        return Sized(why, detail, q0=q0, path=path, loss_frac=loss_frac)
+    # ptp-short (TA 2026-11-01): the open-risk caps are checked BEFORE the margin / order pre-checks, so a full book
+    # is a quiet risk-cap skip, never a margin-shortfall alert
     risk = qty * risk_dist
     rf = loss_frac if path == "qty_floor" else float(risk / wallet)
     cap, label = (p.total_risk_cap, "total_risk_cap") if path == "qty_floor" else (p.portfolio_risk_cap, "risk_cap_portfolio")
     if sum(o["risk_frac"] for o in open_positions) + rf > cap + 1e-12:
         return Sized(label, f"open risk {sum(o['risk_frac'] for o in open_positions):.4%} + {rf:.4%} > {cap:.1%}",
                      q0=q0, path=path, loss_frac=loss_frac)
+    why, detail = precheck_order(rules, brackets, qty, ref, lev, est_stop, available, side, bid=bid, mark=mark, p=p)
+    if why:
+        return Sized(why, detail, q0=q0, path=path, loss_frac=loss_frac)
     return Sized(None, qty=qty, notional=notional, lev=int(lev), mmr=float(mmr), stop_px=est_stop, risk_usdt=risk,
                  risk_frac=rf, risk_pct_used=rp, margin=notional / lev, path=path, q0=q0, loss_frac=loss_frac,
                  cap_frac=cap, cap_label=label)

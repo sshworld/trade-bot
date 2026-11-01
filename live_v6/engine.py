@@ -52,6 +52,7 @@ ENTRY_ORDER = ("BTCUSDT", "ETHUSDT", "BNBUSDT", "DOGEUSDT", "XRPUSDT", "SOLUSDT"
 H4 = S.H4_MS
 KST = timezone(timedelta(hours=9))
 
+QUIET_SKIPS = ("max_positions", "risk_cap_portfolio", "total_risk_cap")   # full book: log only, never an alert
 MODEL_EXITS = ("signal_exit", "model_sync", "time_exit")   # strategy-driven exits: the model is already flat
 REASON_KO = {"stop_loss": "손절", "signal_exit": "M20 채널 청산", "model_sync": "모델 동기화 청산", "stop_breach": "손절 미작동 정리",
              "sl_failed": "손절 등록 실패 정리", "stop_lost_breach": "손절 주문 소실 후 손절가 돌파 정리", "emergency": "비상 전체 정리", "dust_entry": "소액 부분 체결 정리",
@@ -290,6 +291,11 @@ class V6Engine:
         self.save()
         log.warning("skip %s %s: %s", sym, reason, detail)
         self._log_skip(sym, reason, detail, signal_px, signal_ms, t=self.meta["skip_log"][-1][0])
+        if reason in QUIET_SKIPS and hasattr(self.strategy, "on_entry_skip"):   # no alert: scores to the signal log
+            try:
+                self.strategy.on_entry_skip(sym, self._sig_side, reason, detail, self.meta["skip_log"][-1][0])
+            except Exception as e:  # noqa: BLE001  a log write never blocks trading
+                log.error("entry skip log failed: %r", e)
 
     def cid(self, sym, t_ms) -> str:
         return f"{self.cfg.cid_prefix}{sym.removesuffix('USDT')}{t_ms // 1000}"
@@ -803,6 +809,9 @@ class V6Engine:
             log.error("entry %s pre-check failed: %s", sym, e)
             return False
         book = self._open_book(pos)
+        if len(book) >= self.cfg.max_positions:             # ptp-short: gate order max_positions -> risk caps -> margin
+            self.skip(sym, "max_positions", f"{len(book)} open")
+            return False
         got = self._size_fresh(sym, stop_dist, book, side=side)
         if got is None:
             return False
@@ -885,7 +894,7 @@ class V6Engine:
         try:                                                 # late fills after a partial: exchange qty is the truth
             amt = self.x("positions", self.cfg.symbols)[sym]["amt"]
             if amt != 0 and abs(amt) != D(j["qty"]):
-                j["qty"] = str(abs(amt))
+                j["qty"] = j["entry_qty"] = str(abs(amt))
                 self.save()
         except ExchangeError:
             pass
@@ -975,7 +984,7 @@ class V6Engine:
         qty = o["executed_qty"]
         side = int(intent.get("side", 1))
         stp = stop_price(self.rules[sym], fill, side, sd)    # re-placed from the FILL at the same distance (TA)
-        j = {"cid": intent["cid"], "side": side, "qty": str(qty), "entry_px": str(fill), "stop_px": str(stp),
+        j = {"cid": intent["cid"], "side": side, "qty": str(qty), "entry_qty": str(qty), "entry_px": str(fill), "stop_px": str(stp),
              "stop_dist": str(sd), "risk_usdt": str(abs(fill - stp) * qty), "risk_frac": intent["risk_frac"],
              "lev": intent["lev"], "mmr": intent["mmr"], "model_entry_open": intent.get("model_id", intent["T"]), "opened_ms": self.now_ms(),
              "entry_order_id": o["id"], "entry_ref": intent["ref"], "wallet_at_entry": intent["wallet"],
@@ -1500,10 +1509,8 @@ class V6Engine:
     def _trade_line(self, j, rec, entry_fills, exit_fills, t_x) -> dict:
         q = lambda x, e: None if x is None else str(x.quantize(Decimal(e)))   # noqa: E731
         s = int(j.get("side", 1))
-        qty, fill = D(j["qty"]), D(j["entry_px"])
-        stop0 = D(j.get("stop_px_entry") or j["stop_px"])
-        w = D(j.get("wallet_at_entry") or "0")
-        loss = self._loss_to_stop(qty, fill, stop0, s)
+        qty, fill = D(rec["entry_qty"]), D(j["entry_px"])        # ptp-short: the ENTRY qty, not the remainder
+        stop0 = D(rec["init_stop_px"])
         sig = D(j["signal_px"]) if j.get("signal_px") is not None else None
         raw = rec["reason"].split(" ")[0]
         kind = EXIT_KIND.get(raw, "halt" if raw.startswith("emergency") else "other")
@@ -1516,7 +1523,7 @@ class V6Engine:
         adv, fav = (lo, hi) if s > 0 else (hi, lo)
         mae = s * (fill - D(adv)) / fill if adv is not None else None
         mfe = s * (D(fav) - fill) / fill if fav is not None else None
-        per_r = loss / qty / fill if loss > 0 else None               # 1 R as a fraction of the entry price
+        per_r = abs(fill - stop0) / fill if stop0 != fill else None    # 1 R (= the record R unit) as a fraction of entry
         net = D(rec["net"])
         return {
             "trade_id": j["cid"], "coin": rec["sym"], "side": "long" if s > 0 else "short",
@@ -1529,7 +1536,7 @@ class V6Engine:
             "stop_price": str(stop0), "stop_dist_frac": q(s * (fill - stop0) / fill, "0.000001"),
             "stop_confirmed_time": j.get("stop_confirmed_ms"), "stop_confirmed_time_kst": kst(j.get("stop_confirmed_ms")),
             "planned_risk_pct": j.get("risk_pct_used"),
-            "actual_risk_pct": q(loss / w * 100, "0.0001") if w > 0 else None,
+            "actual_risk_pct": rec["actual_risk_pct"],
             "open_risk_sum_after_entry": None if j.get("open_risk_after") is None else round(float(j["open_risk_after"]) * 100, 6),
             "same_side_open_count": j.get("same_side_open"),
             "exit_time": t_out, "exit_time_kst": kst(t_out), "exit_price": str(xpx),
@@ -1540,7 +1547,9 @@ class V6Engine:
             "fee_entry": str(sum((f["commission"] for f in entry_fills), Decimal(0))),
             "fee_exit": str(sum((f["commission"] for f in exit_fills), Decimal(0))),
             "funding_sum": rec["funding"], "pnl_gross": rec["gross"], "pnl_net": rec["net"],
-            "R_net": q(net / loss, "0.0001") if loss > 0 else None,
+            "R_net": q(net / (qty * abs(fill - stop0)), "0.0001") if stop0 != fill and qty > 0 else None,   # = record R
+            "entry_qty": rec["entry_qty"], "remaining_qty": rec["remaining_qty"], "tp1_qty": rec["tp1_qty"],
+            "tp1_frac_actual": rec["tp1_frac_actual"], "exit_legs": rec["exit_legs"], "exit_price_avg": rec["exit_px_avg"],
             "hold_minutes": round(((t_out or rec["closed_ms"]) - (t_in or rec["opened_ms"])) / 60000, 2),
             "MFE_frac": q(mfe, "0.000001") if mfe is not None else None,
             "MAE_frac": q(mae, "0.000001") if mae is not None else None,
@@ -1615,13 +1624,34 @@ class V6Engine:
         xq = sum((f["qty"] for f in exit_fills), Decimal(0))
         xpx = sum((f["price"] * f["qty"] for f in exit_fills), Decimal(0)) / xq if xq else Decimal(0)
         net = gross - fees + funding
-        risk = D(j.get("risk_usdt", "0"))
-        rec = {"sym": sym, "cid": j["cid"], "reason": reason, "qty": j["qty"], "entry_px": j["entry_px"], "exit_px": str(xpx),
+        # ptp-short: 1R = ENTRY qty x |entry - INITIAL stop| (TP1 shrinks j["qty"]; the BE move changes j["stop_px"]);
+        # journals from before this change have no entry_qty -> the entry order fills, then the journal qty
+        eq = D(j.get("entry_qty") or sum((f["qty"] for f in entry_fills), Decimal(0)) or j["qty"])
+        e0, stop0 = D(j["entry_px"]), D(j.get("stop_px_entry") or j["stop_px"])
+        risk = eq * abs(e0 - stop0)
+        w0 = D(j.get("wallet_at_entry") or "0")
+        tp1q = D(j["tp"]["q1"]) if j.get("tp1_done") and j.get("tp") else Decimal(0)
+        legs = {}
+        for f in exit_fills:                                     # one leg per exit order (TP1 / TP2 / stop / close)
+            g = legs.setdefault(str(f["order_id"]), [Decimal(0), Decimal(0), f["time"]])
+            g[0] += f["qty"]
+            g[1] += f["price"] * f["qty"]
+            g[2] = max(g[2], f["time"])
+        nz = lambda x: f"{x.normalize():f}"                    # noqa: E731
+        exit_legs = [{"order_id": k, "price": nz(g[1] / g[0]), "qty": nz(g[0]), "time": g[2]} for k, g in legs.items() if g[0]]
+        rec = {"sym": sym, "cid": j["cid"], "reason": reason, "qty": str(eq), "entry_px": j["entry_px"], "exit_px": str(xpx),
                "stop_px": j["stop_px"], "opened_ms": opened, "model_entry_open": j.get("model_entry_open"),
                "lev": j.get("lev"), "wallet_at_entry": j.get("wallet_at_entry"), "risk_frac": j.get("risk_frac"), "closed_ms": self.now_ms(), "gross": str(gross), "fees": str(fees),
                "funding": str(funding), "net": str(net), "planned_R": "-1",
                "R": str((net / risk).quantize(Decimal("0.001"))) if risk > 0 else None,
-               "source": "exchange" if exit_fills else "estimate"}
+               "source": "exchange" if exit_fills else "estimate",
+               # qty = entry_qty (the traded size); remaining_qty = journal qty at the close (after TP1)
+               "entry_qty": str(eq), "remaining_qty": j["qty"], "tp1_qty": str(tp1q),
+               "tp1_frac_actual": str((tp1q / eq).quantize(Decimal("0.0001"))) if eq > 0 else None,
+               "init_stop_px": str(stop0), "risk_usdt_1R": str(risk),
+               "actual_risk_pct": str((self._loss_to_stop(eq, e0, stop0, int(j.get("side", 1))) / w0 * 100)
+                                      .quantize(Decimal("0.0001"))) if w0 > 0 else None,
+               "exit_legs": exit_legs, "exit_px_avg": str(xpx)}       # exit_px = exit_px_avg (qty-weighted, kept for old readers)
         t_x = max((f["time"] for f in exit_fills), default=self.now_ms())
         if reason.split(" ")[0] not in MODEL_EXITS:              # exchange stop / safety close, not a model exit
             if self.strategy.on_live_closed(sym, j.get("model_entry_open"), reason, t_x, self):
@@ -1631,7 +1661,9 @@ class V6Engine:
         del self.meta["trades"][:-1000]
         self.save()
         self.notify(f"{'🔴' if net < 0 else '🔵'} 청산 {sym} {'롱' if int(j.get('side', 1)) > 0 else '숏'} · {REASON_KO.get(reason.split(' ')[0], reason)}\n"
-                     f"수량 {j['qty']} · {j['entry_px']} → {xpx:.8g} · 손절 {j['stop_px']}\n"
+                     f"수량 {eq} · {j['entry_px']} → {'평균 ' if len(exit_legs) > 1 else ''}{xpx:.8g}"
+                     + (" (" + " / ".join(f"{x['qty']}@{x['price']}" for x in exit_legs) + ")" if len(exit_legs) > 1 else "")
+                     + f" · 손절 {j['stop_px']}\n"
                      f"순손익 {net:+.4f} USDT" + (f" · {rec['R']}R" if rec["R"] else "")
                      + f" (수수료 {fees:.4f} · 펀딩 {funding:+.4f})", kind="exit", event_ms=t_x)
         self._emit("trades", lambda: self._trade_line(j, rec, entry_fills, exit_fills, t_x))

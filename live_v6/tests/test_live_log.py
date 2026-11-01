@@ -31,7 +31,15 @@ SKIP_FIELDS = ("time", "coin", "side", "signal_price", "reason", "detail", "open
 DAILY_FIELDS = ("date", "wallet", "equity", "open_positions", "open_risk_sum", "drawdown_from_peak", "distance_to_halt",
                 "trades_today", "skips_today", "incidents")
 OLD_TRADE_KEYS = {"sym", "cid", "reason", "qty", "entry_px", "exit_px", "stop_px", "opened_ms", "model_entry_open", "lev",
-                  "wallet_at_entry", "risk_frac", "closed_ms", "gross", "fees", "funding", "net", "planned_R", "R", "source"}
+                  "wallet_at_entry", "risk_frac", "closed_ms", "gross", "fees", "funding", "net", "planned_R", "R", "source",
+                  # ptp-short (2026-11-01): entry vs remaining qty, TP1 fraction, initial stop / 1R, exit legs
+                  "entry_qty", "remaining_qty", "tp1_qty", "tp1_frac_actual", "init_stop_px", "risk_usdt_1R",
+                  "actual_risk_pct", "exit_legs", "exit_px_avg"}
+
+
+def r_unit(j):
+    # ptp-short: 1R = entry qty x |entry - initial stop| (the record R, the exit alert R and R_net all use it)
+    return D(j["qty"]) * abs(D(j["entry_px"]) - D(j["stop_px"]))
 
 
 def lines(tmp_path, kind):
@@ -102,14 +110,15 @@ def test_trade_line_normal_path(offline, tmp_path):
     assert D(r["exit_price"]) == xpx and r["exit_time"] >= r["entry_fill_time"]
     assert D(r["exit_slip_bp"]) == ((stop - xpx) / stop * Decimal(10000)).quantize(Decimal("0.01"))   # vs the stop
     t = eng.meta["trades"][-1]
-    assert set(t) == OLD_TRADE_KEYS                                                      # stored record untouched
+    assert set(t) == OLD_TRADE_KEYS
     assert D(r["pnl_net"]) == D(t["net"]) and D(r["pnl_gross"]) == D(t["gross"])
     assert D(r["fee_entry"]) + D(r["fee_exit"]) == D(t["fees"]) and D(r["fee_entry"]) == (qty * fill * TAKER_FEE)
-    assert D(r["R_net"]) == (D(t["net"]) / loss).quantize(Decimal("0.0001"))
+    assert D(r["R_net"]) == (D(t["net"]) / r_unit(j)).quantize(Decimal("0.0001"))
+    assert D(r["R_net"]).quantize(Decimal("0.001")) == D(t["R"])
     assert r["mae_mfe_source"] == "mark" and r["mark_gaps"] == []
     assert D(r["MFE_frac"]) == ((Decimal("0.1520") - fill) / fill).quantize(Decimal("0.000001"))
     assert D(r["MAE_frac"]) == ((fill - Decimal("0.1490")) / fill).quantize(Decimal("0.000001"))
-    assert D(r["MAE_R"]) == (D(r["MAE_frac"]) * fill * qty / loss).quantize(Decimal("0.0001"))
+    assert D(r["MAE_R"]) == (D(r["MAE_frac"]) * fill * qty / r_unit(j)).quantize(Decimal("0.0001"))
     assert r["code_commit"] == "c0ffee123456" and r["hold_minutes"] >= 0
 
 
@@ -124,7 +133,7 @@ def test_trade_line_min_order_path(offline, tmp_path):
     assert r["path"] == "qty_floor" and D(r["qty"]) == Decimal("0.001")
     assert D(r["actual_risk_pct"]).quantize(Decimal("0.01")) == alert_pct(eng)
     assert Decimal("1.3") < D(r["actual_risk_pct"]) < Decimal("1.6")
-    assert D(r["R_net"]) == (D(r["pnl_net"]) / loss_usdt(eng, j)).quantize(Decimal("0.0001"))
+    assert D(r["R_net"]) == (D(r["pnl_net"]) / r_unit(j)).quantize(Decimal("0.0001"))
 
 
 # ───────────── skips ─────────────

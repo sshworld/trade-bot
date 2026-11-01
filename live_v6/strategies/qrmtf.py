@@ -17,10 +17,13 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
 from .base import Strategy, enter
+
+KST = timezone(timedelta(hours=9))
 
 log = logging.getLogger("live_v6.qrmtf")
 M1, H1 = 60_000, 3600_000
@@ -216,6 +219,23 @@ class QRMTF(Strategy):
             return None
         tf = " ".join(f"{k} {v['contrib']:+.1f}" for k, v in ((k, r["tf"][k]) for k in WEIGHTS if k in r["tf"]))   # 1d → 1m (1w not scored)
         return f"big_n {r['big_n']:+.1f} mid {r['mid']:+.1f} fast {r['fast']:+.1f} | {tf}"
+
+    def on_entry_skip(self, sym, side, reason, detail, t_ms, window_ms=600_000):
+        # ptp-short: an entry refused by the engine for max_positions / the risk caps sends no alert; the signal (coin,
+        # side, time, per-timeframe scores) is written here as kind "skipped" with the engine skip reason
+        c = [r for r in self.records if r.get("kind") == "entry" and r.get("sym") == sym and r.get("side") == side
+             and abs(t_ms - int(r["T"])) <= window_ms]
+        base = max(c, key=lambda r: int(r["T"])) if c else {"T": None, "sym": sym, "side": side}
+        rec = dict(base, kind="skipped", reason=reason, detail=str(detail)[:200], skip_ms=t_ms,
+                   skip_kst=datetime.fromtimestamp(t_ms / 1000, KST).isoformat(timespec="milliseconds"))
+        self.records.append(rec)
+        del self.records[:-200]
+        if self.log_path:
+            try:
+                with open(self.log_path, "a") as f:
+                    f.write(json.dumps(rec) + "\n")
+            except OSError:
+                log.exception("qrmtf signal log write failed")
 
     def _record(self, kind, sym, T, ev, side, prev, reason="", sd=None):
         rec = {"T": T, "sym": sym, "kind": kind, "side": side, "reason": reason,
