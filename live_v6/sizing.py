@@ -48,6 +48,8 @@ class SizingParams:
     entry_slippage: float = 0.0004      # loss model: market-entry slippage
     stop_slippage: float = 0.0003       # loss model: stop-fill slippage
     margin_fee_buffer: float = 0.0010   # margin check: round-trip fee buffer on notional
+    size_on_stop_dist: bool = False     # qrmtf: q0 on max(ref->est stop, stop_dist) so qty x |fill - stop| <= risk_pct
+                                        # for any fill (False = the research sizing the v21 replays match exactly)
     margin_cap: float | None = None     # qrmtf: position margin (notional / lev) ≤ this × wallet; qty is CAPPED (risk may
                                         # end below risk_pct — accepted, TA 2026-10-30), skip `margin_cap` only below min qty
 
@@ -140,9 +142,13 @@ def size_entry(rules: SymbolRules, brackets: list[dict], wallet, available, ref,
     risk_usdt = wallet * D(rp) / 100
     step, lo = rules.order_step, rules.order_min_qty
     worst = ref * (1 - D(p.price_buffer))
-    q0 = floor_to(risk_usdt / risk_dist, step)
-    if q0 * risk_dist > risk_usdt:
-        return Sized("risk_cap", f"risk {q0 * risk_dist} > {risk_usdt}")
+    # size on the full stop distance: the stop is re-placed from the FILL at stop_dist (rounded toward entry), so
+    # |fill - stop| <= stop_dist while |ref - est_stop| can be up to a tick shorter -> qty (rounded DOWN) x the
+    # price distance never exceeds risk_usdt (round-trip fees on top)
+    rd = max(risk_dist, stop_dist) if p.size_on_stop_dist else risk_dist
+    q0 = floor_to(risk_usdt / rd, step)
+    if q0 * rd > risk_usdt:
+        return Sized("risk_cap", f"risk {q0 * rd} > {risk_usdt}")
     fee_rt = 2 * TAKER_FEE
     if q0 > 0 and q0 >= lo and q0 * worst >= rules.min_notional:
         path, qty = "q0", q0

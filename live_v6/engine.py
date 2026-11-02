@@ -1514,8 +1514,21 @@ class V6Engine:
         sig = D(j["signal_px"]) if j.get("signal_px") is not None else None
         raw = rec["reason"].split(" ")[0]
         kind = EXIT_KIND.get(raw, "halt" if raw.startswith("emergency") else "other")
-        xpx = D(rec["exit_px"])
-        ref = D(j["stop_px"]) if kind == "exchange_close" else D(j["exit_ref"]) if j.get("exit_ref") else None
+        # slippage of the LAST exit leg vs the trigger of the order that filled it: TP1/TP2 price for a TP, the stop
+        # price live at the close (the BE stop after the move) for the stop, the book ref for our market exits.
+        # Not the qty-weighted average of all legs vs the stop (that mixed the TP1 leg in).
+        legs, tp = rec.get("exit_legs") or [], j.get("tp") or {}
+        last = max(legs, key=lambda g: g["time"] or 0) if legs else None
+        xpx = D(last["price"]) if last else D(rec["exit_px"])
+        lcid = {str(x["id"]): str(x.get("client_id") or "") for x in j.get("exit_orders") or []}.get(
+            str(last["order_id"]) if last else "", "")
+        suf = lcid[len(j["cid"]):] if lcid.startswith(j["cid"]) else ""
+        if suf in ("t1", "t2") and tp.get("tp" + suf[1]):
+            ref = D(tp["tp" + suf[1]])
+        elif suf == "p" or (suf[:1] == "s" and suf[1:].isdigit()) or (not suf and kind == "exchange_close"):
+            ref = D(j["stop_px"])
+        else:
+            ref = D(j["exit_ref"]) if j.get("exit_ref") else None
         t_in = max((f["time"] for f in entry_fills), default=None) or j.get("entry_fill_ms")
         t_out = t_x if exit_fills else None
         xs = j.get("exit_orders") or []
@@ -1536,7 +1549,9 @@ class V6Engine:
             "stop_price": str(stop0), "stop_dist_frac": q(s * (fill - stop0) / fill, "0.000001"),
             "stop_confirmed_time": j.get("stop_confirmed_ms"), "stop_confirmed_time_kst": kst(j.get("stop_confirmed_ms")),
             "planned_risk_pct": j.get("risk_pct_used"),
-            "actual_risk_pct": rec["actual_risk_pct"],
+            "actual_risk_pct": rec["actual_risk_pct"],                 # incl. round-trip fees + slippage model
+            "price_risk_pct": q(qty * abs(fill - stop0) / D(j["wallet_at_entry"]) * 100, "0.0001")
+            if j.get("wallet_at_entry") and D(j["wallet_at_entry"]) > 0 else None,   # qty x |entry - initial stop| only
             "open_risk_sum_after_entry": None if j.get("open_risk_after") is None else round(float(j["open_risk_after"]) * 100, 6),
             "same_side_open_count": j.get("same_side_open"),
             "exit_time": t_out, "exit_time_kst": kst(t_out), "exit_price": str(xpx),
@@ -1544,6 +1559,7 @@ class V6Engine:
             "exit_order_type": (xs[-1].get("orig_type") or xs[-1].get("type")) if xs else None,
             "exit_order_ids": [x["id"] for x in xs],
             "exit_slip_bp": q(s * (ref - xpx) / ref * 10000, "0.01") if ref and xpx > 0 else None,
+            "exit_slip_ref": None if ref is None else str(ref),
             "fee_entry": str(sum((f["commission"] for f in entry_fills), Decimal(0))),
             "fee_exit": str(sum((f["commission"] for f in exit_fills), Decimal(0))),
             "funding_sum": rec["funding"], "pnl_gross": rec["gross"], "pnl_net": rec["net"],
@@ -1610,14 +1626,23 @@ class V6Engine:
         if not j:
             return
         opened = int(j.get("opened_ms", self.now_ms()))
-        fills, fund = [], []
+        fills, fund, entry_fills, exit_fills = [], [], [], []
         try:
-            fills = self.x("user_trades", sym, opened - 60_000)
+            # the closing fill can lag userTrades right after the close (live SOL 2026-11-01: only the TP1 leg came
+            # back, so the record said time_exit at the TP1 time with half the qty) -> re-read until the exits cover
+            # the entry qty, bounded by query_retries
+            for i in range(self.cfg.query_retries):
+                if i:
+                    self.sleep(self.cfg.query_delay_s)
+                fills = self.x("user_trades", sym, opened - 60_000)
+                entry_fills = [f for f in fills if f["order_id"] == str(j.get("entry_order_id"))]
+                exit_fills = [f for f in fills if f["side"] == self._cs(j) and f["time"] >= opened - 1000]
+                want = D(j.get("entry_qty") or sum((f["qty"] for f in entry_fills), Decimal(0)) or j["qty"])
+                if sum((f["qty"] for f in exit_fills), Decimal(0)) >= want:
+                    break
             fund = self.x("income", sym, "FUNDING_FEE", opened)
         except ExchangeError as e:
             log.error("%s fills fetch failed, journaling estimate: %s", sym, e)
-        entry_fills = [f for f in fills if f["order_id"] == str(j.get("entry_order_id"))]
-        exit_fills = [f for f in fills if f["side"] == self._cs(j) and f["time"] >= opened - 1000]
         gross = sum((f["realized_pnl"] for f in exit_fills), Decimal(0))
         fees = sum((f["commission"] for f in entry_fills + exit_fills), Decimal(0))
         funding = sum((r["amount"] for r in fund), Decimal(0))
