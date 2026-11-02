@@ -1112,9 +1112,13 @@ class V6Engine:
                 rules.price(e + s * r * D(str(self.cfg.tp2_r)), rnd), qty - q1)
 
     def _place_tp(self, sym, j, which, px, qty) -> bool:
-        """reduceOnly TAKE_PROFIT_MARKET (MARK_PRICE). Price already beyond it → reduceOnly market for that qty."""
+        """reduceOnly TAKE_PROFIT_MARKET. Price already beyond it → reduceOnly market for that qty. TP2 triggers on the
+        last price (CONTRACT_PRICE, TA 2026-11-02: last-price klines reached 2R without a mark-price TP2 fill); TP1 and
+        every stop stay on MARK_PRICE. A live TP2 placed on MARK_PRICE before this change is left as-is (re-placed only
+        when missing, by client id, so never duplicated)."""
         try:
-            self.x("take_profit", sym, self._cs(j), px, f"{j['cid']}{which}", qty)
+            self.x("take_profit", sym, self._cs(j), px, f"{j['cid']}{which}", qty,
+                   working_type="CONTRACT_PRICE" if which == "t2" else "MARK_PRICE")
             return True
         except WouldTrigger:
             seq = int(j.get("exit_seq", 0))

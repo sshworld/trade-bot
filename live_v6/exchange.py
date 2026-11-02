@@ -101,7 +101,7 @@ def _norm_algo(o: dict) -> dict:
             "symbol": o.get("symbol"), "type": o.get("orderType") or o.get("type"), "side": o.get("side"),
             "stop_price": Decimal(str(o.get("triggerPrice") or 0)),
             "close_position": cp is True or str(cp).lower() == "true", "reduce_only": str(o.get("reduceOnly")).lower() == "true",
-            "qty": Decimal(str(o.get("quantity") or 0)), "status": o.get("algoStatus")}
+            "qty": Decimal(str(o.get("quantity") or 0)), "status": o.get("algoStatus"), "working_type": o.get("workingType")}
 
 
 class BinanceREST:
@@ -352,10 +352,10 @@ class BinanceREST:
             p["quantity"], p["reduceOnly"] = fmt(qty), "true"
         return _norm_algo(self._req("POST", "/fapi/v1/algoOrder", p, critical=True))
 
-    def take_profit(self, symbol, side, trigger, client_id, qty) -> dict:
-        """Exchange-side reduceOnly TAKE_PROFIT_MARKET on MARK_PRICE for `qty` (qrmtf TP1 / TP2)."""
+    def take_profit(self, symbol, side, trigger, client_id, qty, working_type="MARK_PRICE") -> dict:
+        """Exchange-side reduceOnly TAKE_PROFIT_MARKET for `qty` (qrmtf TP1 on MARK_PRICE, TP2 on CONTRACT_PRICE)."""
         p = {"algoType": "CONDITIONAL", "symbol": symbol, "side": side, "type": "TAKE_PROFIT_MARKET", "triggerPrice": fmt(trigger),
-             "workingType": "MARK_PRICE", "clientAlgoId": client_id, "quantity": fmt(qty), "reduceOnly": "true"}
+             "workingType": working_type, "clientAlgoId": client_id, "quantity": fmt(qty), "reduceOnly": "true"}
         return _norm_algo(self._req("POST", "/fapi/v1/algoOrder", p, critical=True))
 
     def get_order(self, symbol, client_id) -> dict | None:

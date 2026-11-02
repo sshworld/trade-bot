@@ -205,12 +205,12 @@ class FakeExchange:
         aid = str(next(self._id))
         self.algos[aid] = {"kind": "algo", "id": aid, "client_id": cid, "symbol": s, "type": "STOP_MARKET", "side": side,
                            "stop_price": trigger, "close_position": qty is None, "reduce_only": True,
-                           "qty": Decimal(qty) if qty is not None else Decimal(0)}
+                           "qty": Decimal(qty) if qty is not None else Decimal(0), "working_type": "MARK_PRICE"}
         self.accepted[cid] = self.accepted.get(cid, 0) + 1
         self._algo_end(self.algos[aid], "NEW")
         return dict(self.algos[aid])
 
-    def take_profit(self, s, side, trigger, cid, qty):
+    def take_profit(self, s, side, trigger, cid, qty, working_type="MARK_PRICE"):
         if any(o["client_id"] == cid for o in self.algos.values()):
             raise OrderRejected(-4116, "duplicated clientAlgoId")
         p, trigger = self.pos.get(s), Decimal(trigger)
@@ -218,7 +218,8 @@ class FakeExchange:
             raise WouldTrigger(-2021, "Order would immediately trigger.")
         aid = str(next(self._id))
         self.algos[aid] = {"kind": "algo", "id": aid, "client_id": cid, "symbol": s, "type": "TAKE_PROFIT_MARKET", "side": side,
-                           "stop_price": trigger, "close_position": False, "reduce_only": True, "qty": Decimal(qty)}
+                           "stop_price": trigger, "close_position": False, "reduce_only": True, "qty": Decimal(qty),
+                           "working_type": working_type}
         self.accepted[cid] = self.accepted.get(cid, 0) + 1
         self._algo_end(self.algos[aid], "NEW")
         return dict(self.algos[aid])
