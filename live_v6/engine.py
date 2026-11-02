@@ -136,6 +136,7 @@ class Settings:
 
 
 LOG_INTENT_KEYS = ("signal_px", "path", "risk_pct_used", "order_ms", "prearm_ms", "open_risk_after", "same_side_open")
+EARLYCUT_MS = 4 * 3600_000                                  # record-only early-cut flag window (TA 2026-11-02)
 EXIT_KIND = {"stop_loss": "exchange_close", "be_stop": "exchange_close", "take_profit": "exchange_close", "signal_exit": "exit_rule", "model_sync": "exit_rule", "daily_loss_halt": "halt"}   # live log exit_reason
 
 
@@ -1112,13 +1113,12 @@ class V6Engine:
                 rules.price(e + s * r * D(str(self.cfg.tp2_r)), rnd), qty - q1)
 
     def _place_tp(self, sym, j, which, px, qty) -> bool:
-        """reduceOnly TAKE_PROFIT_MARKET. Price already beyond it → reduceOnly market for that qty. TP2 triggers on the
-        last price (CONTRACT_PRICE, TA 2026-11-02: last-price klines reached 2R without a mark-price TP2 fill); TP1 and
-        every stop stay on MARK_PRICE. A live TP2 placed on MARK_PRICE before this change is left as-is (re-placed only
+        """reduceOnly TAKE_PROFIT_MARKET. Price already beyond it → reduceOnly market for that qty. TP1 and TP2 trigger
+        on the last price (CONTRACT_PRICE, TA 2026-11-02: last-price klines reached 2R without a mark-price TP2 fill);
+        every stop stays on MARK_PRICE. A live TP placed on MARK_PRICE before this change is left as-is (re-placed only
         when missing, by client id, so never duplicated)."""
         try:
-            self.x("take_profit", sym, self._cs(j), px, f"{j['cid']}{which}", qty,
-                   working_type="CONTRACT_PRICE" if which == "t2" else "MARK_PRICE")
+            self.x("take_profit", sym, self._cs(j), px, f"{j['cid']}{which}", qty, working_type="CONTRACT_PRICE")
             return True
         except WouldTrigger:
             seq = int(j.get("exit_seq", 0))
@@ -1488,8 +1488,23 @@ class V6Engine:
             if j.get("mk_hi") is None or ev.price > D(j["mk_hi"]):
                 j["mk_hi"] = str(ev.price)
             j["mk_last"] = max(t, int(last or 0))
+            self._track_earlycut(j, t, ev.price)
         except Exception as e:  # noqa: BLE001
             log.error("mark tracking failed: %r", e)
+
+    def _track_earlycut(self, j, t, px):
+        """Record-only 4 h early-cut flag (TA 2026-11-02; no trading effect, never touches orders): favourable mark extreme
+        in the first 4 h after the entry fill, the first mark at/after the 4 h mark and whether TP1 had filled by then."""
+        t_in = int(j.get("entry_fill_ms") or j.get("opened_ms") or 0)
+        if not t_in or "earlycut_px_at_4h" in j:
+            return
+        if t - t_in < EARLYCUT_MS:
+            f = j.get("earlycut_fav")
+            if f is None or (px > D(f) if int(j.get("side", 1)) > 0 else px < D(f)):
+                j["earlycut_fav"] = str(px)
+        else:
+            j.update(earlycut_px_at_4h=str(px), earlycut_t_4h=t,
+                     earlycut_tp1_at_4h=bool(j.get("tp1_done") and (j.get("tp") or {}).get("tp1")))
 
     def _note_exit_order(self, ev):
         """Exit order type + raw order id from ORDER_TRADE_UPDATE fills the stream already delivers."""
@@ -1542,6 +1557,10 @@ class V6Engine:
         mfe = s * (D(fav) - fill) / fill if fav is not None else None
         per_r = abs(fill - stop0) / fill if stop0 != fill else None    # 1 R (= the record R unit) as a fraction of entry
         net = D(rec["net"])
+        ef, e4 = j.get("earlycut_fav"), j.get("earlycut_px_at_4h")
+        mfe4 = max(Decimal(0), s * (D(ef) - fill) / fill / per_r) if ef is not None and per_r else (Decimal(0) if per_r else None)
+        fire = None if e4 is None or mfe4 is None else bool(
+            not j.get("earlycut_tp1_at_4h") and mfe4 < Decimal("0.5") and s * (D(e4) - fill) < 0)
         return {
             "trade_id": j["cid"], "coin": rec["sym"], "side": "long" if s > 0 else "short",
             "path": {"q0": "normal"}.get(j.get("path"), j.get("path")),
@@ -1576,6 +1595,8 @@ class V6Engine:
             "MFE_R": q(mfe / per_r, "0.0001") if mfe is not None and per_r else None,
             "MAE_R": q(mae / per_r, "0.0001") if mae is not None and per_r else None,
             "mae_mfe_source": "mark", "mark_gaps": j.get("mark_gaps", []),
+            "earlycut_would_fire": fire, "earlycut_px_at_4h": e4, "earlycut_t_4h": j.get("earlycut_t_4h"),   # record-only
+            "earlycut_tp1_at_4h": j.get("earlycut_tp1_at_4h"), "mfe_R_4h": q(mfe4, "0.0001") if mfe4 is not None else None,
             "fills_source": rec["source"], "code_commit": self.events.commit}
 
     def _daily_line(self):
