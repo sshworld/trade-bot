@@ -52,7 +52,7 @@ ENTRY_ORDER = ("BTCUSDT", "ETHUSDT", "BNBUSDT", "DOGEUSDT", "XRPUSDT", "SOLUSDT"
 H4 = S.H4_MS
 KST = timezone(timedelta(hours=9))
 
-QUIET_SKIPS = ("max_positions", "risk_cap_portfolio", "total_risk_cap")   # full book: log only, never an alert
+QUIET_SKIPS = ("max_positions", "risk_cap_portfolio", "total_risk_cap", "peak_dd")   # full book: log only, never an alert
 MODEL_EXITS = ("signal_exit", "model_sync", "time_exit")   # strategy-driven exits: the model is already flat
 REASON_KO = {"stop_loss": "손절", "signal_exit": "M20 채널 청산", "model_sync": "모델 동기화 청산", "stop_breach": "손절 미작동 정리",
              "sl_failed": "손절 등록 실패 정리", "stop_lost_breach": "손절 주문 소실 후 손절가 돌파 정리", "emergency": "비상 전체 정리", "dust_entry": "소액 부분 체결 정리",
@@ -131,7 +131,7 @@ class Settings:
     # one 🚨, open positions / SL / TP untouched; peak + halt persisted; cleared only by the team with
     # live_v6/tools/clear_peak_halt.py (service stopped; audit-logged; optional peak reset to the current equity)
     peak_dd_guard: float | None = None
-    peak_dd_init: float = 0.0           # peak floor at first run (live 126.41 USDT)
+    peak_dd_init: float = 0.0           # peak floor at first run (live: real max seen, 132.88 USDT wallet 11/02)
     max_hold_s: float = 0               # > 0: reduceOnly market close after this long (24 h live)
     # live 2026-10-30 15:07 KST SOLUSDT: set 10x echoed, symbolConfig still 20x right after → entry skipped; re-read
     # symbolConfig up to lev_confirm_reads times (lev_confirm_wait_s apart) while it shows the wrong value

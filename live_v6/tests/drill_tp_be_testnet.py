@@ -108,7 +108,7 @@ def engine(tag):
     fx.inject("account", acct, times=10**6)
     cfg = live_settings("qrmtf", symbols=(SYM,), entry_order=(SYM,), cid_prefix="v6t", query_delay_s=1.0, exit_retry_delay_s=0.5,
                         breach_grace_s=1.0, income_interval_s=0.0, bootstrap_bars=60, tp1_r=TP1_R,
-                        peak_dd_guard=None, daily_loss_halt=None).__dict__   # injected 40 USDT wallet vs the shared testnet account's real day PnL / the live 126.41 peak floor would halt the drill
+                        peak_dd_guard=None, daily_loss_halt=None).__dict__   # injected 40 USDT wallet vs the shared testnet account's real day PnL / the live 132.88 peak floor would halt the drill
     eng = V6Engine(fx, Settings(**cfg), store=JsonStore(os.path.join(OUT, f"state_{tag}.json")), notifier=tg,
                    clock=time.time, sleep=time.sleep)
     eng.on_bar_close = eng.bar_guard = lambda *a, **k: None

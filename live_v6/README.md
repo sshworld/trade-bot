@@ -129,8 +129,8 @@ state-file position (unknown ones untouched, TA R4), cancel bot orders, no new e
 (`meta.daily_halt`, survives restarts), then auto-resume. One 🚨 (with per-trade coin / side / PnL / entry TF scores) and one ✅
 on resume, live mode only. Daily jsonl: `event=halt` line; `distance_to_halt` = % to the day line.
 
-**Peak-drawdown entry guard (TA 2026-11-03, qrmtf `peak_dd_guard=0.80`, `peak_dd_init=126.41`):** `meta.peak_equity` =
-max(126.41, every equity seen incl. unrealised; persisted, not transfer-adjusted). Equity < 0.80 × peak → `meta.peak_dd` set,
+**Peak-drawdown entry guard (TA 2026-11-03, qrmtf `peak_dd_guard=0.80`, `peak_dd_init=132.88`):** `meta.peak_equity` =
+max(132.88, every equity seen incl. unrealised; persisted, not transfer-adjusted). Equity < 0.80 × peak → `meta.peak_dd` set,
 ONE 🚨 "고점 대비 -20% 도달", new entries blocked (skip reason `peak_dd`); open positions and their SL / TP are untouched.
 Survives restarts; never auto-clears and `python -m live_v6 resume` does NOT clear it. The team clears it (Developer, after
 TA judges; not the account owner) with the stdlib ops tool, no code change or redeploy:

@@ -120,14 +120,14 @@ def test_record_still_short_is_flagged(offline, tmp_path):
 
 # ───────────────────────── peak-drawdown entry guard ─────────────────────────
 def _guard_engine(b, **kw):
-    return exit_engine(b, peak_dd_guard=0.80, peak_dd_init=126.41, daily_loss_halt=None, **kw)   # isolate from the daily halt
+    return exit_engine(b, peak_dd_guard=0.80, peak_dd_init=132.88, daily_loss_halt=None, **kw)   # isolate from the daily halt
 
 
 def test_peak_init_is_max_of_current_and_floor(offline):
     offline.inner.wallet = D("100")
     eng = _guard_engine(offline)
     eng.reconcile()
-    assert D(eng.meta["peak_equity"]) == D("126.41")
+    assert D(eng.meta["peak_equity"]) == D("132.88")
     offline.inner.wallet = D("150")
     eng.reconcile()
     assert D(eng.meta["peak_equity"]) == D("150")
@@ -170,6 +170,9 @@ def test_peak_dd_blocks_new_entries_only_one_alert_orders_untouched_survives_res
                                                                     "submit_market", "market")]
     assert not eng._enter(SOL, D(offline.inner.price[SOL]) * D("0.008"), unique_T())
     assert eng.meta["skip_log"][-1][2] == "peak_dd"
+    assert not [m for m in eng.tg.sent[n_alert:] if "고점 대비" not in m]   # skip is quiet: no alert per refused entry
+    rs = [r for r in getattr(eng.strategy, "records", []) if r.get("kind") == "skipped"]
+    assert rs and rs[-1]["reason"] == "peak_dd"                # qrmtf signal log: kind=skipped reason=peak_dd
     sk = [json.loads(x) for x in (tmp_path / "t_skips.jsonl").read_text().splitlines()]
     assert sk[-1]["reason"] == "peak_dd"
     eng2 = _guard_engine(offline)                             # restart: halt + peak come back from the state file
@@ -265,7 +268,29 @@ def test_reconcile_daily_gap_and_timing_split():
     assert D(r["per_trade"]["A"]["gap"]) == 0 and D(r["per_trade"]["B"]["gap"]) == 0
 
 
+def test_existing_live_be_stop_kept_no_duplicate_after_upgrade(offline):
+    # a position whose BE stop the old build (entry + 0.10 %) already placed: the new build (0.15 %) leaves it as-is
+    from .test_qrmtf import exit_engine as ee
+    from decimal import Decimal as Dec
+    eng = ee(offline, be_offset=0.001)
+    open_pos(offline, eng)
+    j = eng.st["pos"][DOGE]
+    offline.inner.set_price(DOGE, Dec(j["tp"]["tp1"]))
+    eng.reconcile()
+    j = eng.st["pos"][DOGE]
+    old = Dec(j["stop_px"])
+    assert j["be_done"] and abs(old / Dec(j["entry_px"]) - 1) <= Dec("0.0011")
+    eng2 = ee(offline)                                       # restart on the new build (be_offset 0.0015)
+    assert eng2.cfg.be_offset == 0.0015 and eng2.st["pos"][DOGE]["be_done"]
+    n = len(offline.fx.calls)
+    eng2.reconcile()
+    eng2.reconcile()
+    assert not [c for c in offline.fx.calls[n:] if c[0] in ("stop", "cancel", "cancel_algo")]
+    stops = [o for o in offline.inner.open_orders(DOGE) if o["type"] == "STOP_MARKET"]
+    assert len(stops) == 1 and stops[0]["stop_price"] == old
+
+
 def test_guard_off_by_default(offline):
     from live_v6.engine import Settings
     assert Settings().peak_dd_guard is None
-    assert live_settings("qrmtf").peak_dd_guard == 0.80 and live_settings("qrmtf").peak_dd_init == 126.41
+    assert live_settings("qrmtf").peak_dd_guard == 0.80 and live_settings("qrmtf").peak_dd_init == 132.88
