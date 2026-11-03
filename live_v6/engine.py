@@ -1739,8 +1739,8 @@ class V6Engine:
             last_suf = suf(max(exit_legs, key=lambda g: g["time"] or 0)["order_id"])
             if last_suf.startswith("t"):
                 reason = "take_profit"
-            elif last_suf.startswith("s") and j.get("be_done"):
-                reason = "be_stop"
+            elif j.get("be_done") and (last_suf.startswith("s") or not last_suf):
+                reason = "be_stop"          # after the BE move the only stop left is the BE stop (no stream: algo fill cid unknown)
         rec = {"sym": sym, "cid": j["cid"], "reason": reason, "qty": str(eq), "entry_px": j["entry_px"], "exit_px": str(xpx),
                "stop_px": j["stop_px"], "opened_ms": opened, "model_entry_open": j.get("model_entry_open"),
                "lev": j.get("lev"), "wallet_at_entry": j.get("wallet_at_entry"), "risk_frac": j.get("risk_frac"), "closed_ms": self.now_ms(), "gross": str(gross), "fees": str(fees),

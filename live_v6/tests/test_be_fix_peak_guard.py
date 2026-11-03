@@ -109,6 +109,18 @@ def test_sol_1102_be_leg_reason_be_stop_and_whole_trade_first(offline, tmp_path)
     assert any(m.startswith("• 본절 1.67@94.85 손익 +0.0334") for m in msg)
 
 
+def test_be_leg_without_stream_cid_still_be_stop(offline, tmp_path):
+    # testnet drill 2026-11-03: no user stream, the BE algo stop's fill order id is not in exit_orders → was "stop_loss"
+    t0, cid = 1793588104281, "v6SOL1793588103"
+    j = _journal(cid, -1, "1.67", "94.8700", "94.77", "95.91", "1.66", t0, entry_qty="3.33",
+                 exit_orders=[{"id": "254757526603", "client_id": cid + "t1"}])
+    fills = [_fill("E1", "SELL", "94.87", "3.33", "0.15795855", "0", t0),
+             _fill("254757526603", "BUY", "93.84", "1.66", "0.0778872", "1.7098", 1793618257729),
+             _fill("999", "BUY", "94.85", "1.67", "0.07919975", "0.0334", 1793626700082)]
+    rec, line, sent = _close(offline, tmp_path, SOL, j, fills, "0.0313823")
+    assert rec["reason"] == "be_stop" and rec["outcome"] == "1차 익절 후 본절" and "1차 익절 후 본절" in sent[-1].splitlines()[0]
+
+
 def test_record_still_short_is_flagged(offline, tmp_path):
     t0, cid = 1793633163679, "v6SOL1793633163"
     j = _journal(cid, -1, "1.70", "94.2900", "94.19", "95.37", "1.69", t0, entry_qty="3.39")
