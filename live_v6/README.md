@@ -144,6 +144,14 @@ optionally rebases the peak to the last recorded equity (without `--reset-peak` 
 still under the line), and logs who / when / sudo user / old halt / peak before-after in `meta.peak_dd_clears` and
 `/var/lib/live_v6-live/peak_dd_clears.jsonl`.
 
+**Same-direction cap (TA PASS 2026-11-03 23:26 KST, qrmtf `max_same_side=2`):** at most 2 open positions on one side (long
+or short); the total cap stays `max_positions=3`. Gate order: max_positions → dir_cap → risk caps → margin, at both the first
+check and the final check right before the order. The count comes from the fresh exchange positions read (state-file and
+unknown positions alike), so it holds after a restart. A refused 3rd same-side signal is logged quietly: skip reason `dir_cap`
+(skip log + `*_skips.jsonl`) and a qrmtf signal-log line `kind=skipped reason=dir_cap` with coin / side / time / scores; no 🚨.
+Replay basis (Jul–Sep, live rules, BE ±0.10 %): 157 trades, mean −0.148 R, max DD 58.8 % vs 168 / −0.171 R / 68.1 % without it.
+**The first-30-trades live comparison baseline is −0.148 R** for trades opened after this deploy (TA 2026-11-03).
+
 **Daily reconciliation (read-only):** `BINANCE_API_KEY=… BINANCE_API_SECRET=… python3 live_v6/tools/reconcile_daily.py --day
 YYYY-MM-DD --trades-log /var/lib/live_v6-live/mainnet_trades.jsonl` prints the recorded net of the trades closed that UTC day,
 the wallet change from `/fapi/v1/income` (all types except TRANSFER, shown apart), the gap, its timing part (fees / funding of

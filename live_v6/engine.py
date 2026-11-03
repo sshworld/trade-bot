@@ -52,7 +52,7 @@ ENTRY_ORDER = ("BTCUSDT", "ETHUSDT", "BNBUSDT", "DOGEUSDT", "XRPUSDT", "SOLUSDT"
 H4 = S.H4_MS
 KST = timezone(timedelta(hours=9))
 
-QUIET_SKIPS = ("max_positions", "risk_cap_portfolio", "total_risk_cap", "peak_dd")   # full book: log only, never an alert
+QUIET_SKIPS = ("max_positions", "dir_cap", "risk_cap_portfolio", "total_risk_cap", "peak_dd")   # full book: log only, never an alert
 MODEL_EXITS = ("signal_exit", "model_sync", "time_exit")   # strategy-driven exits: the model is already flat
 REASON_KO = {"stop_loss": "손절", "signal_exit": "M20 채널 청산", "model_sync": "모델 동기화 청산", "stop_breach": "손절 미작동 정리",
              "sl_failed": "손절 등록 실패 정리", "stop_lost_breach": "손절 주문 소실 후 손절가 돌파 정리", "emergency": "비상 전체 정리", "dust_entry": "소액 부분 체결 정리",
@@ -74,6 +74,8 @@ class Settings:
     sizing: SizingParams = field(default_factory=SizingParams)
     params: S.Params = field(default_factory=S.Params)
     max_positions: int = 6              # v6 H7 has no extra cap (one per symbol); enforced at placement anyway
+    max_same_side: int | None = None    # TA PASS 2026-11-03: at most N open positions on one side (live 2); None/0 = off.
+                                        # Counted from the fresh exchange positions read (restart-safe); quiet skip dir_cap
     cid_prefix: str = "v6"
     act_window_s: float = 900           # entries only within 15 min after the bar close
     bar_delay_s: float = 3              # wait this long after a bar close before acting
@@ -727,6 +729,14 @@ class V6Engine:
                             "risk_frac": float(j.get("risk_frac", self.cfg.sizing.risk_pct / 100 * 2))})  # not yet seen → 1%
         return out
 
+    def _dir_capped(self, sym, book, side) -> bool:
+        cap = self.cfg.max_same_side
+        n = sum(1 for b in book if b["side"] == side)
+        if cap and n >= cap:
+            self.skip(sym, "dir_cap", f"{n} {'long' if side > 0 else 'short'} open (cap {cap})")
+            return True
+        return False
+
     def _confirm_leverage(self, sym, lev: int, echoed, pr_lev) -> str:
         """After POST /fapi/v1/leverage: the new leverage counts only when the set response AND GET /fapi/v1/symbolConfig
         both equal the requested value (positionRisk can lag a successful change: live 2026-10-22 01:39 KST BNBUSDT,
@@ -834,8 +844,10 @@ class V6Engine:
             log.error("entry %s pre-check failed: %s", sym, e)
             return False
         book = self._open_book(pos)
-        if len(book) >= self.cfg.max_positions:             # ptp-short: gate order max_positions -> risk caps -> margin
+        if len(book) >= self.cfg.max_positions:             # ptp-short: gate order max_positions -> dir_cap -> risk caps -> margin
             self.skip(sym, "max_positions", f"{len(book)} open")
+            return False
+        if self._dir_capped(sym, book, side):
             return False
         got = self._size_fresh(sym, stop_dist, book, side=side)
         if got is None:
@@ -866,6 +878,8 @@ class V6Engine:
             return False
         if len(book) >= self.cfg.max_positions:
             self.skip(sym, "max_positions", f"{len(book)} open")
+            return False
+        if self._dir_capped(sym, book, side):
             return False
         # SECOND PASS right before the order: price, ATR-based stop distance (as passed in), wallet, available balance,
         # exchangeInfo and brackets are read again and qty / minNotional / margin / bracket are recomputed with the

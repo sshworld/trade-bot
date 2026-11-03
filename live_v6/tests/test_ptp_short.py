@@ -34,9 +34,9 @@ def _poor(fn):
 def _gate_engine(b, tmp_path):
     eng = exit_engine(b)
     eng.strategy.log_path = tmp_path / "qrmtf_signals.jsonl"
-    for s in (SOL, XRP):
+    for s, sd in ((SOL, 1), (XRP, -1)):                 # one long + one short: the same-side cap (2) never fires here
         px = D(b.inner.price[s])
-        assert eng.enter(s, px * Decimal("0.008"), unique_T()), eng.meta.get("skip_log", [])[-1:]
+        assert eng.enter(s, px * Decimal("0.008"), unique_T(), side=sd), eng.meta.get("skip_log", [])[-1:]
     T = unique_T()
     eng.strategy.records.append({"T": T, "sym": DOGE, "kind": "entry", "side": 1, "total": 70.0, "big_n": 75.0,
                                  "mid": 0.5, "fast": 0.4, "tf": {"1d": {"contrib": 18.0}, "4h": {"contrib": 14.0},
