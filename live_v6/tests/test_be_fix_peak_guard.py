@@ -306,3 +306,42 @@ def test_guard_off_by_default(offline):
     from live_v6.engine import Settings
     assert Settings().peak_dd_guard is None
     assert live_settings("qrmtf").peak_dd_guard == 0.80 and live_settings("qrmtf").peak_dd_init == 132.88
+
+
+def test_long_tp1_fill_places_exactly_one_be_stop_sell_mark_reduceonly_old_cancelled(offline):
+    # TA conditional PASS 2026-11-03: long, TP1 fills -> exactly ONE stop at entry x 1.0015 (tick-rounded up = safe side),
+    # SELL, MARK_PRICE, reduceOnly qty = remaining position (one closePosition per side), old SL cancelled, no duplicate.
+    from live_v6.exchange import BinanceREST
+    eng = exit_engine(offline)
+    j = open_pos(offline, eng, side=1)
+    e = D(j["entry_px"])
+    (old,) = [o for o in offline.inner.open_orders(DOGE) if o["type"] == "STOP_MARKET"]
+    assert old["close_position"] and old["side"] == "SELL"
+    old_cid, q0 = old["client_id"], offline.amt(DOGE)
+    n = len(offline.fx.calls)
+    offline.inner.set_price(DOGE, D(j["tp"]["tp1"]))
+    for _ in range(3):                                        # repeated reconcile loops must not add a second stop
+        eng.reconcile()
+    j = eng.st["pos"][DOGE]
+    tgt = eng.rules[DOGE].price(e * D("1.0015"), "up")
+    assert tgt >= e * D("1.0015") and tgt - e * D("1.0015") < eng.rules[DOGE].tick_size
+    amt = offline.amt(DOGE)
+    assert 0 < amt < q0 and amt == q0 - D(j["tp"]["q1"])      # TP1 really filled; remainder open
+    stops = [o for o in offline.inner.open_orders(DOGE) if o["type"] == "STOP_MARKET"]
+    assert len(stops) == 1, stops
+    (s,) = stops
+    assert s["stop_price"] == tgt and D(j["stop_px"]) == tgt and s["client_id"] == j["stop_cid"] != old_cid
+    assert s["side"] == "SELL" and s["working_type"] == "MARK_PRICE"
+    assert s["reduce_only"] and not s["close_position"] and s["qty"] == amt
+    placed = [c for c in offline.fx.calls[n:] if c[0] == "stop"]
+    assert len(placed) == 1 and placed[0][1][1] == "SELL"
+    assert offline.inner.algo_order(DOGE, old_cid)["status"] == "CANCELED"
+    assert offline.inner.accepted[j["stop_cid"]] == 1
+    # the real REST client builds exactly these params for that call
+    rest, sent = object.__new__(BinanceREST), []
+    rest._req = lambda m, path, p, critical=False: sent.append((m, path, p, critical)) or {"algoId": 1, "clientAlgoId": p["clientAlgoId"]}
+    rest.stop(DOGE, "SELL", tgt, j["stop_cid"], qty=amt)
+    ((m, path, p, crit),) = sent
+    assert (m, path, crit) == ("POST", "/fapi/v1/algoOrder", True)
+    assert p["side"] == "SELL" and p["type"] == "STOP_MARKET" and p["workingType"] == "MARK_PRICE"
+    assert p["reduceOnly"] == "true" and "closePosition" not in p and D(p["triggerPrice"]) == tgt and D(p["quantity"]) == amt
