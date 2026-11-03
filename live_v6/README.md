@@ -129,6 +129,26 @@ state-file position (unknown ones untouched, TA R4), cancel bot orders, no new e
 (`meta.daily_halt`, survives restarts), then auto-resume. One 🚨 (with per-trade coin / side / PnL / entry TF scores) and one ✅
 on resume, live mode only. Daily jsonl: `event=halt` line; `distance_to_halt` = % to the day line.
 
+**Peak-drawdown entry guard (TA 2026-11-03, qrmtf `peak_dd_guard=0.80`, `peak_dd_init=126.41`):** `meta.peak_equity` =
+max(126.41, every equity seen incl. unrealised; persisted, not transfer-adjusted). Equity < 0.80 × peak → `meta.peak_dd` set,
+ONE 🚨 "고점 대비 -20% 도달", new entries blocked (skip reason `peak_dd`); open positions and their SL / TP are untouched.
+Survives restarts; never auto-clears and `python -m live_v6 resume` does NOT clear it. The team clears it (Developer, after
+TA judges; not the account owner) with the stdlib ops tool, no code change or redeploy:
+
+    sudo systemctl stop live_v6-live
+    sudo python3 /opt/tradebot/app/current/live_v6/tools/clear_peak_halt.py --by "Developer (TA ok <date>)" [--reset-peak] [--dry-run]
+    sudo systemctl start live_v6-live
+
+It refuses while `live_v6-live` is active, backs up the state (`mainnet.json.bak-peakclear-<UTC>`), removes `peak_dd`,
+optionally rebases the peak to the last recorded equity (without `--reset-peak` the engine halts again at once if equity is
+still under the line), and logs who / when / sudo user / old halt / peak before-after in `meta.peak_dd_clears` and
+`/var/lib/live_v6-live/peak_dd_clears.jsonl`.
+
+**Daily reconciliation (read-only):** `BINANCE_API_KEY=… BINANCE_API_SECRET=… python3 live_v6/tools/reconcile_daily.py --day
+YYYY-MM-DD --trades-log /var/lib/live_v6-live/mainnet_trades.jsonl` prints the recorded net of the trades closed that UTC day,
+the wallet change from `/fapi/v1/income` (all types except TRANSFER, shown apart), the gap, its timing part (fees / funding of
+trades open across midnight) and the unexplained residual (should be 0).
+
 ## Websocket endpoints (network-specific, `stream.market_url` / `stream.user_url`)
 - Mainnet: legacy `fstream.binance.com/ws` and `/stream` were retired on 2026-04-23 → market data
   `wss://fstream.binance.com/market/stream?streams=…` (markPrice@1s, kline, aggTrade), user data

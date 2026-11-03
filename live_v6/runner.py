@@ -57,13 +57,14 @@ def check_frozen(cfg: Settings) -> None:
 
 def live_settings(name: str, **kw) -> Settings:
     """Live Settings per strategy. qrmtf (PM final 2026-10-30): 4 % risk, 12 % open-risk Σ, max 3 positions, margin ≤ 25 % of
-    wallet per position, 10x max, longs + shorts, TP1 +1R 50 % → SL entry ± 0.1 %, TP2 +2R, 24 h time exit."""
+    wallet per position, 10x max, longs + shorts, TP1 +1R 50 % → SL entry ± 0.15 %, TP2 +2R, 24 h time exit."""
     if name == "qrmtf":
         from .sizing import SizingParams
         sizing = SizingParams(risk_pct=4.0, max_risk_pct=5.0, portfolio_risk_cap=0.12, total_risk_cap=0.12, margin_cap=0.25,
                               max_leverage=10, size_on_stop_dist=True)   # max_risk_pct 5 % = 4 % + round-trip fee headroom
         kw = dict(dict(sizing=sizing, max_positions=3, enable_short=True, take_profit=True, tp1_r=1.0, tp1_frac=0.5,
-                       tp2_r=2.0, be_offset=0.001, max_hold_s=24 * 3600, bar_delay_s=3,
+                       tp2_r=2.0, be_offset=0.0015, max_hold_s=24 * 3600, bar_delay_s=3,
+                       peak_dd_guard=0.80, peak_dd_init=126.41,   # TA 2026-11-03: BE entry ± 0.15 %, peak-DD entry guard
                        halt_fraction=None, daily_loss_halt=0.10, startup_leverage=10,   # user 2026-10-30: -25 % total halt removed → daily -10 %, 24 h
                        bar_stale_s=180.0), **kw)   # bar_stale 180 s: 1m cadence, 3 missed minutes → block new entries
     return Settings(**kw)

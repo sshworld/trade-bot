@@ -32,6 +32,7 @@ SYM = os.getenv("DRILL_SYM", "LTCUSDT")      # testnet book trades at mark (ADA 
 WALLET = D(os.getenv("DRILL_WALLET", "40"))  # injected: 4 % risk of 40 USDT at a 1.5 % stop, margin cap → ~100 USDT notional
 STOP_PCT = D(os.getenv("DRILL_STOP_PCT", "0.015"))   # retry 2026-10-30 11:04: 0.03 (stop ~3 % away, never first)
 TP1_R = float(os.getenv("DRILL_TP1_R", "0.15"))   # TP1 = entry ± 0.1 R = ± 0.15 % (BE stop at ± 0.1 % stays placeable)
+WAIT_BE_S = int(os.getenv("DRILL_BE_WAIT_S", "0"))       # > 0: wait this long for the BE stop to fire before the time exit
 WAIT_TP1_S = int(os.getenv("DRILL_WAIT_S", "900"))         # retry: 1800 (~30 min per leg)
 SIDES = tuple(int(x) for x in os.getenv("DRILL_SIDES", "1,-1").split(","))   # e.g. DRILL_SIDES=1 to rerun only the long
 key, sec = os.environ["BINANCE_TESTNET_API_KEY"], os.environ["BINANCE_TESTNET_API_SECRET"]
@@ -106,7 +107,8 @@ def engine(tag):
         return d
     fx.inject("account", acct, times=10**6)
     cfg = live_settings("qrmtf", symbols=(SYM,), entry_order=(SYM,), cid_prefix="v6t", query_delay_s=1.0, exit_retry_delay_s=0.5,
-                        breach_grace_s=1.0, income_interval_s=0.0, bootstrap_bars=60, tp1_r=TP1_R).__dict__
+                        breach_grace_s=1.0, income_interval_s=0.0, bootstrap_bars=60, tp1_r=TP1_R,
+                        peak_dd_guard=None, daily_loss_halt=None).__dict__   # injected 40 USDT wallet vs the shared testnet account's real day PnL / the live 126.41 peak floor would halt the drill
     eng = V6Engine(fx, Settings(**cfg), store=JsonStore(os.path.join(OUT, f"state_{tag}.json")), notifier=tg,
                    clock=time.time, sleep=time.sleep)
     eng.on_bar_close = eng.bar_guard = lambda *a, **k: None
@@ -168,13 +170,20 @@ def run_side(side):
     t1s = algo_status(t1_id) if t1_id else None
     step("3_tp1_filled", bool(jj.get("tp1_done")) and abs(a1) == D(j["qty"]) - D(j["tp"]["q1"]) and a1 * side > 0,
          waited_s=round(time.time() - t0), position=str(a1), tp1_algo=t1s, marks=marks[-6:], journal_qty=jj.get("qty"))
-    be_tgt = ru.price(D(j["entry_px"]) * (1 + side * D("0.001")), "up" if side > 0 else "down")
+    be_tgt = ru.price(D(j["entry_px"]) * (1 + side * D(str(eng.cfg.be_offset))), "up" if side > 0 else "down")
     new = [o for o in oo1 if o["cid"] == jj.get("stop_cid")]
     old_left = [o for o in oo1 if old_sl and o["id"] == old_sl["id"]]
     step("4_be_stop_placed_old_sl_cancelled", bool(jj.get("be_done")) and len(new) == 1 and D(new[0]["trigger"]) == be_tgt and not old_left
          and new[0]["type"] == "STOP_MARKET" and D(new[0]["qty"]) == abs(a1),
          be_target=str(be_tgt), entry=j["entry_px"], new_stop=new, old_stop_id=old_sl and old_sl["id"],
          old_stop_after=algo_status(old_sl["id"]) if old_sl else None, orders_after=oo1, closing=jj.get("closing"), close_reason=jj.get("close_reason"))
+    t_be = time.time()                     # 4b. optionally let the BE stop fire (exchange) -> whole-trade record net >= 0
+    while WAIT_BE_S and eng.st["pos"].get(SYM) and time.time() - t_be < WAIT_BE_S:
+        try:
+            eng.reconcile()
+        except ExchangeUnavailable as e:
+            note("transient", e)
+        time.sleep(2)
     if eng.st["pos"].get(SYM):             # 5. 24 h time-exit path (max_hold_s shrunk) → engine.close("time_exit")
         eng.cfg.max_hold_s = 1
         time.sleep(1.2)
@@ -190,6 +199,13 @@ def run_side(side):
     algo = rest._req("GET", "/fapi/v1/openAlgoOrders", {"symbol": SYM})
     algo = algo if isinstance(algo, list) else (algo.get("orders") or [])
     tl = [ln for ln in LOGLINES if "time_exit" in ln or "24시간" in ln or "closed" in ln][-4:]
+    rec = (eng.meta.get("trades") or [{}])[-1]
+    al = [json.loads(x) for x in open(os.path.join(OUT, f"alerts_{tag}.jsonl"), encoding="utf-8")] if os.path.exists(os.path.join(OUT, f"alerts_{tag}.jsonl")) else []
+    xmsg = [a.get("text") or a.get("msg") or "" for a in al if "청산" in json.dumps(a, ensure_ascii=False)][-1:]
+    step("6_record_whole_trade", rec.get("cid") == cid and len(rec.get("exit_legs") or []) >= 2 and not rec.get("fills_incomplete")
+         and (rec.get("reason") != "be_stop" or D(rec["net"]) >= 0),
+         reason=rec.get("reason"), net=rec.get("net"), R=rec.get("R"), gross=rec.get("gross"), fees=rec.get("fees"),
+         legs=rec.get("exit_legs"), alert=xmsg)
     step("5_time_exit_flat_clean", a2 == 0 and not std and not algo and not eng.st["pos"].get(SYM) and jj.get("close_reason") in (None, "time_exit"),
          position=str(a2), open_std=len(std), open_algo=len(algo), tp2_after=algo_status(t2[0]["id"]) if t2 else None,
          be_after=algo_status(new[0]["id"]) if new else None, log=tl)

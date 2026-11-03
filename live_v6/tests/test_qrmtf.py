@@ -183,7 +183,7 @@ def test_live_settings_qrmtf():
     c = live_settings("qrmtf")
     assert (c.sizing.risk_pct, c.sizing.portfolio_risk_cap, c.sizing.margin_cap, c.sizing.max_leverage) == (4.0, 0.12, 0.25, 10)
     assert c.max_positions == 3 and c.enable_short and c.take_profit and c.max_hold_s == 24 * 3600
-    assert (c.tp1_r, c.tp1_frac, c.tp2_r, c.be_offset) == (1.0, 0.5, 2.0, 0.001)
+    assert (c.tp1_r, c.tp1_frac, c.tp2_r, c.be_offset) == (1.0, 0.5, 2.0, 0.0015)
     assert c.startup_leverage == 10 and c.halt_fraction is None and c.daily_loss_halt == 0.10 and c.daily_halt_s == 24 * 3600   # -25 % total halt removed
     assert c.bar_stale_s == 180.0
 
@@ -414,7 +414,7 @@ def _tp1_then_be(b, eng, side):
     j = eng.st["pos"][DOGE]
     assert j["tp1_done"] and j["be_done"]
     be = Decimal(j["stop_px"])
-    assert side * (be - e) > 0 and abs(be / e - 1) <= Decimal("0.0011")
+    assert side * (be - e) > 0 and abs(be / e - 1) <= Decimal("0.0016")   # BE entry ± 0.15 % (TA 2026-11-03)
     seq = [c[0] for c in b.fx.calls[calls0:] if c[0] in ("stop", "cancel")]
     assert seq.index("stop") < seq.index("cancel")
     stops = [o for o in b.inner.open_orders(DOGE) if o["type"] == "STOP_MARKET"]

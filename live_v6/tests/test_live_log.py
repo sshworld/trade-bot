@@ -34,7 +34,9 @@ OLD_TRADE_KEYS = {"sym", "cid", "reason", "qty", "entry_px", "exit_px", "stop_px
                   "wallet_at_entry", "risk_frac", "closed_ms", "gross", "fees", "funding", "net", "planned_R", "R", "source",
                   # ptp-short (2026-11-01): entry vs remaining qty, TP1 fraction, initial stop / 1R, exit legs
                   "entry_qty", "remaining_qty", "tp1_qty", "tp1_frac_actual", "init_stop_px", "risk_usdt_1R",
-                  "actual_risk_pct", "exit_legs", "exit_px_avg"}
+                  "actual_risk_pct", "exit_legs", "exit_px_avg",
+                  # TA 2026-11-03: outcome name (e.g. "1차 익절 후 본절")
+                  "outcome"}
 
 
 def r_unit(j):

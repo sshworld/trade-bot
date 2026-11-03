@@ -56,7 +56,7 @@ QUIET_SKIPS = ("max_positions", "risk_cap_portfolio", "total_risk_cap")   # full
 MODEL_EXITS = ("signal_exit", "model_sync", "time_exit")   # strategy-driven exits: the model is already flat
 REASON_KO = {"stop_loss": "손절", "signal_exit": "M20 채널 청산", "model_sync": "모델 동기화 청산", "stop_breach": "손절 미작동 정리",
              "sl_failed": "손절 등록 실패 정리", "stop_lost_breach": "손절 주문 소실 후 손절가 돌파 정리", "emergency": "비상 전체 정리", "dust_entry": "소액 부분 체결 정리",
-             "time_exit": "24시간 보유 청산", "take_profit": "익절", "be_stop": "본절 손절", "be_stop_breach": "본절 손절가 돌파 정리",
+             "time_exit": "24시간 보유 청산", "take_profit": "익절", "be_stop": "1차 익절 후 본절", "be_stop_breach": "본절 손절가 돌파 정리",
              "daily_loss_halt": "일일 손실 한도 전체 정리"}
 
 # entry-blocking reasons (transient; cleared automatically when the condition clears)
@@ -126,7 +126,12 @@ class Settings:
     tp1_r: float = 1.0
     tp1_frac: float = 0.5
     tp2_r: float = 2.0
-    be_offset: float = 0.001            # after TP1: SL → entry ± 0.1 % (new stop first, then cancel the old one)
+    be_offset: float = 0.001            # after TP1: SL → entry ± be_offset (live 0.15 %, TA 2026-11-03), safe-side tick
+    # peak-drawdown entry guard (TA 2026-11-03): equity (wallet + uPnL) < peak × peak_dd_guard → NEW entries blocked,
+    # one 🚨, open positions / SL / TP untouched; peak + halt persisted; cleared only by the team with
+    # live_v6/tools/clear_peak_halt.py (service stopped; audit-logged; optional peak reset to the current equity)
+    peak_dd_guard: float | None = None
+    peak_dd_init: float = 0.0           # peak floor at first run (live 126.41 USDT)
     max_hold_s: float = 0               # > 0: reduceOnly market close after this long (24 h live)
     # live 2026-10-30 15:07 KST SOLUSDT: set 10x echoed, symbolConfig still 20x right after → entry skipped; re-read
     # symbolConfig up to lev_confirm_reads times (lev_confirm_wait_s apart) while it shows the wrong value
@@ -267,7 +272,7 @@ class V6Engine:
                            event_ms=int(self._block_since.get(r, now) * 1000))
 
     def entries_allowed(self) -> bool:
-        return not self.blocks and not self.meta.get("halted")
+        return not self.blocks and not self.meta.get("halted") and not self.meta.get("peak_dd")
 
     def halt(self, reason):
         if not self.meta.get("halted"):
@@ -277,8 +282,24 @@ class V6Engine:
 
     def resume(self):
         self.meta.pop("halted", None)
-        self.meta.pop("daily_halt", None)
+        self.meta.pop("daily_halt", None)       # peak_dd is NOT cleared here: team-only, live_v6/tools/clear_peak_halt.py
         self.save()
+
+    def _peak_guard(self):
+        g = self.cfg.peak_dd_guard
+        if not g or self.meta.get("equity") is None:
+            return
+        eq = D(self.meta["equity"])
+        pk = max(D(self.meta.get("peak_equity") or str(self.cfg.peak_dd_init)), eq)
+        if self.meta.get("peak_equity") is None or pk != D(self.meta["peak_equity"]):
+            self.meta["peak_equity"] = str(pk)
+            self.save()
+        line = pk * D(str(g))
+        if eq < line and not self.meta.get("peak_dd"):
+            self.meta["peak_dd"] = {"t_ms": self.now_ms(), "equity": str(eq), "peak": str(pk), "line": str(line)}
+            self.save()
+            self.alert(f"고점 대비 -{(1 - D(str(g))) * 100:.0f}% 도달: 자산 {eq:.2f} < {line:.2f} (고점 {pk:.2f} × {g})",
+                       "신규 진입 중단 · 보유 포지션 손절/익절 유지 · 해제는 팀(TA 판단 후 Developer): live_v6/tools/clear_peak_halt.py")
 
     def skip(self, sym, reason, detail="", signal_px=None, signal_ms=None):
         day = datetime.fromtimestamp(self.now_ms() / 1000, KST).strftime("%Y-%m-%d")
@@ -783,7 +804,10 @@ class V6Engine:
             self.skip(sym, "short_disabled", "short entries are off (enable_short=False)")
             return False
         if not self.entries_allowed():
-            self.skip(sym, "safety_block", str(self.meta.get("halted") or self.blocks))
+            if self.meta.get("peak_dd") and not self.meta.get("halted") and not self.blocks:
+                self.skip(sym, "peak_dd", str(self.meta["peak_dd"]))
+            else:
+                self.skip(sym, "safety_block", str(self.meta.get("halted") or self.blocks))
             return False
         if sym in self.st["unknown"]:                       # TA R4: entries blocked for THIS coin only
             self.skip(sym, UNKNOWN_POS, f"exchange position {self.st['unknown'][sym].get('amt')} not in the state file")
@@ -1507,8 +1531,9 @@ class V6Engine:
                      earlycut_tp1_at_4h=bool(j.get("tp1_done") and (j.get("tp") or {}).get("tp1")))
 
     def _note_exit_order(self, ev):
-        """Exit order type + raw order id from ORDER_TRADE_UPDATE fills the stream already delivers."""
-        if self.events is None or not isinstance(ev, OrderUpdate):
+        """Exit order type + raw order id from ORDER_TRADE_UPDATE fills the stream already delivers; the fill itself is
+        kept too (record_close falls back to it when userTrades lags the close, live SOL 2026-11-02/03)."""
+        if not isinstance(ev, OrderUpdate):
             return
         try:
             r, j = ev.raw, self.st["pos"].get(ev.sym)
@@ -1517,6 +1542,13 @@ class V6Engine:
                 xs.append({"id": str(r.get("i")), "client_id": r.get("c"), "type": r.get("o"), "orig_type": r.get("ot"),
                            "status": r.get("X"), "time": r.get("T")})
                 del xs[:-20]
+                if D(r.get("l") or 0) > 0:
+                    fs = j.setdefault("stream_fills", [])
+                    fs.append({"order_id": str(r.get("i")), "trade_id": str(r.get("t")), "client_id": r.get("c"),
+                               "side": r.get("S"), "price": str(r.get("L")), "qty": str(r.get("l")),
+                               "commission": str(r.get("n") or 0), "realized_pnl": str(r.get("rp") or 0),
+                               "time": int(r.get("T") or 0)})
+                    del fs[:-40]
         except Exception as e:  # noqa: BLE001
             log.error("exit order note failed: %r", e)
 
@@ -1668,6 +1700,15 @@ class V6Engine:
             fund = self.x("income", sym, "FUNDING_FEE", opened)
         except ExchangeError as e:
             log.error("%s fills fetch failed, journaling estimate: %s", sym, e)
+        want = D(j.get("entry_qty") or sum((f["qty"] for f in entry_fills), Decimal(0)) or j["qty"])
+        have = {str(f["order_id"]) for f in exit_fills}
+        if sum((f["qty"] for f in exit_fills), Decimal(0)) < want:   # userTrades still short: exit orders the stream filled
+            exit_fills = exit_fills + [dict(f, price=D(f["price"]), qty=D(f["qty"]), commission=D(f["commission"]),
+                                            realized_pnl=D(f["realized_pnl"]))
+                                       for f in j.get("stream_fills") or [] if f["order_id"] not in have]
+        short = sum((f["qty"] for f in exit_fills), Decimal(0)) < want
+        if short:
+            log.error("%s close record incomplete: exit fills cover less than the entry qty %s", sym, want)
         gross = sum((f["realized_pnl"] for f in exit_fills), Decimal(0))
         fees = sum((f["commission"] for f in entry_fills + exit_fills), Decimal(0))
         funding = sum((r["amount"] for r in fund), Decimal(0))
@@ -1689,6 +1730,17 @@ class V6Engine:
             g[2] = max(g[2], f["time"])
         nz = lambda x: f"{x.normalize():f}"                    # noqa: E731
         exit_legs = [{"order_id": k, "price": nz(g[1] / g[0]), "qty": nz(g[0]), "time": g[2]} for k, g in legs.items() if g[0]]
+        # which exit order filled each leg (stream exit_orders / stream fills); a flat-at-reconcile close has no
+        # close_reason / exit_fill and used to default to "stop_loss" even when TP2 or the BE stop closed it
+        cids = {str(o.get("id")): o.get("client_id") or "" for o in (j.get("exit_orders") or []) + [
+            {"id": f["order_id"], "client_id": f.get("client_id")} for f in j.get("stream_fills") or []]}
+        suf = lambda k: cids.get(k, "")[len(j["cid"]):] if cids.get(k, "").startswith(j["cid"]) else ""   # noqa: E731
+        if exit_legs and reason == "stop_loss" and not j.get("close_reason") and not j.get("exit_fill"):
+            last_suf = suf(max(exit_legs, key=lambda g: g["time"] or 0)["order_id"])
+            if last_suf.startswith("t"):
+                reason = "take_profit"
+            elif last_suf.startswith("s") and j.get("be_done"):
+                reason = "be_stop"
         rec = {"sym": sym, "cid": j["cid"], "reason": reason, "qty": str(eq), "entry_px": j["entry_px"], "exit_px": str(xpx),
                "stop_px": j["stop_px"], "opened_ms": opened, "model_entry_open": j.get("model_entry_open"),
                "lev": j.get("lev"), "wallet_at_entry": j.get("wallet_at_entry"), "risk_frac": j.get("risk_frac"), "closed_ms": self.now_ms(), "gross": str(gross), "fees": str(fees),
@@ -1702,6 +1754,9 @@ class V6Engine:
                "actual_risk_pct": str((self._loss_to_stop(eq, e0, stop0, int(j.get("side", 1))) / w0 * 100)
                                       .quantize(Decimal("0.0001"))) if w0 > 0 else None,
                "exit_legs": exit_legs, "exit_px_avg": str(xpx)}       # exit_px = exit_px_avg (qty-weighted, kept for old readers)
+        if short:
+            rec["fills_incomplete"] = True
+        rec["outcome"] = REASON_KO.get(reason.split(" ")[0], reason)   # TA: TP1 then the BE stop = "1차 익절 후 본절"
         t_x = max((f["time"] for f in exit_fills), default=self.now_ms())
         if reason.split(" ")[0] not in MODEL_EXITS:              # exchange stop / safety close, not a model exit
             if self.strategy.on_live_closed(sym, j.get("model_entry_open"), reason, t_x, self):
@@ -1710,13 +1765,25 @@ class V6Engine:
         self.meta.setdefault("trades", []).append(rec)
         del self.meta["trades"][:-1000]
         self.save()
+        lab = {"t1": "TP1", "t2": "TP2", "p": "손절"}
+        leg_lines = []
+        for x in sorted(exit_legs, key=lambda g: g["time"] or 0):
+            k = x["order_id"]
+            sx = suf(k)
+            name = lab.get(sx) or ("본절" if sx.startswith("s") and j.get("be_done") else "손절" if sx.startswith("s") else "청산")
+            fx = [f for f in exit_fills if str(f["order_id"]) == k]
+            leg_lines.append(f"• {name} {x['qty']}@{x['price']} 손익 {sum((f['realized_pnl'] for f in fx), Decimal(0)):+.4f}"
+                             f" · 수수료 {sum((f['commission'] for f in fx), Decimal(0)):.4f}")
+        efee = sum((f["commission"] for f in entry_fills), Decimal(0))
         self.notify(f"{'🔴' if net < 0 else '🔵'} 청산 {sym} {'롱' if int(j.get('side', 1)) > 0 else '숏'} · {REASON_KO.get(reason.split(' ')[0], reason)}\n"
+                     f"전체 순손익 {net:+.4f} USDT" + (f" · {rec['R']}R" if rec["R"] else "")
+                     + f" (수수료 {fees:.4f} · 펀딩 {funding:+.4f})\n"
                      f"수량 {eq} · {j['entry_px']} → {'평균 ' if len(exit_legs) > 1 else ''}{xpx:.8g}"
                      + (" (" + " / ".join(f"{x['qty']}@{x['price']}" for x in exit_legs) + ")" if len(exit_legs) > 1 else "")
                      + f" · 손절 {j['stop_px']}\n"
-                     f"순손익 {net:+.4f} USDT" + (f" · {rec['R']}R" if rec["R"] else "")
-                     + f" (수수료 {fees:.4f} · 펀딩 {funding:+.4f})", kind="exit", event_ms=t_x)
-        self._emit("trades", lambda: self._trade_line(j, rec, entry_fills, exit_fills, t_x))
+                     + "\n".join(leg_lines + [f"• 진입 수수료 {efee:.4f}"])
+                     + ("\n⚠️ 체결 내역 일부 누락" if short else ""), kind="exit", event_ms=t_x)
+        self._emit("trades", lambda: dict(self._trade_line(j, rec, entry_fills, exit_fills, t_x), outcome=rec["outcome"]))
         self.check_halts(daily=False)   # daily-loss check runs at the end of reconcile
 
     # ───────────────────────── reconcile (exchange → local) ─────────────────────────
@@ -2139,6 +2206,7 @@ class V6Engine:
         return "\n".join(out) or "오늘 거래 없음"
 
     def check_halts(self, daily=True):
+        self._peak_guard()
         if daily:                                        # not from record_close: a close inside the reconcile loop must not
             self.check_daily_halt()                      # flatten other coins mid-loop (stale snapshot → false unknown)
         if "start_wallet" not in self.meta:
