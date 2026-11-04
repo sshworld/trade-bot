@@ -223,6 +223,24 @@ def test_restart_restores_best_and_stop_never_moves_back(offline):
     assert j2["best"] == best and j2["stop_px"] == s1 and len(stops(offline)) == 1 and stops(offline)[0]["stop_price"] == D(s1)
 
 
+def test_first_try_in_entry_minute_persists_seed_best(offline):
+    # testnet drill 2026-11-04 09:47 KST: the first trail try ran before the entry minute closed → stop moved off
+    # best = entry, but best/trail_t were not saved. The seed is persisted so a restart restores the same best.
+    clk, eng, j = _trail_setup(offline, 1, atr=0.0001)               # 2·ATR < initial distance → moves off the entry
+    e, s0 = D(j["entry_px"]), D(j["stop_px"])
+    eng.reconcile()                                                  # still inside the entry minute: no closed 1m bar
+    jj = eng.st["pos"][DOGE]
+    saved = json.load(open(offline.store_path))["pos"][DOGE]
+    assert D(jj["stop_px"]) > s0 and D(saved["best"]) == e and saved["trail_t"] == int(j["opened_ms"]) // M1 * M1 - M1
+    eng2 = e_engine(offline, clk)                                    # restart
+    t = minute(clk, j, 1)
+    add_m1(offline, t, float(e + D("0.0003")), float(e))
+    offline.inner.set_price(DOGE, e + D("0.0002"))
+    eng2.reconcile()
+    j2 = eng2.st["pos"][DOGE]
+    assert D(j2["best"]) == e + D("0.0003") and D(j2["stop_px"]) >= D(jj["stop_px"]) and len(stops(offline)) == 1
+
+
 def test_trail_stop_exit_leaves_nothing(offline):
     clk, eng, j = _trail_setup(offline, 1)
     e = D(j["entry_px"])

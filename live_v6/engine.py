@@ -1388,6 +1388,9 @@ class V6Engine:
             if bars:
                 j.update(best=str(best), trail_t=int(bars[-1]["open_time"]))
                 self.save()
+        if j.get("best") is None:                                  # first try before any 1m bar since entry closed:
+            j.update(best=str(best), trail_t=done)                # persist the seed so a restart restores the same best
+            self.save()
         stop = D(j["stop_px"])
         cands = []
         atr = self._trail_atr(sym, j)
