@@ -1,7 +1,7 @@
 # TA 2026-11-03: (1) BE stop after TP1 = entry +/- 0.15 % (tick-rounded away from entry), (2) trade-close records /
 # alerts carry the WHOLE trade (a closing leg userTrades has not returned yet comes from the stream fill; the exit
 # reason comes from the order that closed it, not a "stop_loss" default) with net + R first, then each leg,
-# (3) peak-drawdown entry guard: equity (incl. uPnL) < 80 % of the persisted peak -> new entries blocked, one alert,
+# (3) peak-drawdown entry guard: equity (incl. uPnL) < 80 % of the persisted WALLET peak (TA 2026-11-04: uPnL never raises the peak) -> new entries blocked, one alert,
 # open orders untouched, survives restarts, cleared only by the team with tools/clear_peak_halt.py (not `resume`). (4) daily reconciliation tool. Offline only.
 import json
 from decimal import Decimal
@@ -148,15 +148,52 @@ def test_peak_init_is_max_of_current_and_floor(offline):
     assert D(eng.meta["peak_equity"]) == D("150")      # a peak only ratchets up
 
 
-def test_peak_includes_unrealized(offline):
+def test_peak_is_wallet_only_unrealized_profit_never_raises_it(offline):
+    # TA 2026-11-04: peak = max(stored peak, WALLET) -- an open position in profit does not raise the peak
     offline.inner.wallet = D("200")
     eng = _guard_engine(offline)
     j = open_pos(offline, eng, side=1)
     eng.reconcile()
     p0 = D(eng.meta["peak_equity"])
+    assert p0 == D("200")                                     # wallet at start (entry fee since)
     offline.inner.set_price(DOGE, D(offline.inner.price[DOGE]) * D("1.004"))
     eng.reconcile()
-    assert D(eng.meta["peak_equity"]) > p0 and D(eng.meta["peak_equity"]) == D(eng.meta["equity"])
+    assert D(eng.meta["equity"]) > D(eng.meta["wallet"])      # in profit
+    assert D(eng.meta["peak_equity"]) == p0                   # peak unchanged by uPnL
+    offline.inner.wallet += D("5")                            # realised gain raises it
+    eng.reconcile()
+    assert D(eng.meta["peak_equity"]) == D(eng.meta["wallet"]) > p0
+
+
+def test_peak_trigger_still_on_equity_including_unrealized_loss(offline):
+    # trigger unchanged: EQUITY (wallet + uPnL) < peak x 0.80 -> wallet above the line, equity below -> blocked
+    offline.inner.wallet = D("134.294")
+    eng = _guard_engine(offline)
+    eng.reconcile()
+    assert D(eng.meta["peak_equity"]) == D("134.294")
+    offline.inner.wallet = D("110")                           # wallet above the 107.4352 line
+    eng.reconcile()
+    assert not eng.meta.get("peak_dd")
+    eng.meta["equity"] = "107.40"                              # equity below the line (uPnL loss)
+    eng._peak_guard()
+    pd = eng.meta["peak_dd"]
+    assert D(pd["peak"]) == D("134.294") and D(pd["line"]) == D("134.294") * D("0.80") and D(pd["equity"]) == D("107.40")
+
+
+def test_set_peak_survives_restart(offline):
+    # deploy step: stored peak corrected to 134.294 with the service stopped -> after a restart it stays 134.294
+    offline.inner.wallet = D("118.38331243")
+    eng = _guard_engine(offline)
+    eng.meta["peak_equity"] = "138.86412490"
+    eng.save()
+    st = json.load(open(offline.store_path))
+    st["meta"]["peak_equity"] = "134.294"
+    json.dump(st, open(offline.store_path, "w"))
+    eng2 = _guard_engine(offline)
+    eng2.reconcile()
+    eng2.reconcile()
+    assert D(eng2.meta["peak_equity"]) == D("134.294") and not eng2.meta.get("peak_dd")
+    assert D(eng2.meta["peak_equity"]) * D("0.80") == D("107.4352")
 
 
 def test_peak_dd_blocks_new_entries_only_one_alert_orders_untouched_survives_restart(offline, tmp_path):
@@ -227,7 +264,7 @@ def test_clear_peak_halt_tool_reset_peak_audit_and_restart(offline, tmp_path, mo
     assert json.load(open(st))["meta"].get("peak_dd")
     assert cph.main(["--state", st, "--by", "Developer (TA ok)", "--unit", "", "--reset-peak"]) == 0
     m = json.load(open(st))["meta"]
-    assert "peak_dd" not in m and D(m["peak_equity"]) == D("150")
+    assert "peak_dd" not in m and D(m["peak_equity"]) == D(m["wallet"]) == D("150")
     (a,) = m["peak_dd_clears"]
     assert a["by"] == "Developer (TA ok)" and a["sudo_user"] == "ops" and a["t_ms"] > 0 and D(a["peak_after"]) == D("150")
     assert json.loads((tmp_path / "peak_dd_clears.jsonl").read_text())["by"] == "Developer (TA ok)"

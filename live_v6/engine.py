@@ -129,9 +129,10 @@ class Settings:
     tp1_frac: float = 0.5
     tp2_r: float = 2.0
     be_offset: float = 0.001            # after TP1: SL → entry ± be_offset (live 0.15 %, TA 2026-11-03), safe-side tick
-    # peak-drawdown entry guard (TA 2026-11-03): equity (wallet + uPnL) < peak × peak_dd_guard → NEW entries blocked,
+    # peak-drawdown entry guard (TA 2026-11-03/04): equity (wallet + uPnL) < peak × peak_dd_guard → NEW entries blocked;
+    # the peak (meta.peak_equity, name kept for state compatibility) ratchets on the WALLET only — uPnL never raises it;
     # one 🚨, open positions / SL / TP untouched; peak + halt persisted; cleared only by the team with
-    # live_v6/tools/clear_peak_halt.py (service stopped; audit-logged; optional peak reset to the current equity)
+    # live_v6/tools/clear_peak_halt.py (service stopped; audit-logged; optional peak reset to the current wallet)
     peak_dd_guard: float | None = None
     peak_dd_init: float = 0.0           # peak floor at first run (live: real max seen, 132.88 USDT wallet 11/02)
     max_hold_s: float = 0               # > 0: reduceOnly market close after this long (24 h live)
@@ -291,8 +292,9 @@ class V6Engine:
         g = self.cfg.peak_dd_guard
         if not g or self.meta.get("equity") is None:
             return
-        eq = D(self.meta["equity"])
-        pk = max(D(self.meta.get("peak_equity") or str(self.cfg.peak_dd_init)), eq)
+        eq = D(self.meta["equity"])                  # trigger: equity (wallet + uPnL) < peak × guard
+        w = D(self.meta.get("wallet") or self.meta["equity"])
+        pk = max(D(self.meta.get("peak_equity") or str(self.cfg.peak_dd_init)), w)   # TA 2026-11-04: peak = WALLET only
         if self.meta.get("peak_equity") is None or pk != D(self.meta["peak_equity"]):
             self.meta["peak_equity"] = str(pk)
             self.save()

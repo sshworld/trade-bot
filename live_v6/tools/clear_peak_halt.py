@@ -8,7 +8,7 @@ or redeploy needed.
 
 --state      default /var/lib/live_v6-live/mainnet.json
 --by         required: who clears it (written to the audit log with the time and the sudo user)
---reset-peak set peak_equity to the last recorded equity (otherwise the old peak stays and, if equity is still under
+--reset-peak set peak_equity to the last recorded wallet (otherwise the old peak stays and, if equity is still under
              80 % of it, the next reconcile halts again with a new alert)
 --unit       refuse while this systemd unit is active (default live_v6-live; a running engine would overwrite the file)
 --dry-run    print what would change, write nothing
@@ -41,8 +41,8 @@ def clear(st, by, reset_peak, now_ms):
     ent = {"t_ms": now_ms, "by": by, "sudo_user": os.environ.get("SUDO_USER") or getpass.getuser(), "cleared": pd,
            "equity": m.get("equity"), "peak_before": m.get("peak_equity"), "reset_peak": bool(reset_peak)}
     m.pop("peak_dd")
-    if reset_peak and m.get("equity") is not None:
-        m["peak_equity"] = str(Decimal(str(m["equity"])))
+    if reset_peak and (m.get("wallet") or m.get("equity")) is not None:   # peak is wallet-based (TA 2026-11-04)
+        m["peak_equity"] = str(Decimal(str(m.get("wallet") or m["equity"])))
     ent["peak_after"] = m.get("peak_equity")
     m.setdefault("peak_dd_clears", []).append(ent)
     del m["peak_dd_clears"][:-50]
