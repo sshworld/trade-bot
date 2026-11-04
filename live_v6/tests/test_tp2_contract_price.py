@@ -6,7 +6,7 @@ import httpx
 
 from live_v6.exchange import BinanceREST, TESTNET_URL
 
-from .test_qrmtf import exit_engine, open_pos
+from .test_qrmtf import legacy_engine as exit_engine, open_pos   # pre-E exits (TP2 / plain BE)
 
 DOGE = "DOGEUSDT"
 

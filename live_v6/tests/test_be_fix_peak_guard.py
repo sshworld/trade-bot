@@ -11,7 +11,7 @@ from live_v6.runner import live_settings
 from live_v6.tradelog import EventLog
 
 from .conftest import unique_T
-from .test_qrmtf import exit_engine, open_pos
+from .test_qrmtf import legacy_engine as exit_engine, open_pos   # pre-E exits (TP2 / plain BE)
 from .test_ptp_short import _fill, _journal
 
 SOL, DOGE = "SOLUSDT", "DOGEUSDT"
@@ -319,7 +319,7 @@ def test_reconcile_daily_gap_and_timing_split():
 
 def test_existing_live_be_stop_kept_no_duplicate_after_upgrade(offline):
     # a position whose BE stop the old build (entry + 0.10 %) already placed: the new build (0.15 %) leaves it as-is
-    from .test_qrmtf import exit_engine as ee
+    from .test_qrmtf import legacy_engine as ee   # pre-E build upgrade (E adoption: test_chandelier_e)
     from decimal import Decimal as Dec
     eng = ee(offline, be_offset=0.001)
     open_pos(offline, eng)

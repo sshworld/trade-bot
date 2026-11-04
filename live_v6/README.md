@@ -145,6 +145,18 @@ optionally rebases the peak to the last recorded wallet (without `--reset-peak` 
 still under the line), and logs who / when / sudo user / old halt / peak before-after in `meta.peak_dd_clears` and
 `/var/lib/live_v6-live/peak_dd_clears.jsonl`.
 
+**E chandelier exits (TA 2026-11-04, replay variant E; qrmtf `trail_atr_k=2.0`, `be_fee=0.0005`, `be_offset=0.0015`,
+`tp2_r=None`):** from entry the exchange SL trails `tighter(SL, best ∓ 2·ATR14)` — ATR14 = Wilder ATR of the last CLOSED 1h
+bar (one 150-bar read per hour, cached in the journal), best = the 1m high (long) / low (short) extreme since entry, read
+once per closed minute (effective from the next candle). Never looser than the current / initial SL. TP1 +1R 50 %
+unchanged; after TP1 SL = tighter(SL, be·(1 ± 0.0015)) with be = fee-inclusive breakeven entry·(1±f)/(1∓f), f = 0.0005
+(≈ entry ± 0.25 %). No TP2 order. A move = new reduceOnly STOP_MARKET (MARK_PRICE, qty = position) placed and read back,
+THEN the old stop cancelled (never zero protection; a brief overlap of two reduceOnly stops). Mark already through the
+new level → reduceOnly market close (`trail_stop_breach`). `best`, `trail_t`, `atr`, `atr_h`, `trailed` persist in the
+journal, so a restart catches up from the 1m bars and the SL never moves back. Positions opened by an earlier build are
+adopted: best seeded from entry + catch-up, TP2 cancelled, an old BE stop tightened to the fee-BE floor. 24 h time exit,
+daily −10 % halt, dir cap and peak guard unchanged. Exit label `trail_stop` (추적 손절).
+
 **Same-direction cap (TA PASS 2026-11-03 23:26 KST, qrmtf `max_same_side=2`):** at most 2 open positions on one side (long
 or short); the total cap stays `max_positions=3`. Gate order: max_positions → dir_cap → risk caps → margin, at both the first
 check and the final check right before the order. The count comes from the fresh exchange positions read (state-file and

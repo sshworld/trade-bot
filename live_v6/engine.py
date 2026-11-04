@@ -57,6 +57,7 @@ MODEL_EXITS = ("signal_exit", "model_sync", "time_exit")   # strategy-driven exi
 REASON_KO = {"stop_loss": "손절", "signal_exit": "M20 채널 청산", "model_sync": "모델 동기화 청산", "stop_breach": "손절 미작동 정리",
              "sl_failed": "손절 등록 실패 정리", "stop_lost_breach": "손절 주문 소실 후 손절가 돌파 정리", "emergency": "비상 전체 정리", "dust_entry": "소액 부분 체결 정리",
              "time_exit": "24시간 보유 청산", "take_profit": "익절", "be_stop": "1차 익절 후 본절", "be_stop_breach": "본절 손절가 돌파 정리",
+             "trail_stop": "추적 손절", "trail_stop_breach": "추적 손절가 돌파 정리",
              "daily_loss_halt": "일일 손실 한도 전체 정리"}
 
 # entry-blocking reasons (transient; cleared automatically when the condition clears)
@@ -127,8 +128,14 @@ class Settings:
     take_profit: bool = False           # TP1 = +tp1_r·R for tp1_frac of the qty, TP2 = +tp2_r·R for the rest (reduceOnly)
     tp1_r: float = 1.0
     tp1_frac: float = 0.5
-    tp2_r: float = 2.0
-    be_offset: float = 0.001            # after TP1: SL → entry ± be_offset (live 0.15 %, TA 2026-11-03), safe-side tick
+    tp2_r: float | None = 2.0           # None/0 → no TP2 order (E chandelier, TA 2026-11-04): the trailing SL exits the rest
+    be_offset: float = 0.001            # after TP1: SL → be ± be_offset (live 0.15 %, TA 2026-11-03), safe-side tick
+    be_fee: float | None = None         # None: be = entry; f: be = fee-inclusive breakeven entry·(1±f)/(1∓f) (E: f = 0.0005)
+    # E chandelier (TA 2026-11-04, replay variant E): from entry, SL = tighter(SL, best ∓ trail_atr_k·ATR14) where ATR14 =
+    # Wilder ATR of the last CLOSED 1h bar and best = the 1m high (long) / low (short) extreme since entry, evaluated once
+    # per closed minute (effective from the next candle); never looser. Replace = new reduceOnly STOP first, read back,
+    # then the old stop cancelled. 0 = off.
+    trail_atr_k: float = 0.0
     # peak-drawdown entry guard (TA 2026-11-03/04): equity (wallet + uPnL) < peak × peak_dd_guard → NEW entries blocked;
     # the peak (meta.peak_equity, name kept for state compatibility) ratchets on the WALLET only — uPnL never raises it;
     # one 🚨, open positions / SL / TP untouched; peak + halt persisted; cleared only by the team with
@@ -145,7 +152,7 @@ class Settings:
 
 LOG_INTENT_KEYS = ("signal_px", "path", "risk_pct_used", "order_ms", "prearm_ms", "open_risk_after", "same_side_open")
 EARLYCUT_MS = 4 * 3600_000                                  # record-only early-cut flag window (TA 2026-11-02)
-EXIT_KIND = {"stop_loss": "exchange_close", "be_stop": "exchange_close", "take_profit": "exchange_close", "signal_exit": "exit_rule", "model_sync": "exit_rule", "daily_loss_halt": "halt"}   # live log exit_reason
+EXIT_KIND = {"stop_loss": "exchange_close", "be_stop": "exchange_close", "trail_stop": "exchange_close", "take_profit": "exchange_close", "signal_exit": "exit_rule", "model_sync": "exit_rule", "daily_loss_halt": "halt"}   # live log exit_reason
 
 
 class V6Engine:
@@ -193,6 +200,7 @@ class V6Engine:
         self._ledger_strikes = 0
         self._bar_first_try: dict[int, float] = {}
         self._cache: dict = {}
+        self._trail_try: dict = {}           # sym → last closed 1m bar tried (E trailing: one try per minute)
         self._own_cancels: dict[str, float] = {}           # client ids WE cancelled → not a "stop lost" event
         self._queued: dict[str, str] = {}                  # 418 ban: sym → "stop" | "close", sent the moment it ends
         self._r3_fail: dict[str, int] = {}                 # TA R3: flat coin → reconciles in a row with a failed bot cancel
@@ -991,7 +999,8 @@ class V6Engine:
         if self.cfg.take_profit:
             self._place_tps(sym, j)
         tp = j.get("tp") or {}
-        part += f"\n익절 TP1 {tp['tp1']} ({tp['q1']}) · TP2 {tp['tp2']} ({tp['q2']})" if tp.get("tp1") else ""
+        part += (f"\n익절 TP1 {tp['tp1']} ({tp['q1']})" + (f" · TP2 {tp['tp2']} ({tp['q2']})" if tp.get("tp2") else " · 이후 추적 손절")
+                 if tp.get("tp1") else "")
         self.notify(f"🟢 진입 {sym} {'롱' if side > 0 else '숏'} · 수량 {j['qty']} · 체결가 {j['entry_px']}{part}\n"
                      f"손절 {j['stop_px']} · {sz.lev}x · 위험 {D(j['risk_usdt']):.4f} USDT ({act}%)",
                      kind="entry", event_ms=intent.get("model_id") or intent.get("T"))
@@ -1150,7 +1159,7 @@ class V6Engine:
         if q1 < rules.order_min_qty or q1 >= qty or (qty - q1) < rules.order_min_qty:
             q1 = Decimal(0)                                        # cannot split → TP2 only for the whole qty
         return (rules.price(e + s * r * D(str(self.cfg.tp1_r)), rnd), q1,
-                rules.price(e + s * r * D(str(self.cfg.tp2_r)), rnd), qty - q1)
+                rules.price(e + s * r * D(str(self.cfg.tp2_r)), rnd) if self.cfg.tp2_r else None, qty - q1)
 
     def _place_tp(self, sym, j, which, px, qty) -> bool:
         """reduceOnly TAKE_PROFIT_MARKET. Price already beyond it → reduceOnly market for that qty. TP1 and TP2 trigger
@@ -1180,12 +1189,13 @@ class V6Engine:
         except Exception as e:  # noqa: BLE001  TPs are profit-taking only; the stop protects
             log.error("%s TP levels failed: %r", sym, e)
             return
-        j["tp"] = {"tp1": str(tp1) if q1 > 0 else None, "q1": str(q1), "tp2": str(tp2), "q2": str(q2)}
-        j["tp1_done"] = q1 <= 0
+        j["tp"] = {"tp1": str(tp1) if q1 > 0 else None, "q1": str(q1), "tp2": str(tp2) if tp2 else None, "q2": str(q2)}
+        j["tp1_done"] = q1 <= 0                                    # E, cannot split: no TP at all, the trailing SL exits
         self.save()
         if q1 > 0:
             self._place_tp(sym, j, "t1", tp1, q1)
-        self._place_tp(sym, j, "t2", tp2, q2)
+        if tp2:
+            self._place_tp(sym, j, "t2", tp2, q2)
 
     def _manage_tps(self, sym, j, amt, orders, mk):
         """Every reconcile: missing TP orders re-placed; after TP1 the stop is moved to breakeven (new first)."""
@@ -1202,7 +1212,17 @@ class V6Engine:
                     return
         if not j.get("tp1_done") and f"{j['cid']}t1" not in cids and tp.get("tp1"):
             self._place_tp(sym, j, "t1", D(tp["tp1"]), D(tp["q1"]))
-        if f"{j['cid']}t2" not in cids:
+        if tp.get("tp2") and not self.cfg.tp2_r:                   # adopted pre-E position: TP2 cancelled (E has none)
+            o2 = next((o for o in orders if o["client_id"] == f"{j['cid']}t2"), None)
+            try:
+                if o2 is not None:
+                    self.x("cancel", sym, o2)
+                tp["tp2"] = None
+                self.save()
+                log.info("%s TP2 %s (E: no TP2, trailing SL)", sym, "cancelled" if o2 else "dropped (not open)")
+            except ExchangeError as e:
+                log.error("%s TP2 cancel failed (retried next reconcile): %s", sym, e)
+        elif tp.get("tp2") and f"{j['cid']}t2" not in cids:
             self._place_tp(sym, j, "t2", D(tp["tp2"]), abs(amt) if j.get("tp1_done") else D(tp["q2"]))
         if j.get("tp1_done") and tp.get("tp1") and not j.get("be_done"):
             self._move_stop_be(sym, j, amt, orders, mk)
@@ -1243,7 +1263,8 @@ class V6Engine:
             return False
         log.info("%s exit fill from order status: %s → position %s", sym, filled, amt)
         if "stop" in filled or "tp2" in filled:
-            j["exit_fill"] = ("be_stop" if j.get("be_done") else "stop_loss") if "stop" in filled else "take_profit"
+            j["exit_fill"] = ("trail_stop" if j.get("trailed") else "be_stop" if j.get("be_done") else "stop_loss") \
+                if "stop" in filled else "take_profit"
             self.save()
             if amt != 0 and "tp1" not in filled:
                 self._dirty = True
@@ -1254,53 +1275,132 @@ class V6Engine:
             self.notify(f"🔵 {sym} TP1 체결 {filled['tp1']} → 남은 수량 {abs(amt)} · 손절을 본절로 이동", kind="exit")
         return amt, orders, filled
 
-    def _move_stop_be(self, sym, j, amt, orders, mk=None):
+    def _be_target(self, sym, j) -> Decimal:
+        """After TP1: be ± be_offset (safe-side tick); be = entry, or with be_fee the fee-inclusive breakeven."""
         s, e = int(j.get("side", 1)), D(j["entry_px"])
-        tgt = self.rules[sym].price(e * (1 + s * D(str(self.cfg.be_offset))), "up" if s > 0 else "down")
-        if s * (tgt - D(j["stop_px"])) <= 0:
+        if self.cfg.be_fee is not None:
+            f = D(str(self.cfg.be_fee))
+            e = e * (1 + f) / (1 - f) if s > 0 else e * (1 - f) / (1 + f)
+        return self.rules[sym].price(e * (1 + s * D(str(self.cfg.be_offset))), "up" if s > 0 else "down")
+
+    def _move_stop_be(self, sym, j, amt, orders, mk=None):  # noqa: ARG002  (orders: kept for callers; read-back used)
+        tgt = self._be_target(sym, j)
+        if int(j.get("side", 1)) * (tgt - D(j["stop_px"])) <= 0:
             j["be_done"] = True                                   # stop already at/above breakeven
             self.save()
             return
-        if mk is not None and s * (D(mk) - tgt) <= 0:             # price already at/through breakeven: a stop there would
-            log.warning("%s mark %s already beyond BE %s → close remainder", sym, mk, tgt)   # fire at once → close now
-            self.close(sym, "be_stop_breach")                     # (old stop stays until flat; _after_flat cleans up)
-            return
+        if self._replace_stop(sym, j, amt, tgt, mk, "be") == "ok":
+            j["be_done"] = True
+            self.save()
+            self.notify(f"🛡️ {sym} 손절 본절 이동 {tgt} (진입 {j['entry_px']})", kind="exit")
+
+    def _replace_stop(self, sym, j, amt, tgt, mk, why) -> str:
+        """Move our stop to `tgt`: NEW reduceOnly STOP (qty = position) first, read back, THEN every other STOP of ours
+        cancelled — never a moment without a stop; at most a short overlap of two (both reduceOnly, only one can fill
+        the position). Mark already at/through tgt → reduceOnly market close. Returns 'ok' | 'closed' | 'pending'
+        (not confirmed: the old stop stays, one 🚨, retried by reconcile)."""
+        s, breach = int(j.get("side", 1)), ("be_stop_breach" if why == "be" else "trail_stop_breach")
+        if mk is not None and s * (D(mk) - tgt) <= 0:             # a stop there would fire at once → close now
+            log.warning("%s mark %s already beyond %s stop %s → close remainder", sym, mk, why, tgt)
+            self.close(sym, breach)                               # (old stop stays until flat; _after_flat cleans up)
+            return "closed"
         seq = int(j.get("stop_seq", 0))
         j["stop_seq"] = seq + 1
         self.save()
         cid = f"{j['cid']}s{seq}"
         try:                                                      # NEW stop first (qty: one closePosition per side)
             self.x("stop", sym, self._cs(j), tgt, cid, qty=abs(amt))
-        except WouldTrigger:                                      # price already back through breakeven → close now
-            self.close(sym, "be_stop_breach")
-            return
+        except WouldTrigger:                                      # price already back through the level → close now
+            self.close(sym, breach)
+            return "closed"
         except ExchangeError as e:
-            log.error("%s BE stop placement: %s → read-back", sym, e)
+            log.error("%s %s stop placement: %s → read-back", sym, why, e)
         try:
-            new = next((o for o in self.x("open_orders", sym) if o["client_id"] == cid), None)
+            oo = self.x("open_orders", sym)
+            new = next((o for o in oo if o["client_id"] == cid), None)
         except ExchangeError:
-            new = None
+            oo, new = [], None
         if new is None:
             try:                                                  # accepted but fired at once (instant fire)?
                 flat = self.x("positions", self.cfg.symbols)[sym]["amt"] == 0
             except ExchangeError:
                 flat = False
             if flat:                                              # remainder already gone → cancel old stop + TPs, record
-                self.close(sym, "be_stop_breach")
-                return
-                                                                  # not confirmed → old stop stays, 🚨, retried
-            if not j.get("be_alerted"):
-                j["be_alerted"] = True
-                self.alert(f"본절 손절 이동 미확인 — 기존 손절 유지 ({sym})", f"목표 {tgt} · 기존 {j['stop_px']} · 대조 루프가 재시도")
+                self.close(sym, breach)
+                return "closed"
+            if not j.get(f"{why}_alerted"):                       # not confirmed → old stop stays, 🚨, retried
+                j[f"{why}_alerted"] = True
+                self.alert(f"{'본절' if why == 'be' else '추적'} 손절 이동 미확인 — 기존 손절 유지 ({sym})",
+                           f"목표 {tgt} · 기존 {j['stop_px']} · 대조 루프가 재시도")
             self.save()
-            return
-        j.update(stop_px=str(tgt), stop_cid=cid, be_done=True)
+            return "pending"
+        j.update(stop_px=str(tgt), stop_cid=cid)
+        j.pop(f"{why}_alerted", None)
+        if why == "trail":
+            j["trailed"] = True
         self.save()
-        for o in orders:                                          # THEN cancel the old stop(s) of ours
+        for o in oo:                                              # THEN cancel the old stop(s) of ours (fresh read-back)
             if (o["client_id"] != cid and (o["type"] or "").startswith("STOP")
                     and str(o["client_id"]).startswith(self.cfg.cid_prefix)):
                 self._cancel_quiet(sym, o)
-        self.notify(f"🛡️ {sym} 손절 본절 이동 {tgt} (진입 {e})", kind="exit")
+        return "ok"
+
+    def _trail_atr(self, sym, j) -> Decimal | None:
+        """ATR14 (Wilder) of the last CLOSED 1h bar, cached in the journal per hour (one 150-bar read per hour)."""
+        h_last = self.now_ms() // 3_600_000 * 3_600_000 - 3_600_000
+        if j.get("atr") and int(j.get("atr_h") or 0) >= h_last:
+            return D(j["atr"])
+        try:
+            bars = self.closed_bars(sym, "1h", 150)
+        except ExchangeError as e:
+            log.error("%s 1h klines for ATR: %s (previous ATR kept)", sym, e)
+            bars = []
+        if len(bars) >= 15:
+            from .strategies.qrmtf import atr14
+            j.update(atr=str(D(str(atr14([{k: float(b[k]) for k in ("high", "low", "close")} for b in bars])))),
+                     atr_h=int(bars[-1]["open_time"]))
+            self.save()
+        return D(j["atr"]) if j.get("atr") else None
+
+    def _trail(self, sym, j, amt, mk):
+        """E chandelier, once per closed 1m bar: best ← extreme of the closed 1m bars since entry (catch-up after a
+        restart / adoption from j['trail_t']); SL → tighter(SL, best ∓ k·ATR14, after TP1 also the fee-BE floor)."""
+        k = self.cfg.trail_atr_k
+        if not k:
+            return
+        last = self.now_ms() // 60_000 * 60_000 - 60_000         # newest closed 1m bar
+        if self._trail_try.get(sym) == last:                      # query-light: one try per symbol per minute
+            return
+        self._trail_try[sym] = last
+        s = int(j.get("side", 1))
+        o0 = int(j.get("opened_ms") or self.now_ms()) // 60_000 * 60_000
+        done = int(j.get("trail_t") or (o0 - 60_000))
+        best = D(j.get("best") or j["entry_px"])
+        if done < last:
+            try:
+                bars = [b for b in self.closed_bars(sym, "1m", min(1500, (last - done) // 60_000 + 2))
+                        if done < int(b["open_time"]) <= last and int(b["open_time"]) >= o0]
+            except ExchangeError as e:
+                log.error("%s 1m klines for trailing: %s (retried next minute)", sym, e)
+                bars = []
+            for b in bars:
+                best = max(best, D(str(b["high"]))) if s > 0 else min(best, D(str(b["low"])))
+            if bars:
+                j.update(best=str(best), trail_t=int(bars[-1]["open_time"]))
+                self.save()
+        stop = D(j["stop_px"])
+        cands = []
+        atr = self._trail_atr(sym, j)
+        if atr:
+            cands.append(self.rules[sym].price(best - s * D(str(k)) * atr, "down" if s > 0 else "up"))
+        if self.cfg.be_fee is not None and j.get("tp1_done") and (j.get("tp") or {}).get("tp1"):
+            cands.append(self._be_target(sym, j))                 # adopted pre-E BE stop → tightened to the fee-BE floor
+        tgt = stop
+        for c in cands:
+            tgt = max(tgt, c) if s > 0 else min(tgt, c)
+        if s * (tgt - stop) > 0:
+            r = self._replace_stop(sym, j, amt, tgt, mk, "trail")
+            log.info("%s trail stop %s → %s (best %s, ATR %s): %s", sym, stop, tgt, best, atr, r)
 
     def ensure_stop(self, sym, amt: Decimal, stop_px: Decimal, cid_base: str) -> str:
         """§8c L1: make sure a protective stop is CONFIRMED on the exchange, re-placing up to stop_attempts times
@@ -1755,6 +1855,8 @@ class V6Engine:
             last_suf = suf(max(exit_legs, key=lambda g: g["time"] or 0)["order_id"])
             if last_suf.startswith("t"):
                 reason = "take_profit"
+            elif j.get("trailed") and (last_suf.startswith("s") or not last_suf):
+                reason = "trail_stop"       # after a trailing move the only stop left is the trailed stop
             elif j.get("be_done") and (last_suf.startswith("s") or not last_suf):
                 reason = "be_stop"          # after the BE move the only stop left is the BE stop (no stream: algo fill cid unknown)
         rec = {"sym": sym, "cid": j["cid"], "reason": reason, "qty": str(eq), "entry_px": j["entry_px"], "exit_px": str(xpx),
@@ -1786,7 +1888,7 @@ class V6Engine:
         for x in sorted(exit_legs, key=lambda g: g["time"] or 0):
             k = x["order_id"]
             sx = suf(k)
-            name = lab.get(sx) or ("본절" if sx.startswith("s") and j.get("be_done") else "손절" if sx.startswith("s") else "청산")
+            name = lab.get(sx) or ("추적손절" if sx.startswith("s") and j.get("trailed") else "본절" if sx.startswith("s") and j.get("be_done") else "손절" if sx.startswith("s") else "청산")
             fx = [f for f in exit_fills if str(f["order_id"]) == k]
             leg_lines.append(f"• {name} {x['qty']}@{x['price']} 손익 {sum((f['realized_pnl'] for f in fx), Decimal(0)):+.4f}"
                              f" · 수수료 {sum((f['commission'] for f in fx), Decimal(0)):.4f}")
@@ -1925,6 +2027,8 @@ class V6Engine:
                     self._cancel_quiet(sym, o)                   # leftover pre-arm / old stop, the bot's stop is live
             if prot and j.get("tp") and not j.get("closing"):
                 self._manage_tps(sym, j, amt, orders, mk)
+            if prot and self.cfg.trail_atr_k and sym in self.st["pos"] and not self.st["pos"][sym].get("closing"):
+                self._trail(sym, self.st["pos"][sym], amt, mk)
         if mismatch:
             self._consistent = 0
             self.block(MISMATCH, "; ".join(mismatch), "대조 불일치 — 신규 진입 중단")

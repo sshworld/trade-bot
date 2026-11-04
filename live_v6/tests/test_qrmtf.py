@@ -183,7 +183,7 @@ def test_live_settings_qrmtf():
     c = live_settings("qrmtf")
     assert (c.sizing.risk_pct, c.sizing.portfolio_risk_cap, c.sizing.margin_cap, c.sizing.max_leverage) == (4.0, 0.12, 0.25, 10)
     assert c.max_positions == 3 and c.enable_short and c.take_profit and c.max_hold_s == 24 * 3600
-    assert (c.tp1_r, c.tp1_frac, c.tp2_r, c.be_offset) == (1.0, 0.5, 2.0, 0.0015)
+    assert (c.tp1_r, c.tp1_frac, c.tp2_r, c.be_offset, c.be_fee, c.trail_atr_k) == (1.0, 0.5, None, 0.0015, 0.0005, 2.0)   # E
     assert c.startup_leverage == 10 and c.halt_fraction is None and c.daily_loss_halt == 0.10 and c.daily_halt_s == 24 * 3600   # -25 % total halt removed
     assert c.bar_stale_s == 180.0
 
@@ -222,7 +222,7 @@ def test_long_entry_on_fast_flip_with_big_and_mid(offline):
     assert set(rec["tf"]) == set(Q.SCORED) and rec["tf"]["1h"] == {"s1": 1, "s2": 1, "s3": 1, "s4": 1, "contrib": 14.0, "bars": 150}
     assert "total" in rec and rec["big_tfs"] == "1h+4h+1d" and rec["d1_s1"] == "px_ema50"
     oo = offline.inner.open_orders(DOGE)
-    assert len([o for o in oo if o["type"] == "TAKE_PROFIT_MARKET"]) == 2
+    assert len([o for o in oo if o["type"] == "TAKE_PROFIT_MARKET"]) == 1   # E (TA 2026-11-04): TP1 only, no TP2
     assert len([o for o in oo if o["type"] == "STOP_MARKET"]) == 1
     lines = [json.loads(x) for x in (offline.store_path.parent / "qrmtf_signals.jsonl").read_text().splitlines()]
     assert lines[-1]["kind"] == "entry" and lines[-1]["sym"] == DOGE
@@ -346,6 +346,14 @@ def test_rest_weight_per_minute_steady_state(offline):
 
 
 # ───────────── exits / sizing (kept from 2de6eca; entry injected directly) ─────────────
+PRE_E = dict(tp2_r=2.0, be_fee=None, trail_atr_k=0.0)   # the pre-E exit config (TP2 +2R, BE entry ± 0.15 %, no trailing)
+
+
+def legacy_engine(b, **kw):
+    """Engine on the pre-E exits: the TP2 / plain-BE code paths stay supported (and are tested) for adopted positions."""
+    return exit_engine(b, **{**PRE_E, **kw})
+
+
 def exit_engine(b, **kw):
     cfg = live_settings("qrmtf").__dict__.copy()
     cfg.pop("symbols"); cfg.pop("entry_order")
@@ -378,7 +386,7 @@ def test_margin_cap_caps_qty_risk_below_4pct(offline):
 
 
 def test_long_entry_exchange_sl_and_tps(offline):
-    eng = exit_engine(offline)
+    eng = legacy_engine(offline)
     j = open_pos(offline, eng)
     amt = offline.amt(DOGE)
     e, stp = Decimal(j["entry_px"]), Decimal(j["stop_px"])
@@ -426,7 +434,7 @@ def _tp1_then_be(b, eng, side):
 
 
 def test_long_tp1_be_then_tp2_zero_residual(offline):
-    eng = exit_engine(offline)
+    eng = legacy_engine(offline)
     open_pos(offline, eng)
     j = _tp1_then_be(offline, eng, 1)
     offline.inner.set_price(DOGE, Decimal(j["tp"]["tp2"]))
@@ -437,7 +445,7 @@ def test_long_tp1_be_then_tp2_zero_residual(offline):
 
 
 def test_short_tp1_be_then_be_stop_zero_residual(offline):
-    eng = exit_engine(offline)
+    eng = legacy_engine(offline)
     open_pos(offline, eng, -1)
     j = _tp1_then_be(offline, eng, -1)
     offline.inner.set_price(DOGE, Decimal(j["stop_px"]))
@@ -447,7 +455,7 @@ def test_short_tp1_be_then_be_stop_zero_residual(offline):
 
 
 def test_be_stop_not_confirmed_keeps_old_and_alerts(offline):
-    eng = exit_engine(offline)
+    eng = legacy_engine(offline)
     j = open_pos(offline, eng)
     old = j["stop_px"]
     offline.inner.set_price(DOGE, Decimal(j["tp"]["tp1"]))
@@ -582,7 +590,7 @@ def test_stop_fills_between_position_and_order_read(offline, side):
 
 @pytest.mark.parametrize("side", [1, -1])
 def test_tp2_fills_between_position_and_order_read(offline, side):
-    eng = exit_engine(offline)
+    eng = legacy_engine(offline)
     open_pos(offline, eng, side)
     j = _tp1_then_be(offline, eng, side)
     calls0 = len(offline.fx.calls)
@@ -596,7 +604,7 @@ def test_tp2_fills_between_position_and_order_read(offline, side):
 
 @pytest.mark.parametrize("side", [1, -1])
 def test_be_stop_fills_between_position_and_order_read(offline, side):
-    eng = exit_engine(offline)
+    eng = legacy_engine(offline)
     open_pos(offline, eng, side)
     j = _tp1_then_be(offline, eng, side)
     calls0 = len(offline.fx.calls)
