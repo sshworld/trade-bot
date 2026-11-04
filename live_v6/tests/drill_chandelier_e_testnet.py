@@ -191,13 +191,17 @@ def main():
         ex_before = sample(eng, "pre-restart")
         eng, tg = make_engine("E (restart)", True, tp1_r)
         eng.startup()
+        loaded = {k: (eng.st["pos"].get(SYM) or {}).get(k) for k in before}   # restored from the state file, pre-reconcile
         eng.reconcile()
         j2 = eng.st["pos"].get(SYM) or {}
         after = {k: j2.get(k) for k in before}
         ex_after = sample(eng, "post-restart")
-        step("C_restart_restored", j2 and after["best"] == before["best"] and SIDE * (D(after["stop_px"]) - D(before["stop_px"])) >= 0
+        # restored == saved exactly; after the first reconcile best may only improve (catch-up of newly closed 1m bars)
+        # and the stop may only tighten
+        step("C_restart_restored", bool(j2) and loaded == before and before["best"] is not None and after["best"] is not None
+             and SIDE * (D(after["best"]) - D(before["best"])) >= 0 and SIDE * (D(after["stop_px"]) - D(before["stop_px"])) >= 0
              and ex_after["n_stop"] == 1 and SIDE * (D(ex_after["stops"][0][1]) - D(ex_before["stops"][0][1])) >= 0,
-             before=before, after=after, ex_before=ex_before["stops"], ex_after=ex_after["stops"])
+             before=before, loaded=loaded, after=after, ex_before=ex_before["stops"], ex_after=ex_after["stops"])
     be_t = ru.price(e * (1 + SIDE * D("0.0015")), "up" if SIDE > 0 else "down")
     hit = watch(eng, "to_tp1", lambda: SYM not in eng.st["pos"] or (bool(eng.st["pos"][SYM].get("tp1_done"))
                                                                     and SIDE * (D(eng.st["pos"][SYM]["stop_px"]) - be_t) >= 0), W_TP1)
