@@ -54,6 +54,66 @@ def test_no_cleanup_after_newer_nonzero_position_read(offline, monkeypatch, sche
     assert offline.stops(DOGE), "fresh nonzero read must not be followed by cancelling all SL/TP"
 
 
+def _held_sol(offline, scheme):
+    """DOGE and SOL open. SOL is close-held and flat-confirmed, then the real position (and its SL/TP) is back."""
+    eng, _j = _open_scheme(offline, scheme, 1)
+    open_pos(offline, eng, 1, SOL)
+    eng.st["pos"][SOL]["risk_frac"] = 0.04
+    saved = copy.deepcopy(offline.inner.pos[SOL])
+    offline.inner.pos.pop(SOL)
+    eng.record_close(SOL, "stop_loss")
+    assert SOL in eng._flat_confirmed and eng.st["pos"][SOL].get("close_held")
+    offline.inner.pos[SOL] = saved
+    live = {o["client_id"] for o in _protecting(offline, SOL)}
+    assert live and offline.amt(SOL) != 0
+    doge_pct = float(eng.st["pos"][DOGE]["risk_frac"]) * 100
+    return eng, live, doge_pct
+
+
+def _assert_sol_still_protected(eng, offline, live, doge_pct):
+    eng.reconcile()
+    assert eng._open_risk_pct() == pytest.approx(doge_pct + 4)
+    assert {o["client_id"] for o in _protecting(offline, SOL)} == live
+    assert offline.amt(SOL) != 0
+    assert eng.enter(SOL, D("0.01"), eng.now_ms()) is False
+
+
+@pytest.mark.parametrize("scheme", ["legacy", "e"])
+def test_snapshot_missing_symbol_is_unknown_not_flat(offline, monkeypatch, scheme):
+    """SOL absent from the positions dict is not a confirmed zero: risk stays, SL/TP stay, no KeyError."""
+    _block_telegram(monkeypatch)
+    eng, live, doge_pct = _held_sol(offline, scheme)
+
+    def drop_sol(fn, symbols):
+        pos = fn(symbols)
+        pos.pop(SOL, None)
+        return pos
+
+    offline.fx.inject("positions", drop_sol, times=99)
+    _assert_sol_still_protected(eng, offline, live, doge_pct)
+
+
+@pytest.mark.parametrize("scheme", ["legacy", "e"])
+def test_adapter_omitted_position_row_is_unknown_not_flat(offline, monkeypatch, scheme):
+    """A raw positionRisk body with no SOL row, read by the real adapter, must not become amt 0."""
+    _block_telegram(monkeypatch)
+    from live_v6.exchange import BinanceREST
+
+    eng, live, doge_pct = _held_sol(offline, scheme)
+
+    def through_rest(fn, symbols):
+        pos = fn(symbols)
+        rows = [{"symbol": s, "positionAmt": str(p["amt"]), "entryPrice": str(p["entry"]),
+                 "leverage": int(p["leverage"] or 10), "marginType": str(p["margin_type"] or "isolated")}
+                for s, p in pos.items() if s != SOL]
+        rest = object.__new__(BinanceREST)
+        rest._req = lambda *a, **k: rows
+        return BinanceREST.positions(rest, symbols)
+
+    offline.fx.inject("positions", through_rest, times=99)
+    _assert_sol_still_protected(eng, offline, live, doge_pct)
+
+
 @pytest.mark.parametrize("scheme", ["legacy", "e"])
 def test_earlier_symbol_query_failure_keeps_later_nonzero_in_risk(offline, monkeypatch, scheme):
     """A full positions snapshot already shows SOL nonzero. DOGE's open_orders read then fails.
