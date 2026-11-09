@@ -272,7 +272,10 @@ def _stopped_while_down(b):
     ei = strat.state["models"][DOGE]["ei_open"]
     assert b.amt(DOGE) > 0 and strat.state["models"][DOGE]["pos"] == 1
     del eng                                                    # bot dead from here on
-    b.inner.market(DOGE, "SELL", b.amt(DOGE), f"v6tso{int(time.time() * 1000)}", True)
+    # the bot's own stop fills while the process is down (not a neighbor order)
+    import json as _json
+    stop_px = Decimal(_json.load(open(b.store_path))["pos"][DOGE]["stop_px"])
+    b.inner.set_price(DOGE, stop_px)
     assert b.amt(DOGE) == 0
     strat2 = H7T(params=S.Params(h7_min_obs=10 ** 9))
     eng2 = b.engine(strategy=strat2)
@@ -315,9 +318,11 @@ def test_v6h7_live_close_hook_leaves_virtual_hold_alone(offline):
     assert st.state["models"][DOGE]["pos"] == 1
     # the close record is written only when exit qty covers the opened qty (no estimate row)
     t = eng.now_ms()
-    offline.inner.fills.append({"symbol": DOGE, "order_id": "X", "side": "SELL", "price": Decimal("1"),
-                                "qty": Decimal("1"), "commission": Decimal("0"), "realized_pnl": Decimal("0"), "time": t})
-    row = {"cid": "v6tX", "qty": "1", "entry_px": "1", "stop_px": "0.9", "model_entry_open": 111, "opened_ms": t - 1000}
+    offline.inner.fills.append({"symbol": DOGE, "order_id": "X", "trade_id": "TX", "side": "SELL",
+                                "price": Decimal("1"), "qty": Decimal("1"), "commission": Decimal("0"),
+                                "realized_pnl": Decimal("0"), "time": t})
+    row = {"cid": "v6tX", "qty": "1", "entry_px": "1", "stop_px": "0.9", "model_entry_open": 111,
+           "opened_ms": t - 1000, "exit_orders": [{"id": "X", "client_id": "v6tXx0"}]}
     eng.st["pos"][DOGE] = dict(row)
     eng.record_close(DOGE, "signal_exit")
     assert st.state["models"][DOGE]["pos"] == 1                          # model exit path: model owns its state

@@ -8,7 +8,10 @@ import json
 
 import pytest
 
-from live_v6.engine import CLOSE_HOLD_MAX
+try:
+    from live_v6.engine import CLOSE_HOLD_MAX
+except ImportError:  # main, before the hold bound existed
+    CLOSE_HOLD_MAX = 12
 from live_v6.exchange import ExchangeError
 from live_v6.tradelog import EventLog
 
@@ -51,12 +54,17 @@ def _short(entry_qty="1", qty=None, **kw):
                     entry_qty=entry_qty, **kw), t0
 
 
+def _own(j, *oids):
+    j["exit_orders"] = [{"id": oid, "client_id": j["cid"] + "x0"} for oid in oids]
+    return j
+
+
 def _matched(entry_qty="1"):
     """Entry + one closing fill of the same qty, so a healthy read can commit."""
     j, t0 = _short(entry_qty)
-    fills = [_fill("E1", "SELL", "100", entry_qty, "0.05", "0", t0),
-             _fill("X1", "BUY", "99", entry_qty, "0.05", "1", t0 + 1000) | {"trade_id": "T-X"}]
-    return j, t0, fills
+    fills = [_fill("E1", "SELL", "100", entry_qty, "0.05", "0", t0, "T-E"),
+             _fill("X1", "BUY", "99", entry_qty, "0.05", "1", t0 + 1000, "T-X")]
+    return _own(j, "X1"), t0, fills
 
 
 # ───────────── 1. a failed read must not commit ─────────────
@@ -101,29 +109,29 @@ def test_income_error_does_not_commit_with_funding_zero(offline, monkeypatch):
 
 
 # ───────────── 2. quantity gaps ─────────────
-def test_over_qty_commits_with_mismatch_flag(offline, monkeypatch):
-    # A neighbor close in the opened-1000ms window makes exit qty larger than the entry. Commit, do not hold forever.
+def test_own_fills_over_qty_stay_pending_no_pnl(offline, monkeypatch):
+    # This trade's own exit order filled more than it opened. Do not book PnL; leave it pending.
     _block_telegram(monkeypatch)
     j, t0 = _short("1")
+    j["exit_orders"] = [{"id": "X1", "client_id": j["cid"] + "x0"}]
     fills = [_fill("E1", "SELL", "100", "1", "0.05", "0", t0),
-             _fill("X1", "BUY", "99", "1", "0.05", "1", t0 + 500) | {"trade_id": "T-X"},
-             _fill("NEIGH", "BUY", "98", "0.4", "0.02", "0.8", t0 + 800) | {"trade_id": "T-N"}]
+             _fill("X1", "BUY", "99", "1", "0.05", "1", t0 + 500, "T-X"),
+             _fill("X1", "BUY", "98", "0.4", "0.02", "0.8", t0 + 800, "T-X2")]
     eng = _eng(offline)
     eng.st["pos"][SOL] = j
     _wire(offline, fills)
     eng.record_close(SOL, "stop_loss")
-    assert SOL not in eng.st["pos"] and len(eng.meta["trades"]) == 1
-    rec = eng.meta["trades"][-1]
-    assert rec.get("qty_mismatch") is True and not rec.get("fills_incomplete")
-    assert D(rec["entry_qty"]) == D("1") and _exit_qty(rec) == D("1.4")
-    assert any("qty_mismatch" in m for m in eng.tg.sent)
+    assert SOL in eng.st["pos"] and not eng.meta.get("trades")
+    assert eng.st["pos"][SOL].get("reconcile_pending") is True
+    assert any("대조 보류" in m for m in eng.tg.sent)
 
 
 def test_duplicate_rest_trade_ids_are_not_double_counted(offline, monkeypatch):
     _block_telegram(monkeypatch)
     j, t0 = _short("1")
-    one = _fill("X1", "BUY", "99", "1", "0.05", "1", t0 + 1000) | {"trade_id": "T-X"}
-    fills = [_fill("E1", "SELL", "100", "1", "0.05", "0", t0) | {"trade_id": "T-E"}, one, dict(one)]
+    _own(j, "X1")
+    one = _fill("X1", "BUY", "99", "1", "0.05", "1", t0 + 1000, "T-X")
+    fills = [_fill("E1", "SELL", "100", "1", "0.05", "0", t0, "T-E"), one, dict(one)]
     eng = _eng(offline)
     eng.st["pos"][SOL] = j
     _wire(offline, fills)
@@ -139,10 +147,11 @@ def test_legacy_journal_without_entry_qty_uses_opening_fills_not_remainder(offli
     _block_telegram(monkeypatch)
     t0 = 1793600000000
     j = _journal("v6SOL1793600000", -1, "0.5", "100", "101", "102", "0.5", t0)
-    j.pop("entry_order_id", None)                           # no entry_qty on this row; remainder must not be the target
-    fills = [_fill("E1", "SELL", "100", "1", "0.05", "0", t0) | {"trade_id": "T-E"},
-             _fill("T1", "BUY", "99", "0.5", "0.02", "0.5", t0 + 1000) | {"trade_id": "T-1"},
-             _fill("X1", "BUY", "98", "0.5", "0.02", "1", t0 + 2000) | {"trade_id": "T-2"}]
+    j.pop("entry_qty", None)                                # legacy row: opened size is the entry order's fills
+    _own(j, "T1", "X1")
+    fills = [_fill("E1", "SELL", "100", "1", "0.05", "0", t0, "T-E"),
+             _fill("T1", "BUY", "99", "0.5", "0.02", "0.5", t0 + 1000, "T-1"),
+             _fill("X1", "BUY", "98", "0.5", "0.02", "1", t0 + 2000, "T-2")]
     eng = _eng(offline)
     eng.st["pos"][SOL] = j
     _wire(offline, fills)
@@ -153,27 +162,25 @@ def test_legacy_journal_without_entry_qty_uses_opening_fills_not_remainder(offli
     assert not rec.get("qty_mismatch") and not rec.get("fills_incomplete")
 
 
-def test_permanent_under_qty_commits_after_bounded_hold(offline, monkeypatch):
+def test_short_flat_hold_alerts_but_never_commits(offline, monkeypatch):
+    # Dust that never arrives: after CLOSE_HOLD_MAX, alert again, stay open, keep blocking this symbol.
     _block_telegram(monkeypatch)
-    from live_v6 import engine as E
-    assert E.CLOSE_HOLD_MAX >= 2
     j, t0 = _short("1")
-    # only half the exit ever comes back (dust / fill that will not appear)
-    fills = [_fill("E1", "SELL", "100", "1", "0.05", "0", t0) | {"trade_id": "T-E"},
-             _fill("X1", "BUY", "99", "0.4", "0.02", "0.4", t0 + 1000) | {"trade_id": "T-X"}]
+    j["risk_frac"] = 0.04
+    j["exit_orders"] = [{"id": "X1", "client_id": j["cid"] + "x0"}]
+    fills = [_fill("E1", "SELL", "100", "1", "0.05", "0", t0, "T-E"),
+             _fill("X1", "BUY", "99", "0.4", "0.02", "0.4", t0 + 1000, "T-X")]
     eng = _eng(offline)
     eng.st["pos"][SOL] = j
     _wire(offline, fills)
-    for _ in range(E.CLOSE_HOLD_MAX - 1):
+    for _ in range(CLOSE_HOLD_MAX):
         eng.record_close(SOL, "stop_loss")
         assert SOL in eng.st["pos"] and not eng.meta.get("trades")
+    assert sum(1 for m in eng.tg.sent if HOLD in m) == 2          # once at the start, once at the bound
     eng.record_close(SOL, "stop_loss")
-    assert SOL not in eng.st["pos"] and len(eng.meta["trades"]) == 1
-    rec = eng.meta["trades"][-1]
-    assert rec.get("fills_incomplete") is True and not rec.get("qty_mismatch")
-    assert _exit_qty(rec) == D("0.4")
-    assert any("fills_incomplete" in m for m in eng.tg.sent)
-    assert sum(1 for m in eng.tg.sent if HOLD in m) == 1        # the wait warned once, then the commit
+    assert SOL in eng.st["pos"] and not eng.meta.get("trades")
+    assert sum(1 for m in eng.tg.sent if HOLD in m) == 2          # rate-limited: not every reconcile
+    assert eng.enter(SOL, D("1"), t0) is False
 
 
 def test_after_first_hold_one_poll_and_no_retry_sleep(offline, monkeypatch):
@@ -199,25 +206,32 @@ def test_after_first_hold_one_poll_and_no_retry_sleep(offline, monkeypatch):
 
 
 # ───────────── 3. held flat journals are not open risk ─────────────
-def test_held_flat_journal_excluded_from_open_risk_and_count_but_blocks_reentry(offline, tmp_path, monkeypatch):
+def test_held_journal_counts_in_risk_until_flat_is_confirmed(offline, tmp_path, monkeypatch):
+    # A failed position read is not "flat". The journal still counts, and a restart counts until the next confirm.
     _block_telegram(monkeypatch)
     j, t0, _ = _matched()
     j["risk_frac"] = 0.04
     eng = _eng(offline, tmp_path)
     eng.st["pos"][SOL] = j
+    eng.save()
 
-    def boom(fn, *a):
+    def boom_pos(fn, *a, **k):
+        raise ExchangeError("positions down")
+
+    def boom_trades(fn, *a):
         raise ExchangeError("user_trades down")
 
-    _wire(offline, [], trades_fn=boom)
+    offline.fx.inject("positions", boom_pos, times=20)
+    _wire(offline, [], trades_fn=boom_trades)
     eng.record_close(SOL, "stop_loss")
-    assert SOL in eng.st["pos"]                                 # still blocks this symbol
+    assert SOL in eng.st["pos"] and not eng.meta.get("trades")
     assert eng.enter(SOL, D("1"), t0) is False
-    assert SOL in eng.st["pos"]
-    assert eng._open_risk_pct() == 0
+    assert eng._open_risk_pct() == 4
     eng._log_skip(DOGE, "probe", "")
     line = json.loads((tmp_path / "t_skips.jsonl").read_text().splitlines()[-1])
-    assert line["open_positions"] == 0 and line["open_risk_sum"] == 0
+    assert line["open_positions"] == 1 and line["open_risk_sum"] == 4
+    eng2 = offline.engine()
+    assert eng2._open_risk_pct() == 4                           # not re-confirmed after restart → still counts
 
 
 # ───────────── 4. close reason survives the hold ─────────────
@@ -273,12 +287,146 @@ def test_open_remainder_is_not_force_closed_and_flat_path_still_cancels(offline,
     assert offline.amt(DOGE) == 0 and DOGE in eng.st["pos"]
     (raw,) = [f for f in offline.inner.fills if f["symbol"] == DOGE and f["order_id"] not in known]
     _shape_trades(offline, raw["order_id"], [], {"show": "none"})
-    eng.reconcile()                                         # flat, fills still short: cancel now, do not commit yet
+    eng.reconcile()                                         # flat, fills still short: cancel now, do not commit
     assert offline.amt(DOGE) == 0 and DOGE in eng.st["pos"] and not eng.meta.get("trades")
     assert not _protecting(offline, DOGE)
-    for _ in range(CLOSE_HOLD_MAX - 1):
+    for _ in range(CLOSE_HOLD_MAX):
         eng.reconcile()
-    assert DOGE not in eng.st["pos"] and eng.meta["trades"][-1].get("fills_incomplete") is True
+    assert DOGE in eng.st["pos"] and not eng.meta.get("trades")  # the bound alerts; it does not commit
+    assert not _protecting(offline, DOGE)
+
+
+def test_missing_trade_id_does_not_commit(offline, monkeypatch):
+    _block_telegram(monkeypatch)
+    j, t0 = _short("1")
+    _own(j, "X1")
+    fills = [_fill("E1", "SELL", "100", "1", "0.05", "0", t0, "T-E"),
+             _fill("X1", "BUY", "99", "1", "0.05", "1", t0 + 1000, "")]
+    eng = _eng(offline)
+    eng.st["pos"][SOL] = j
+    _wire(offline, fills)
+    eng.record_close(SOL, "stop_loss")
+    assert SOL in eng.st["pos"] and not eng.meta.get("trades")
+    assert eng.st["pos"][SOL].get("reconcile_pending") is True
+    assert any("대조 보류" in m for m in eng.tg.sent)
+
+
+def test_neighbor_fill_is_not_this_trades_pnl(offline, monkeypatch):
+    _block_telegram(monkeypatch)
+    j, t0 = _short("1")
+    _own(j, "X1")
+    fills = [_fill("E1", "SELL", "100", "1", "0.05", "0", t0, "T-E"),
+             _fill("X1", "BUY", "99", "1", "0.05", "1", t0 + 500, "T-X"),
+             _fill("NEIGH", "BUY", "98", "0.4", "0.02", "0.8", t0 + 800, "T-N")]
+    eng = _eng(offline)
+    eng.st["pos"][SOL] = j
+    _wire(offline, fills)
+    eng.record_close(SOL, "stop_loss")
+    assert SOL not in eng.st["pos"]
+    rec = eng.meta["trades"][-1]
+    assert _exit_qty(rec) == D("1") and not rec.get("reconcile_pending")
+    assert not any(x["order_id"] == "NEIGH" for x in rec["exit_legs"])
+
+
+def _open_scheme(b, scheme, side=-1):
+    if scheme == "legacy":
+        eng = legacy_engine(b)
+    else:
+        from .test_chandelier_e import Clk, e_engine
+        eng = e_engine(b, Clk())
+    j = open_pos(b, eng, side)
+    return eng, j
+
+
+@pytest.mark.parametrize("scheme", ["legacy", "e"])
+@pytest.mark.parametrize("gap", ["short", "equal", "over"])
+def test_open_position_fill_gap_does_not_close_or_cancel(offline, monkeypatch, scheme, gap):
+    _block_telegram(monkeypatch)
+    eng, j = _open_scheme(offline, scheme, -1)
+    sym = DOGE
+    eq, eid = j["entry_qty"], j["entry_order_id"]
+    exit_qty = {"short": "0.4", "equal": eq, "over": str(D(eq) + D("1"))}[gap]
+    base = [f for f in offline.inner.user_trades(sym, 0)]
+    base.append(_fill("XOWN", "BUY", "1", exit_qty, "0.01", "0.1", j["opened_ms"] + 1000, "T-OWN"))
+    j["exit_orders"] = [{"id": "XOWN", "client_id": j["cid"] + "x9"}]
+    live = {o["client_id"] for o in _protecting(offline, sym)}
+    assert live and offline.amt(sym) != 0
+    _wire(offline, base)
+    eng.record_close(sym, "stop_loss")
+    for _ in range(3):
+        eng.reconcile()
+    assert offline.amt(sym) != 0 and sym in eng.st["pos"]
+    assert D(eng.st["pos"][sym]["qty"]) == D(j["qty"])
+    assert not eng.meta.get("trades")
+    assert {o["client_id"] for o in _protecting(offline, sym)} == live
+
+
+@pytest.mark.parametrize("scheme", ["legacy", "e"])
+def test_flat_timeout_with_no_fills_alerts_and_blocks(offline, monkeypatch, scheme):
+    _block_telegram(monkeypatch)
+    eng, j = _open_scheme(offline, scheme, -1)
+    sym = DOGE
+    offline.inner.pos.pop(sym, None)                         # flat, but no exit fill was produced
+    assert offline.amt(sym) == 0
+    for _ in range(CLOSE_HOLD_MAX + 1):
+        eng.reconcile()
+    assert sym in eng.st["pos"] and not eng.meta.get("trades")
+    assert any(HOLD in m for m in eng.tg.sent)
+    assert eng.enter(sym, D("0.01"), j["opened_ms"]) is False
+
+
+@pytest.mark.parametrize("scheme", ["legacy", "e"])
+def test_restart_mid_hold_counts_risk_until_reconfirmed(offline, monkeypatch, scheme):
+    _block_telegram(monkeypatch)
+    eng, j = _open_scheme(offline, scheme, -1)
+    sym = DOGE
+    j = eng.st["pos"][sym]
+    j["risk_frac"] = 0.04
+    offline.inner.pos.pop(sym, None)
+    eng.reconcile()                                         # flat, no exit fills → hold, confirmed 0
+    assert sym in eng.st["pos"] and eng._open_risk_pct() == 0
+    eng2 = offline.engine()
+    assert eng2._open_risk_pct() == 4                       # restart has not re-confirmed the flat read
+    eng2._flat_confirmed.add(sym)                           # stand-in for a later reconcile that reads amt 0
+    eng2.st["pos"][sym]["close_held"] = True
+    assert eng2._open_risk_pct() == 0
+
+
+@pytest.mark.parametrize("scheme", ["legacy", "e"])
+def test_position_query_failure_counts_risk_and_does_not_close(offline, monkeypatch, scheme):
+    _block_telegram(monkeypatch)
+    eng, j = _open_scheme(offline, scheme, -1)
+    sym = DOGE
+    eng.st["pos"][sym]["risk_frac"] = 0.04
+    risk = eng._open_risk_pct()
+    assert risk >= 4
+
+    def boom(fn, *a, **k):
+        raise ExchangeError("positions down")
+
+    offline.fx.inject("positions", boom, times=5)
+    try:
+        eng.reconcile()
+    except ExchangeError:
+        pass
+    eng.record_close(sym, "stop_loss")
+    assert sym in eng.st["pos"] and not eng.meta.get("trades")
+    assert eng._open_risk_pct() >= 4
+
+
+@pytest.mark.parametrize("scheme", ["legacy", "e"])
+def test_cancel_failure_retries_on_the_next_reconcile(offline, monkeypatch, scheme):
+    _block_telegram(monkeypatch)
+    eng, j = _open_scheme(offline, scheme, -1)
+    sym = DOGE
+    offline.inner.pos.pop(sym, None)
+    offline.fx.inject("cancel", "unavailable", times=99)
+    eng.reconcile()
+    assert sym in eng.st["pos"] and _protecting(offline, sym)
+    offline.fx.clear()
+    eng.reconcile()
+    assert sym in eng.st["pos"] and not eng.meta.get("trades")
+    assert not _protecting(offline, sym)
 
 
 def test_held_flat_close_still_cancels_leftover_reduce_orders(offline, monkeypatch):

@@ -150,7 +150,8 @@ def test_sol_1103_missing_remainder_stays_open_then_completes_after_restart(offl
     # and the user stream has not delivered it (disconnect / event still queued). Must NOT commit the TP1-only row.
     _block_telegram(monkeypatch)
     t0, cid = 1793633163679, "v6SOL1793633163"
-    j = _journal(cid, -1, "1.70", "94.2900", "94.19", "95.37", "1.69", t0, entry_qty="3.39")
+    j = _journal(cid, -1, "1.70", "94.2900", "94.19", "95.37", "1.69", t0, entry_qty="3.39",
+                 exit_orders=[{"id": "254824457044", "client_id": cid + "t1"}])
     tp1 = [_fill("E1", "SELL", "94.29", "3.39", "0.15982155", "0", t0),
            _fill("254824457044", "BUY", "93.21", "1.69", "0.07876245", "1.8252", 1793635101103) | {"trade_id": "3623435047"}]
     eng = legacy_engine(offline)

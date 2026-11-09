@@ -132,6 +132,7 @@ def test_sol_tp1_then_time_exit_record_waits_for_the_closing_fill(offline, tmp_p
     eng.events = EventLog(str(tmp_path), "t", commit="c0ffee123456")
     offline.fx.inject("user_trades", lagging, times=9)
     offline.fx.inject("income", lambda fn, *a: [{"amount": D("0.07404347"), "time": t0, "symbol": SOL}], times=9)
+    j["exit_orders"] = [{"id": "T1", "client_id": cid + "t1"}, {"id": "X1", "client_id": cid + "x0"}]
     eng.st["pos"][SOL] = j
     eng.record_close(SOL, "time_exit")
     rec = eng.meta["trades"][-1]

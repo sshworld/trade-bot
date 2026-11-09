@@ -63,6 +63,12 @@ def _close(b, tmp_path, sym, j, fills, funding, stream=(), reason="stop_loss"):
     eng.st["pos"][sym] = j
     for ev in stream:
         eng._note_exit_order(ev)
+    have = {str(o.get("id")) for o in j.get("exit_orders") or []}
+    eid = str(j.get("entry_order_id") or "")
+    extra = [{"id": str(f["order_id"]), "client_id": ""}
+             for f in fills if str(f["order_id"]) not in have and str(f["order_id"]) != eid]
+    if extra:
+        j["exit_orders"] = list(j.get("exit_orders") or []) + extra
     n = len(eng.tg.sent)
     eng.record_close(sym, reason)
     (line,) = [json.loads(x) for x in (tmp_path / "t_trades.jsonl").read_text().splitlines()]
@@ -75,7 +81,7 @@ def test_sol_1103_tp2_leg_missing_from_user_trades_taken_from_stream(offline, tm
     t0, cid = 1793633163679, "v6SOL1793633163"
     j = _journal(cid, -1, "1.70", "94.2900", "94.19", "95.37", "1.69", t0, entry_qty="3.39")
     fills = [_fill("E1", "SELL", "94.29", "3.39", "0.15982155", "0", t0),
-             _fill("254824457044", "BUY", "93.21", "1.69", "0.07876245", "1.8252", 1793635101103)]
+             _fill("254824457044", "BUY", "93.21", "1.69", "0.07876245", "1.8252", 1793635101103, str(1793635101103))]
     stream = [_ou(SOL, cid + "t1", 254824457044, "BUY", "93.21", "1.69", "0.07876245", "1.8252", 1793635101103,
                   "TAKE_PROFIT_MARKET"),
               _ou(SOL, cid + "t2", 254851315186, "BUY", "92.14", "1.70", "0.078319", "3.655", 1793641526295,
@@ -97,8 +103,12 @@ def test_sol_1102_be_leg_reason_be_stop_and_whole_trade_first(offline, tmp_path)
                  exit_orders=[{"id": "254757526603", "client_id": cid + "t1"}, {"id": "254785178715", "client_id": cid + "s0"}])
     fills = [_fill("E1", "SELL", "94.87", "3.33", "0.15795855", "0", t0),
              _fill("254757526603", "BUY", "93.84", "1.66", "0.0778872", "1.7098", 1793618257729)]
-    fills += [_fill("254785178715", "BUY", "94.85", q, f, rp, 1793626700082)
-              for q, f, rp in (("0.07", "0.00331975", "0.0014"),) * 3 + (("1.46", "0.0692405", "0.02919999"),)]
+    fills += [_fill("254785178715", "BUY", "94.85", q, f, rp, 1793626700082, tid)
+              for tid, q, f, rp in (
+                  ("3623091255", "0.07", "0.00331975", "0.0014"),
+                  ("3623091256", "0.07", "0.00331975", "0.0014"),
+                  ("3623091257", "0.07", "0.00331975", "0.0014"),
+                  ("3623091258", "1.46", "0.0692405", "0.02919999"))]
     rec, line, sent = _close(offline, tmp_path, SOL, j, fills, "0.0313823")
     assert D(rec["net"]) == D("1.45953679") and rec["R"] == "0.421" and rec["reason"] == "be_stop"
     msg = sent[-1].splitlines()

@@ -36,11 +36,15 @@ def orders(b, sym):
     return [o for o in b.inner.algos.values() if o["symbol"] == sym]
 
 
-def assert_no_residual(b, eng, sym):
+def assert_no_residual(b, eng, sym, *, journal=True):
     assert b.amt(sym) == 0, f"residual qty {sym} {b.amt(sym)}"
     assert orders(b, sym) == [], f"residual orders {sym}: {[o['client_id'] for o in orders(b, sym)]}"
     assert b.inner.open_orders(sym) == []
-    assert sym not in eng.st["pos"] and not eng.st["intents"]
+    if journal:
+        assert sym not in eng.st["pos"] and not eng.st["intents"]
+    else:
+        # a hand fill is not this trade's order, so the journal stays unconfirmed and is not booked
+        assert sym in eng.st["pos"] and not eng.meta.get("trades")
 
 
 def _stop_px(eng, sym=DOGE):
@@ -139,7 +143,7 @@ def test_r3_no_alert_on_one_or_two_failures(sticky, n):
         eng.reconcile()
     assert orders(sticky, DOGE) and r3_alerts(eng) == []
     eng.reconcile()                                             # cancel succeeds now
-    assert_no_residual(sticky, eng, DOGE)
+    assert_no_residual(sticky, eng, DOGE, journal=False)
     assert r3_alerts(eng) == [] and r3_clears(eng) == []        # nothing was alerted → nothing to clear
 
 
@@ -164,7 +168,7 @@ def test_r3_one_clear_after_success_then_fresh_episode_alerts_again(sticky):
     assert len(r3_alerts(eng)) == 1
     sticky.fx.clear()
     eng.reconcile()                                             # cleanup succeeds
-    assert_no_residual(sticky, eng, DOGE)
+    assert_no_residual(sticky, eng, DOGE, journal=False)
     assert len(r3_clears(eng)) == 1 and DOGE in r3_clears(eng)[0]
     for _ in range(3):
         eng.reconcile()
@@ -177,7 +181,7 @@ def test_r3_one_clear_after_success_then_fresh_episode_alerts_again(sticky):
     assert len(r3_alerts(eng)) == 2
     sticky.fx.clear()
     eng.reconcile()
-    assert_no_residual(sticky, eng, DOGE)
+    assert_no_residual(sticky, eng, DOGE, journal=False)
     assert len(r3_clears(eng)) == 2
 
 
@@ -190,7 +194,7 @@ def test_r3_counter_is_per_symbol(sticky):
     for _ in range(5):
         eng.reconcile()
     assert len(r3_alerts(eng)) == 1 and DOGE in r3_alerts(eng)[0]
-    assert_no_residual(sticky, eng, SOL)
+    assert_no_residual(sticky, eng, SOL, journal=False)
 
 
 def test_r3_non_bot_order_on_flat_coin_one_alert_never_cancelled(sticky):
@@ -299,7 +303,7 @@ def test_manual_close_by_user_then_reconcile_leaves_nothing(sticky):
     opened(sticky, eng)
     sticky.inner.market(DOGE, "SELL", sticky.amt(DOGE), "manualflat2", True)
     eng.reconcile()
-    assert_no_residual(sticky, eng, DOGE)
+    assert_no_residual(sticky, eng, DOGE, journal=False)
 
 
 def test_emergency_flatten_all_leaves_nothing(sticky):

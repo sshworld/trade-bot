@@ -92,9 +92,9 @@ def test_risk_cap_skip_before_margin_no_alert_logged(offline, tmp_path):
 
 
 # ───────────── trade record ─────────────
-def _fill(oid, side, px, qty, fee, rpnl, t):
+def _fill(oid, side, px, qty, fee, rpnl, t, trade_id=None):
     return {"symbol": "", "order_id": oid, "side": side, "price": D(px), "qty": D(qty), "commission": D(fee),
-            "realized_pnl": D(rpnl), "time": t}
+            "realized_pnl": D(rpnl), "time": t, "trade_id": f"{oid}@{t}" if trade_id is None else trade_id}
 
 
 def _close(b, tmp_path, sym, j, fills, funding, reason):
@@ -102,6 +102,12 @@ def _close(b, tmp_path, sym, j, fills, funding, reason):
     eng.events = EventLog(str(tmp_path), "t", commit="c0ffee123456")
     b.fx.inject("user_trades", lambda fn, *a: fills, times=9)
     b.fx.inject("income", lambda fn, *a: [{"amount": D(funding), "time": j["opened_ms"], "symbol": sym}], times=9)
+    have = {str(o.get("id")) for o in j.get("exit_orders") or []}
+    eid = str(j.get("entry_order_id") or "")
+    extra = [{"id": str(f["order_id"]), "client_id": ""}
+             for f in fills if str(f["order_id"]) not in have and str(f["order_id"]) != eid]
+    if extra:
+        j["exit_orders"] = list(j.get("exit_orders") or []) + extra
     eng.st["pos"][sym] = j
     n = len(eng.tg.sent)
     eng.record_close(sym, reason)

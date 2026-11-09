@@ -184,7 +184,8 @@ class FakeExchange:
                 del self.pos[s]
                 for k in [k for k, o in self.algos.items() if o["symbol"] == s and o["close_position"]]:
                     self._algo_end(self.algos.pop(k), "EXPIRED")                          # closePosition stops auto-cancel when flat
-        self.fills.append({"symbol": s, "order_id": oid, "side": "BUY" if signed > 0 else "SELL", "price": px,
+        self.fills.append({"symbol": s, "order_id": oid, "trade_id": str(next(self._id)),
+                           "side": "BUY" if signed > 0 else "SELL", "price": px,
                            "qty": abs(signed), "commission": fee, "realized_pnl": rpnl, "time": now})
         self.incomes += [{"type": "COMMISSION", "amount": -fee, "time": now, "symbol": s, "tran_id": str(next(self._id))}]
         if rpnl:
