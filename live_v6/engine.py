@@ -153,10 +153,10 @@ class Settings:
 LOG_INTENT_KEYS = ("signal_px", "path", "risk_pct_used", "order_ms", "prearm_ms", "open_risk_after", "same_side_open")
 EARLYCUT_MS = 4 * 3600_000                                  # record-only early-cut flag window (TA 2026-11-02)
 EXIT_KIND = {"stop_loss": "exchange_close", "be_stop": "exchange_close", "trail_stop": "exchange_close", "take_profit": "exchange_close", "signal_exit": "exit_rule", "model_sync": "exit_rule", "daily_loss_halt": "halt"}   # live log exit_reason
-# Flat journal whose exit fills stay short of the opened qty: re-read on later reconciles (one poll each, no
-# query_retries sleep). After this many short reads, commit with fills_incomplete so the symbol is not blocked
-# forever. 12 passes × the 5s REST reconcile ≈ 1 minute. A failed userTrades/income read does not count: that
-# hold never commits on the timer (fees or funding would be missing).
+# Flat journal whose own exit fills are still short of the opened qty: re-read on later reconciles (one poll
+# each after the first, no query_retries sleep). Every CLOSE_HOLD_MAX short reads (12 × the 5s REST reconcile
+# ≈ 1 minute) the "still unconfirmed" alert fires again. The journal stays open and the symbol stays blocked.
+# A close is never committed on this timer.
 CLOSE_HOLD_MAX = 12
 
 
@@ -211,6 +211,8 @@ class V6Engine:
         self._r3_fail: dict[str, int] = {}                 # TA R3: flat coin → reconciles in a row with a failed bot cancel
         self._r3_alerted: set = set()                      # flat coins whose residual 🚨 is out (cleared by one ✅)
         self._foreign_seen: set = set()                    # (sym, order id) of non-bot orders on a flat coin already 🚨'd
+        self._flat_confirmed: set = set()                  # symbols whose position read in THIS process returned 0.
+                                                           # empty after a restart until reconcile confirms again
         inner = getattr(ex, "inner", ex)
         if hasattr(inner, "on_rate_limit"):
             inner.on_rate_limit = self._on_rate_limit
@@ -1589,14 +1591,15 @@ class V6Engine:
         except Exception as e:  # noqa: BLE001
             log.error("log day count failed: %r", e)
 
-    @staticmethod
-    def _is_held_flat(j) -> bool:
-        """A flat journal waiting on exit fills. Not an open position for risk or counts. The row stays in
-        st['pos'], so a new entry on that symbol is still refused."""
-        return bool(isinstance(j, dict) and j.get("close_held"))
+    def _closed_flat_confirmed(self, sym, j) -> bool:
+        """Drop a held journal from open risk only when this process has read the exchange position as 0.
+        Nonzero, a failed read, or a restart (nothing confirmed yet) still counts. The row stays in st['pos'],
+        so a new entry on that symbol is still refused."""
+        return bool(isinstance(j, dict) and j.get("close_held") and sym in self._flat_confirmed)
 
     def _open_journals(self) -> list:
-        return [j for j in self.st["pos"].values() if isinstance(j, dict) and not self._is_held_flat(j)]
+        return [j for sym, j in self.st["pos"].items()
+                if isinstance(j, dict) and not self._closed_flat_confirmed(sym, j)]
 
     def _open_position_count(self) -> int:
         return len(self._open_journals()) + sum(1 for j in self.st["unknown"].values() if isinstance(j, dict))
@@ -1802,7 +1805,7 @@ class V6Engine:
             eq, dist = self.meta.get("equity"), None
         ops = []
         for sym, j in list(self.st["pos"].items()) + list(self.st["unknown"].items()):
-            if sym in self.st["pos"] and self._is_held_flat(j):
+            if sym in self.st["pos"] and self._closed_flat_confirmed(sym, j):
                 continue                                    # flat, waiting on fills: not an open position
             m, e, n = self.marks.get(sym), j.get("entry_px"), j.get("qty") or j.get("amt")
             u = (D(m) - D(e)) * D(n) * int(j.get("side", 1)) if m is not None and e and n else None
@@ -1830,15 +1833,81 @@ class V6Engine:
         got = sum((D(f["qty"]) for f in entry_fills), Decimal(0))
         return got if got else D(j["qty"])
 
-    @classmethod
-    def _entry_fills(cls, j, fills, opened) -> list:
+    @staticmethod
+    def _entry_fills(j, fills, opened) -> list:  # noqa: ARG004  opened kept so callers stay stable
+        """Entry fills are the entry order's rows only. A time window would pull in a neighbor's trade."""
         eid = j.get("entry_order_id")
-        if eid:
-            hit = [f for f in fills if str(f.get("order_id")) == str(eid)]
-            if hit:
-                return hit
-        side = "BUY" if int(j.get("side", 1)) > 0 else "SELL"     # no usable entry order id: the opening side
-        return [f for f in fills if f.get("side") == side and int(f.get("time") or 0) >= opened - 1000]
+        if not eid:
+            return []
+        return [f for f in fills if str(f.get("order_id")) == str(eid)]
+
+    def _own_exit_order_ids(self, sym, j) -> set[str]:
+        """Exchange order ids of THIS trade's SL / TP / close orders. Not a time window."""
+        ids = set()
+        base = str(j.get("cid") or "")
+
+        def _keep(oid, client) -> bool:
+            if oid in (None, "", "None"):
+                return False
+            c = str(client or "")
+            return (not c) or (bool(base) and c.startswith(base))
+
+        for o in (j.get("exit_orders") or []) + (j.get("own_orders") or []):
+            if _keep(o.get("id"), o.get("client_id")):
+                ids.add(str(o["id"]))
+        for f in j.get("stream_fills") or []:
+            if _keep(f.get("order_id"), f.get("client_id")):
+                ids.add(str(f["order_id"]))
+        cid = str(j.get("cid") or "")
+        if not cid:
+            return ids
+        tp = j.get("tp") or {}
+        cids = [f"{cid}p"]
+        if tp.get("tp1"):
+            cids.append(f"{cid}t1")
+        if tp.get("tp2"):
+            cids.append(f"{cid}t2")
+        cids += [f"{cid}s{i}" for i in range(int(j.get("stop_seq") or 0))]
+        cids += [f"{cid}x{i}" for i in range(int(j.get("exit_seq") or 0))]
+        for c in cids:
+            try:
+                st = self.x("algo_order", sym, c)
+            except ExchangeError:
+                st = None
+            if isinstance(st, dict) and st.get("order_id") not in (None, "", "None"):
+                ids.add(str(st["order_id"]))
+            try:
+                od = self.x("get_order", sym, c)
+            except ExchangeError:
+                od = None
+            if isinstance(od, dict) and od.get("id") not in (None, "", "None"):
+                ids.add(str(od["id"]))
+        return ids
+
+    def _position_amt(self, sym):
+        """(amount, ok). A failed read clears the flat confirmation so the journal counts in risk again."""
+        try:
+            syms = tuple(dict.fromkeys((*self.cfg.symbols, sym)))
+            amt = self.x("positions", syms)[sym]["amt"]
+        except ExchangeError:
+            self._flat_confirmed.discard(sym)
+            return None, False
+        if amt == 0:
+            self._flat_confirmed.add(sym)
+        else:
+            self._flat_confirmed.discard(sym)
+        return amt, True
+
+    def _mark_pending(self, sym, j, reason, why):
+        """Fills are not safe to book (missing trade id, or this trade's own orders over-filled). Stay open."""
+        j["close_held"] = True
+        j["reconcile_pending"] = True
+        j.setdefault("close_reason", reason)
+        log.error("%s close reconcile pending: %s", sym, why)
+        if not j.get("reconcile_pending_alerted"):
+            j["reconcile_pending_alerted"] = True
+            self.alert(f"청산 대조 보류 — {sym}", why)
+        self.save()
 
     @classmethod
     def _dedupe_trade_ids(cls, fills) -> list:
@@ -1915,14 +1984,18 @@ class V6Engine:
         if fetch_failed:
             log.error("%s close record held: fill read failed (exit %s, opened %s)", sym, closed_qty, opened_qty)
         else:
-            j["close_hold_n"] = int(j.get("close_hold_n") or 0) + 1
+            n = int(j.get("close_hold_n") or 0) + 1
+            j["close_hold_n"] = n
             log.error("%s close record held: exit qty %s != opened qty %s", sym, closed_qty, opened_qty)
-        if not j.get("close_incomplete_alerted"):
+            if n == 1 or n % CLOSE_HOLD_MAX == 0:
+                self.alert(f"청산 기록 보류 — {sym} 체결 수량 미확정",
+                           f"열린 {opened_qty.normalize():f} · 청산 체결 {closed_qty.normalize():f}"
+                           f" · 종료로 기록하지 않음 · {n}회 대조")
+        if fetch_failed and not j.get("close_incomplete_alerted"):
             j["close_incomplete_alerted"] = True
-            detail = (f"열린 {opened_qty.normalize():f} · 청산 체결 {closed_qty.normalize():f}"
-                      f" · 종료로 기록하지 않음 · 다음 대조에서 다시 집계")
-            title = f"청산 기록 보류 — {sym} 체결 조회 실패" if fetch_failed else f"청산 기록 보류 — {sym} 체결 수량이 열린 수량과 다름"
-            self.alert(title, detail)
+            self.alert(f"청산 기록 보류 — {sym} 체결 조회 실패",
+                       f"열린 {opened_qty.normalize():f} · 청산 체결 {closed_qty.normalize():f}"
+                       f" · 종료로 기록하지 않음 · 다음 대조에서 다시 조회")
         self.save()
 
     def record_close(self, sym, reason):
@@ -1930,7 +2003,12 @@ class V6Engine:
         if not j:
             return
         opened = int(j.get("opened_ms", self.now_ms()))
+        amt, ok = self._position_amt(sym)
+        if not ok or amt != 0:
+            return                                            # not confirmed flat: no close, no order cancel, risk stays
         fund, entry_fills, raw_exit = [], [], []
+        own = self._own_exit_order_ids(sym, j)
+        stream = [f for f in (j.get("stream_fills") or []) if str(f.get("order_id")) in own]
         # the closing fill can lag userTrades (live SOL 2026-11-01). The first attempt re-reads query_retries times;
         # once the journal is already held, one poll per reconcile so other symbols are not stalled on the sleeps.
         retries = 1 if j.get("close_held") else self.cfg.query_retries
@@ -1940,28 +2018,31 @@ class V6Engine:
                     self.sleep(self.cfg.query_delay_s)
                 fills = self._dedupe_trade_ids(self.x("user_trades", sym, opened - 60_000))
                 entry_fills = self._entry_fills(j, fills, opened)
-                raw_exit = [f for f in fills if f.get("side") == self._cs(j) and int(f.get("time") or 0) >= opened - 1000]
+                raw_exit = [f for f in fills if str(f.get("order_id")) in own]
                 want = self._opened_qty(j, entry_fills)
-                if sum((f["qty"] for f in self._merge_exit_fills(raw_exit, j.get("stream_fills"))), Decimal(0)) == want:
+                got = self._merge_exit_fills(raw_exit, stream)
+                if got and not any(not self._fill_id(f) for f in got) and sum((f["qty"] for f in got), Decimal(0)) == want:
                     break
             fund = self.x("income", sym, "FUNDING_FEE", opened)
         except ExchangeError as e:
             log.error("%s fills fetch failed, close record held: %s", sym, e)
             want = self._opened_qty(j, entry_fills)
-            closed = sum((f["qty"] for f in self._merge_exit_fills(raw_exit, j.get("stream_fills"))), Decimal(0))
+            closed = sum((f["qty"] for f in self._merge_exit_fills(raw_exit, stream)), Decimal(0))
             self._hold_close(sym, j, want, closed, reason, fetch_failed=True)
             return
         want = self._opened_qty(j, entry_fills)
-        exit_fills = self._merge_exit_fills(raw_exit, j.get("stream_fills"))
+        exit_fills = self._merge_exit_fills(raw_exit, stream)
+        if any(not self._fill_id(f) for f in exit_fills):
+            self._mark_pending(sym, j, reason, "체결 id 없는 청산 체결 · 손익 기록 안 함")
+            return
         closed_qty = sum((f["qty"] for f in exit_fills), Decimal(0))
-        gap = None
-        if closed_qty > want:                                 # neighbor fill, or a legacy target that was too small
-            gap = "qty_mismatch"
-        elif closed_qty < want:
-            if int(j.get("close_hold_n") or 0) + 1 < CLOSE_HOLD_MAX:
-                self._hold_close(sym, j, want, closed_qty, reason)
-                return
-            gap = "fills_incomplete"                          # dust / a fill that never arrives: do not block the symbol
+        if closed_qty > want:
+            self._mark_pending(sym, j, reason,
+                               f"이 거래 주문 체결 {closed_qty.normalize():f} > 열린 {want.normalize():f} · 손익 기록 안 함")
+            return
+        if closed_qty < want:
+            self._hold_close(sym, j, want, closed_qty, reason)   # stays open; the bound only re-alerts
+            return
         self.st["pos"].pop(sym, None)
         gross = sum((f["realized_pnl"] for f in exit_fills), Decimal(0))
         fees = sum((f["commission"] for f in entry_fills + exit_fills), Decimal(0))
@@ -2012,8 +2093,6 @@ class V6Engine:
                "actual_risk_pct": str((self._loss_to_stop(eq, e0, stop0, int(j.get("side", 1))) / w0 * 100)
                                       .quantize(Decimal("0.0001"))) if w0 > 0 else None,
                "exit_legs": exit_legs, "exit_px_avg": str(xpx)}       # exit_px = exit_px_avg (qty-weighted, kept for old readers)
-        if gap:
-            rec[gap] = True
         rec["outcome"] = REASON_KO.get(reason.split(" ")[0], reason)   # TA: TP1 then the BE stop = "1차 익절 후 본절"
         t_x = max((f["time"] for f in exit_fills), default=self.now_ms())
         if reason.split(" ")[0] not in MODEL_EXITS:              # exchange stop / safety close, not a model exit
@@ -2039,15 +2118,7 @@ class V6Engine:
                      f"수량 {eq} · {j['entry_px']} → {'평균 ' if len(exit_legs) > 1 else ''}{xpx:.8g}"
                      + (" (" + " / ".join(f"{x['qty']}@{x['price']}" for x in exit_legs) + ")" if len(exit_legs) > 1 else "")
                      + f" · 손절 {j['stop_px']}\n"
-                     + "\n".join(leg_lines + [f"• 진입 수수료 {efee:.4f}"])
-                     + ("\n⚠️ 체결 내역 일부 누락" if gap == "fills_incomplete" else ""), kind="exit", event_ms=t_x)
-        if gap == "qty_mismatch":
-            self.alert(f"청산 기록 수량 불일치 — {sym}",
-                       f"열린 {want.normalize():f} · 청산 체결 {closed_qty.normalize():f} · qty_mismatch")
-        elif gap == "fills_incomplete":
-            self.alert(f"청산 기록 수량 미달 — {sym}",
-                       f"열린 {want.normalize():f} · 청산 체결 {closed_qty.normalize():f} · fills_incomplete"
-                       f" · {CLOSE_HOLD_MAX}회 대조 후 기록")
+                     + "\n".join(leg_lines + [f"• 진입 수수료 {efee:.4f}"]), kind="exit", event_ms=t_x)
         self._emit("trades", lambda: dict(self._trade_line(j, rec, entry_fills, exit_fills, t_x), outcome=rec["outcome"]))
         self.check_halts(daily=False)   # daily-loss check runs at the end of reconcile
 
@@ -2056,7 +2127,11 @@ class V6Engine:
         if self.st["intents"]:
             self.resolve_intents()                              # unknown entry outcomes first (by client id)
         acct = self.x("account")
-        pos = self.x("positions", self.cfg.symbols)
+        try:
+            pos = self.x("positions", self.cfg.symbols)
+        except ExchangeError:
+            self._flat_confirmed.clear()                    # unknown size: keep every journal in the risk sum
+            raise
         try:
             marks = self.x("mark_prices")
         except ExchangeError:
@@ -2531,7 +2606,7 @@ class V6Engine:
         lines += [f"  {t['sym']} {REASON_KO.get(str(t['reason']).split(' ')[0], t['reason'])} {D(t['net']):+.4f}"
                   + (f" ({t['R']}R)" if t.get("R") else "") for t in trades]
         lines.append("보유: " + (", ".join(f"{s} {j['qty']} @ {j['entry_px']} 손절 {j['stop_px']}"
-                                           for s, j in self.st["pos"].items() if not self._is_held_flat(j))
+                                           for s, j in self.st["pos"].items() if not self._closed_flat_confirmed(s, j))
                                  or "없음"))
         if self.st["unknown"]:
             lines.append("⚠️ 기록 없는 포지션 (자동 청산 안 함): " + ", ".join(
