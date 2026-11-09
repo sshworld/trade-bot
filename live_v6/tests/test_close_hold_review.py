@@ -8,12 +8,13 @@ import json
 
 import pytest
 
+from live_v6.engine import CLOSE_HOLD_MAX
 from live_v6.exchange import ExchangeError
 from live_v6.tradelog import EventLog
 
 from .test_close_qty_guard import DOGE, HOLD, SOL, _arm_legacy_short, _block_telegram, _exit_qty, _shape_trades
 from .test_ptp_short import _fill, _journal
-from .test_qrmtf import legacy_engine
+from .test_qrmtf import _tp1_then_be, legacy_engine, open_pos
 
 
 def D(x):
@@ -238,6 +239,48 @@ def test_hold_preserves_close_reason(offline, monkeypatch, reason):
 
 
 # ───────────── flat path still cancels leftover SL/TP while the journal is held ─────────────
+def _protecting(b, sym):
+    return [o for o in b.inner.open_orders(sym) if o["close_position"] or o["reduce_only"]]
+
+
+def test_open_remainder_is_not_force_closed_and_flat_path_still_cancels(offline, monkeypatch):
+    """Exit fills short of the opened qty while the remainder is still open: do not write a closed row,
+    do not cancel SL/TP, and do not apply the fills_incomplete timeout. That timeout is only for amt == 0.
+    The mirror, once the exchange is flat, still cancels the leftover reduce-only orders."""
+    _block_telegram(monkeypatch)
+    eng = legacy_engine(offline)
+    open_pos(offline, eng, -1)
+    j = _tp1_then_be(offline, eng, -1)
+    remain = D(j["qty"])
+    rows = offline.inner.user_trades(DOGE, 0)
+    opened = sum((r["qty"] for r in rows if r["side"] == "SELL"), D(0))
+    closed = sum((r["qty"] for r in rows if r["side"] == "BUY"), D(0))
+    assert offline.amt(DOGE) != 0 and closed < opened and closed > 0   # TP1 only; remainder still on the exchange
+    live = {o["client_id"] for o in _protecting(offline, DOGE)}
+    assert any(o["type"] == "STOP_MARKET" for o in _protecting(offline, DOGE))
+    assert any(o["type"] == "TAKE_PROFIT_MARKET" for o in _protecting(offline, DOGE))
+    for _ in range(CLOSE_HOLD_MAX + 2):
+        eng.reconcile()
+    assert offline.amt(DOGE) != 0
+    assert DOGE in eng.st["pos"] and D(eng.st["pos"][DOGE]["qty"]) == remain
+    assert not eng.meta.get("trades") and not eng.st["pos"][DOGE].get("fills_incomplete")
+    assert not eng.st["pos"][DOGE].get("close_held")
+    assert {o["client_id"] for o in _protecting(offline, DOGE)} == live
+
+    # mirror: exchange flat, exit fills still short of the opened qty → leftover SL/TP are cancelled, journal stays open
+    known = {f["order_id"] for f in offline.inner.fills if f["symbol"] == DOGE}
+    offline.inner.set_price(DOGE, D(eng.st["pos"][DOGE]["stop_px"]))
+    assert offline.amt(DOGE) == 0 and DOGE in eng.st["pos"]
+    (raw,) = [f for f in offline.inner.fills if f["symbol"] == DOGE and f["order_id"] not in known]
+    _shape_trades(offline, raw["order_id"], [], {"show": "none"})
+    eng.reconcile()                                         # flat, fills still short: cancel now, do not commit yet
+    assert offline.amt(DOGE) == 0 and DOGE in eng.st["pos"] and not eng.meta.get("trades")
+    assert not _protecting(offline, DOGE)
+    for _ in range(CLOSE_HOLD_MAX - 1):
+        eng.reconcile()
+    assert DOGE not in eng.st["pos"] and eng.meta["trades"][-1].get("fills_incomplete") is True
+
+
 def test_held_flat_close_still_cancels_leftover_reduce_orders(offline, monkeypatch):
     _block_telegram(monkeypatch)
     eng, j, raw = _arm_legacy_short(offline)
