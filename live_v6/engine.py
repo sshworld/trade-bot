@@ -382,8 +382,9 @@ class V6Engine:
             log.warning("startup leverage: positions read failed: %s", e)
             return
         for s in self.cfg.symbols:
-            if s in self.st["pos"] or s in self.st["unknown"] or pos.get(s, {}).get("amt", 0) != 0:
-                log.info("startup leverage %s: position open, left at %sx", s, pos.get(s, {}).get("leverage"))
+            row = pos.get(s)
+            if row is None or self._row_amt(pos, s) != 0 or s in self.st["pos"] or s in self.st["unknown"]:
+                log.info("startup leverage %s: position open or unknown, left at %sx", s, None if row is None else row.get("leverage"))
                 continue
             was = pos.get(s, {}).get("leverage")
             try:
@@ -426,7 +427,8 @@ class V6Engine:
                 self.x("set_margin_type", sym, "ISOLATED")
             except OrderRejected as e:
                 err = str(e)
-            mt = self.x("positions", self.cfg.symbols)[sym]["margin_type"]
+            row = self.x("positions", self.cfg.symbols).get(sym) or {}
+            mt = row.get("margin_type")
         except ExchangeError as e:
             mt, err = "?", str(e)
         key = f"{MARGIN}:{sym}"
@@ -727,7 +729,10 @@ class V6Engine:
     def breach_check(self, sym, mark, source):
         self.sleep(self.cfg.breach_grace_s)                 # give the exchange stop a moment to fire
         try:
-            if self.x("positions", self.cfg.symbols)[sym]["amt"] == 0:
+            amt_now = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+            if amt_now is None:
+                return                                      # missing row is not a confirmed flat
+            if amt_now == 0:
                 self._dirty = True
                 return
         except ExchangeError:
@@ -844,8 +849,9 @@ class V6Engine:
             return False
         try:
             pos = self.x("positions", self.cfg.symbols)
-            if pos[sym]["amt"] != 0 or sym in self.st["pos"]:
-                log.warning("entry %s refused: position exists (no averaging)", sym)
+            amt0 = self._row_amt(pos, sym)
+            if amt0 is None or amt0 != 0 or sym in self.st["pos"]:
+                log.warning("entry %s refused: position %s (no averaging)", sym, "unknown" if amt0 is None else amt0)
                 return False
             oo = self.x("open_orders", sym)
             if any(not (o["close_position"] or o["reduce_only"]) for o in oo):
@@ -886,9 +892,10 @@ class V6Engine:
             self.skip(sym, "leverage", f"set {sz.lev}x failed: {err}")
             self.alert(f"레버리지 {sz.lev}x 설정 실패 — 진입 건너뜀", f"{sym} {err}")
             return False
-        book = self._open_book(pos)
-        if pos[sym]["amt"] != 0:
-            log.warning("entry %s refused at placement: position appeared", sym)
+        book = self._open_book(pos) if pos else []
+        placed = self._row_amt(pos, sym) if pos else None
+        if pos is None or placed is None or placed != 0:
+            log.warning("entry %s refused at placement: position %s", sym, "unknown" if placed is None else placed)
             return False
         if pos[sym]["margin_type"] != "ISOLATED":
             self.skip(sym, "margin_mode", f"read-back {pos[sym]['margin_type']}")
@@ -1211,9 +1218,11 @@ class V6Engine:
             if (tp.get(k) and f"{j['cid']}{w}" not in cids     # `amt` / `mk` may predate it -> fresh position read
                     and not (w == "t1" and j.get("tp1_done"))):  # first (testnet LINK + PEPE 2026-10-30: re-place ->
                 try:                                              # -2021 -> a 2nd market TP1 closed the remainder)
-                    fresh = self.x("positions", self.cfg.symbols)[sym]["amt"]
+                    fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
                 except ExchangeError:
                     return
+                if fresh is None:
+                    return                                  # missing row: do not guess a fill from amount 0
                 if abs(fresh) < abs(amt):
                     self._dirty = True                            # filled: next reconcile books it (tp1_done / flat)
                     return
@@ -1264,10 +1273,12 @@ class V6Engine:
         if not filled:
             return None
         try:
-            amt = self.x("positions", self.cfg.symbols)[sym]["amt"]
+            amt = self._row_amt(self.x("positions", self.cfg.symbols), sym)
             orders = self.x("open_orders", sym)
         except ExchangeError:
             return False
+        if amt is None:
+            return False                                    # missing row is not a confirmed flat fill
         log.info("%s exit fill from order status: %s → position %s", sym, filled, amt)
         if "stop" in filled or "tp2" in filled:
             j["exit_fill"] = ("trail_stop" if j.get("trailed") else "be_stop" if j.get("be_done") else "stop_loss") \
@@ -1329,7 +1340,7 @@ class V6Engine:
             oo, new = [], None
         if new is None:
             try:                                                  # accepted but fired at once (instant fire)?
-                flat = self.x("positions", self.cfg.symbols)[sym]["amt"] == 0
+                flat = self._row_amt(self.x("positions", self.cfg.symbols), sym) == 0
             except ExchangeError:
                 flat = False
             if flat:                                              # remainder already gone → cancel old stop + TPs, record
@@ -1495,7 +1506,9 @@ class V6Engine:
             return False
         for attempt in range(self.cfg.exit_attempts):
             try:
-                amt = self.x("positions", self.cfg.symbols)[sym]["amt"]
+                amt = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+                if amt is None:
+                    raise ExchangeError(f"{sym} missing from positions")
                 if amt == 0:
                     self._after_flat(sym, j.get("close_reason", reason))
                     return True
@@ -1508,7 +1521,9 @@ class V6Engine:
                         pass
                 self.save()
                 self.submit_market(sym, "SELL" if amt > 0 else "BUY", abs(amt), f"{j['cid']}x{seq}", reduce_only=True)
-                amt2 = self.x("positions", self.cfg.symbols)[sym]["amt"]
+                amt2 = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+                if amt2 is None:
+                    raise ExchangeError(f"{sym} missing from positions")
                 if amt2 == 0:
                     self._after_flat(sym, j.get("close_reason", reason))
                     return True
@@ -1889,12 +1904,25 @@ class V6Engine:
                 ids.add(str(od["id"]))
         return ids
 
+    @staticmethod
+    def _row_amt(pos, sym):
+        """Explicit amount from a positions snapshot, or None when `sym` is absent. Absence is unknown, not flat."""
+        row = pos.get(sym) if isinstance(pos, dict) else None
+        if not isinstance(row, dict) or row.get("amt") is None:
+            return None
+        return row["amt"]
+
     def _position_amt(self, sym):
-        """(amount, ok). A failed read clears the flat confirmation so the journal counts in risk again."""
+        """(amount, ok). A failed read, or a symbol missing from the response, clears the flat confirmation so the
+        journal counts in risk again. Only an explicit amount of 0 is flat."""
         try:
             syms = tuple(dict.fromkeys((*self.cfg.symbols, sym)))
-            amt = self.x("positions", syms)[sym]["amt"]
+            pos = self.x("positions", syms)
         except ExchangeError:
+            self._flat_confirmed.discard(sym)
+            return None, False
+        amt = self._row_amt(pos, sym)
+        if amt is None:
             self._flat_confirmed.discard(sym)
             return None, False
         if amt == 0:
@@ -2155,9 +2183,11 @@ class V6Engine:
             self._flat_confirmed.clear()                    # unknown size: keep every journal in the risk sum
             raise
         # Apply the whole snapshot before any per-symbol read. A later symbol must not keep a stale flat
-        # flag when an earlier symbol's open_orders (or any other follow-up) raises.
-        for sym, row in pos.items():
-            if row["amt"] == 0:
+        # flag when an earlier symbol's open_orders (or any other follow-up) raises. A symbol with no row
+        # is unknown: drop any stale flat confirmation. Only an explicit amount of 0 is flat.
+        for sym in self.cfg.symbols:
+            amt0 = self._row_amt(pos, sym)
+            if amt0 == 0:
                 self._flat_confirmed.add(sym)
             else:
                 self._flat_confirmed.discard(sym)
@@ -2169,7 +2199,9 @@ class V6Engine:
         self.meta["equity"] = str(acct.get("equity", acct["wallet"]))
         mismatch = []
         for sym in self.cfg.symbols:
-            amt = pos[sym]["amt"]
+            amt = self._row_amt(pos, sym)
+            if amt is None:
+                continue                                 # unknown: keep the journal in risk, do not cancel SL/TP
             j = self.st["pos"].get(sym)
             orders = self.x("open_orders", sym)
             filled = None
@@ -2403,10 +2435,12 @@ class V6Engine:
         cid = f"{self.cfg.cid_prefix}{sym.removesuffix('USDT')}u{int(u['detected_ms']) // 1000}x{seq}"
         try:
             self.submit_market(sym, "SELL" if amt > 0 else "BUY", abs(amt), cid, reduce_only=True)
-            left = self.x("positions", self.cfg.symbols)[sym]["amt"]
+            left = self._row_amt(self.x("positions", self.cfg.symbols), sym)
         except ExchangeError as e:
             log.error("%s unknown position last-resort close failed (retry next reconcile): %s", sym, e)
             return
+        if left is None:
+            return                                          # missing row is not a confirmed flat
         if left == 0:
             self.st["unknown"].pop(sym, None)
             self.save()

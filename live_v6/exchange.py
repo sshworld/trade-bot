@@ -250,11 +250,14 @@ class BinanceREST:
         raise ExchangeError("no USDT asset in account")
 
     def positions(self, symbols) -> dict[str, dict]:
+        """Rows the exchange actually returned. A requested symbol with no row is absent, not amount 0:
+        a missing row is not a confirmed flat position."""
         rows = self._req("GET", "/fapi/v2/positionRisk", critical=True)
-        out = {s: {"amt": Decimal(0), "entry": Decimal(0), "leverage": None, "margin_type": None} for s in symbols}
+        wanted = set(symbols)
+        out: dict[str, dict] = {}
         for r in rows:
             s = r.get("symbol")
-            if s in out:
+            if s in wanted:
                 mt = str(r.get("marginType", "")).lower()
                 out[s] = {"amt": Decimal(r["positionAmt"]), "entry": Decimal(r["entryPrice"]),
                           "leverage": int(r["leverage"]),
