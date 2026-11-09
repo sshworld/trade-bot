@@ -32,6 +32,18 @@ def _eng(b, tmp_path=None):
     return eng
 
 
+def _scheme_engine(b, scheme, tmp_path=None):
+    """Legacy or scheme E engine, with no open position, so a synthetic journal can be closed directly."""
+    if scheme == "e":
+        from .test_chandelier_e import Clk, e_engine
+        eng = e_engine(b, Clk())
+    else:
+        eng = legacy_engine(b)
+    if tmp_path is not None:
+        eng.events = EventLog(str(tmp_path), "t", commit="c0ffee123456")
+    return eng
+
+
 def _wire(b, fills, funding="0", trades_fn=None, income_fn=None):
     def trades(fn, *a):
         return trades_fn(fn, *a) if trades_fn else fills
@@ -109,7 +121,8 @@ def test_income_error_does_not_commit_with_funding_zero(offline, monkeypatch):
 
 
 # ───────────── 2. quantity gaps ─────────────
-def test_own_fills_over_qty_stay_pending_no_pnl(offline, monkeypatch):
+@pytest.mark.parametrize("scheme", ["legacy", "e"])
+def test_own_fills_over_qty_stay_pending_no_pnl(offline, monkeypatch, scheme):
     # This trade's own exit order filled more than it opened. Do not book PnL; leave it pending.
     _block_telegram(monkeypatch)
     j, t0 = _short("1")
@@ -117,7 +130,7 @@ def test_own_fills_over_qty_stay_pending_no_pnl(offline, monkeypatch):
     fills = [_fill("E1", "SELL", "100", "1", "0.05", "0", t0),
              _fill("X1", "BUY", "99", "1", "0.05", "1", t0 + 500, "T-X"),
              _fill("X1", "BUY", "98", "0.4", "0.02", "0.8", t0 + 800, "T-X2")]
-    eng = _eng(offline)
+    eng = _scheme_engine(offline, scheme)
     eng.st["pos"][SOL] = j
     _wire(offline, fills)
     eng.record_close(SOL, "stop_loss")
@@ -126,13 +139,14 @@ def test_own_fills_over_qty_stay_pending_no_pnl(offline, monkeypatch):
     assert any("대조 보류" in m for m in eng.tg.sent)
 
 
-def test_duplicate_rest_trade_ids_are_not_double_counted(offline, monkeypatch):
+@pytest.mark.parametrize("scheme", ["legacy", "e"])
+def test_duplicate_rest_trade_ids_are_not_double_counted(offline, monkeypatch, scheme):
     _block_telegram(monkeypatch)
     j, t0 = _short("1")
     _own(j, "X1")
     one = _fill("X1", "BUY", "99", "1", "0.05", "1", t0 + 1000, "T-X")
     fills = [_fill("E1", "SELL", "100", "1", "0.05", "0", t0, "T-E"), one, dict(one)]
-    eng = _eng(offline)
+    eng = _scheme_engine(offline, scheme)
     eng.st["pos"][SOL] = j
     _wire(offline, fills)
     eng.record_close(SOL, "stop_loss")
@@ -162,7 +176,8 @@ def test_legacy_journal_without_entry_qty_uses_opening_fills_not_remainder(offli
     assert not rec.get("qty_mismatch") and not rec.get("fills_incomplete")
 
 
-def test_short_flat_hold_alerts_but_never_commits(offline, monkeypatch):
+@pytest.mark.parametrize("scheme", ["legacy", "e"])
+def test_short_flat_hold_alerts_but_never_commits(offline, monkeypatch, scheme):
     # Dust that never arrives: after CLOSE_HOLD_MAX, alert again, stay open, keep blocking this symbol.
     _block_telegram(monkeypatch)
     j, t0 = _short("1")
@@ -170,7 +185,7 @@ def test_short_flat_hold_alerts_but_never_commits(offline, monkeypatch):
     j["exit_orders"] = [{"id": "X1", "client_id": j["cid"] + "x0"}]
     fills = [_fill("E1", "SELL", "100", "1", "0.05", "0", t0, "T-E"),
              _fill("X1", "BUY", "99", "0.4", "0.02", "0.4", t0 + 1000, "T-X")]
-    eng = _eng(offline)
+    eng = _scheme_engine(offline, scheme)
     eng.st["pos"][SOL] = j
     _wire(offline, fills)
     for _ in range(CLOSE_HOLD_MAX):
@@ -296,13 +311,14 @@ def test_open_remainder_is_not_force_closed_and_flat_path_still_cancels(offline,
     assert not _protecting(offline, DOGE)
 
 
-def test_missing_trade_id_does_not_commit(offline, monkeypatch):
+@pytest.mark.parametrize("scheme", ["legacy", "e"])
+def test_missing_trade_id_does_not_commit(offline, monkeypatch, scheme):
     _block_telegram(monkeypatch)
     j, t0 = _short("1")
     _own(j, "X1")
     fills = [_fill("E1", "SELL", "100", "1", "0.05", "0", t0, "T-E"),
              _fill("X1", "BUY", "99", "1", "0.05", "1", t0 + 1000, "")]
-    eng = _eng(offline)
+    eng = _scheme_engine(offline, scheme)
     eng.st["pos"][SOL] = j
     _wire(offline, fills)
     eng.record_close(SOL, "stop_loss")
@@ -311,14 +327,15 @@ def test_missing_trade_id_does_not_commit(offline, monkeypatch):
     assert any("대조 보류" in m for m in eng.tg.sent)
 
 
-def test_neighbor_fill_is_not_this_trades_pnl(offline, monkeypatch):
+@pytest.mark.parametrize("scheme", ["legacy", "e"])
+def test_neighbor_fill_is_not_this_trades_pnl(offline, monkeypatch, scheme):
     _block_telegram(monkeypatch)
     j, t0 = _short("1")
     _own(j, "X1")
     fills = [_fill("E1", "SELL", "100", "1", "0.05", "0", t0, "T-E"),
              _fill("X1", "BUY", "99", "1", "0.05", "1", t0 + 500, "T-X"),
              _fill("NEIGH", "BUY", "98", "0.4", "0.02", "0.8", t0 + 800, "T-N")]
-    eng = _eng(offline)
+    eng = _scheme_engine(offline, scheme)
     eng.st["pos"][SOL] = j
     _wire(offline, fills)
     eng.record_close(SOL, "stop_loss")
@@ -427,6 +444,45 @@ def test_cancel_failure_retries_on_the_next_reconcile(offline, monkeypatch, sche
     eng.reconcile()
     assert sym in eng.st["pos"] and not eng.meta.get("trades")
     assert not _protecting(offline, sym)
+
+
+@pytest.mark.parametrize("scheme", ["legacy", "e"])
+def test_mixed_rest_id_and_unidentified_stream_fill_quarantines(offline, monkeypatch, scheme):
+    """REST has a trade id for the order; the stream has another slice of that same order with no id.
+    The id-less slice must not be dropped so the identified slice can book P&L."""
+    _block_telegram(monkeypatch)
+    eng = _scheme_engine(offline, scheme)
+    j, t0, fills = _matched()
+    j["stream_fills"] = [_fill("X1", "BUY", "98", "0.4", "0.02", "0.8", t0 + 2000, "")]
+    eng.st["pos"][SOL] = j
+    _wire(offline, fills)
+    eng.record_close(SOL, "stop_loss")
+    assert SOL in eng.st["pos"] and not eng.meta.get("trades")
+    assert eng.st["pos"][SOL].get("reconcile_pending") is True
+    assert any("대조 보류" in m for m in eng.tg.sent)
+
+
+@pytest.mark.parametrize("scheme", ["legacy", "e"])
+def test_position_reread_failure_does_not_cancel(offline, monkeypatch, scheme):
+    """The snapshot says flat, the fresher read fails. Do not cancel SL/TP."""
+    _block_telegram(monkeypatch)
+    eng, j = _open_scheme(offline, scheme, -1)
+    assert offline.stops(DOGE)
+    n = {"n": 0}
+
+    def flaky(fn, syms):
+        n["n"] += 1
+        if n["n"] == 1:
+            return {s: {"amt": D(0), "entry": D(0), "margin": D(0)} for s in syms}
+        raise ExchangeError("positions down")
+
+    offline.fx.inject("positions", flaky, times=5)
+    try:
+        eng.reconcile()
+    except ExchangeError:
+        pass
+    assert offline.amt(DOGE) != 0 and offline.stops(DOGE)
+    assert DOGE in eng.st["pos"] and not eng.meta.get("trades")
 
 
 def test_held_flat_close_still_cancels_leftover_reduce_orders(offline, monkeypatch):
