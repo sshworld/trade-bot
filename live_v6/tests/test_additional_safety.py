@@ -8,8 +8,13 @@ import copy
 
 import pytest
 
-from .test_close_hold_review import D, DOGE, SOL, _block_telegram, _eng, _matched, _open_scheme, _wire
+from live_v6.exchange import ExchangeError
+
+from .test_close_hold_review import (
+    D, DOGE, SOL, _block_telegram, _eng, _matched, _open_scheme, _protecting, _wire,
+)
 from .test_ptp_short import _fill
+from .test_qrmtf import open_pos
 
 
 @pytest.mark.parametrize("scheme", ["legacy", "e"])
@@ -47,6 +52,36 @@ def test_no_cleanup_after_newer_nonzero_position_read(offline, monkeypatch, sche
     eng.reconcile()
     assert offline.amt(DOGE) != 0
     assert offline.stops(DOGE), "fresh nonzero read must not be followed by cancelling all SL/TP"
+
+
+@pytest.mark.parametrize("scheme", ["legacy", "e"])
+def test_earlier_symbol_query_failure_keeps_later_nonzero_in_risk(offline, monkeypatch, scheme):
+    """A full positions snapshot already shows SOL nonzero. DOGE's open_orders read then fails.
+    SOL's flat flag must already be cleared, and its SL/TP must still be on the book."""
+    _block_telegram(monkeypatch)
+    eng, _j = _open_scheme(offline, scheme, 1)
+    open_pos(offline, eng, 1, SOL)
+    eng.st["pos"][SOL]["risk_frac"] = 0.04
+    saved = copy.deepcopy(offline.inner.pos[SOL])
+    offline.inner.pos.pop(SOL)
+    eng.record_close(SOL, "stop_loss")                 # held + flat-confirmed, without cancelling SOL's orders
+    assert SOL in eng._flat_confirmed and eng.st["pos"][SOL].get("close_held")
+    offline.inner.pos[SOL] = saved
+    live = {o["client_id"] for o in _protecting(offline, SOL)}
+    assert live and offline.amt(SOL) != 0
+    doge_pct = float(eng.st["pos"][DOGE]["risk_frac"]) * 100
+
+    def doge_orders(fn, sym, *a, **k):
+        if sym == DOGE:
+            raise ExchangeError("open_orders down")
+        return fn(sym, *a, **k)
+
+    offline.fx.inject("open_orders", doge_orders, times=99)
+    with pytest.raises(ExchangeError):
+        eng.reconcile()
+    assert eng._open_risk_pct() == pytest.approx(doge_pct + 4)
+    assert round(eng._open_risk_pct(), 5) == round(doge_pct + 4, 5)
+    assert {o["client_id"] for o in _protecting(offline, SOL)} == live
 
 
 def test_mixed_rest_id_and_unidentified_stream_fill_quarantines(offline, monkeypatch):
