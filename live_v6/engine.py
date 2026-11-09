@@ -1524,13 +1524,18 @@ class V6Engine:
         return False
 
     def _after_flat(self, sym, reason):
+        """Cancel protective orders only after the freshest position read is still 0."""
+        j = self.st["pos"].get(sym)
+        if j is not None:
+            verdict, _fresh = self.record_close(sym, reason)
+            if verdict != "flat":
+                return
         try:
             for o in self.x("open_orders", sym):
                 if (o["close_position"] or o["reduce_only"]) and str(o["client_id"]).startswith(self.cfg.cid_prefix):
                     self.x("cancel", sym, o)
         except ExchangeError as e:
             log.error("%s stale stop cancel failed (reconcile retries): %s", sym, e)
-        self.record_close(sym, reason)
 
     def _residual_watch(self, sym, failed, foreign):
         """TA R3 alert (2026-10-29), flat coin only, alerts only: which orders get cancelled is unchanged. Counters live
@@ -1903,10 +1908,11 @@ class V6Engine:
         j["close_held"] = True
         j["reconcile_pending"] = True
         j.setdefault("close_reason", reason)
+        n = int(j.get("pending_n") or 0) + 1
+        j["pending_n"] = n
         log.error("%s close reconcile pending: %s", sym, why)
-        if not j.get("reconcile_pending_alerted"):
-            j["reconcile_pending_alerted"] = True
-            self.alert(f"청산 대조 보류 — {sym}", why)
+        if n == 1 or n % CLOSE_HOLD_MAX == 0:
+            self.alert(f"청산 대조 보류 — {sym}", f"{why} · {n}회 대조")
         self.save()
 
     @classmethod
@@ -1999,13 +2005,21 @@ class V6Engine:
         self.save()
 
     def record_close(self, sym, reason):
+        """Book the close, or leave the journal open.
+
+        Returns ``("flat", 0)`` only when the freshest position read is 0 (the caller may cancel protective
+        orders), ``("open", amt)`` when that read is nonzero, or ``("unknown", None)`` when it failed. A later
+        nonzero or a failed read is not a flat confirmation, and it must not be followed by a cancel.
+        """
         j = self.st["pos"].get(sym)
         if not j:
-            return
+            return "flat", Decimal(0)
         opened = int(j.get("opened_ms", self.now_ms()))
         amt, ok = self._position_amt(sym)
-        if not ok or amt != 0:
-            return                                            # not confirmed flat: no close, no order cancel, risk stays
+        if not ok:
+            return "unknown", None
+        if amt != 0:
+            return "open", amt
         fund, entry_fills, raw_exit = [], [], []
         own = self._own_exit_order_ids(sym, j)
         stream = [f for f in (j.get("stream_fills") or []) if str(f.get("order_id")) in own]
@@ -2016,7 +2030,14 @@ class V6Engine:
             for i in range(retries):
                 if i:
                     self.sleep(self.cfg.query_delay_s)
-                fills = self._dedupe_trade_ids(self.x("user_trades", sym, opened - 60_000))
+                raw_rows = self.x("user_trades", sym, opened - 60_000)
+                # Before dedupe or the REST/stream merge: an own-order row with no trade id is not bookable,
+                # even when another row of that same order already has an id (the merge would drop the id-less one).
+                raw_own = [f for f in raw_rows if str(f.get("order_id")) in own]
+                if any(not self._fill_id(f) for f in raw_own) or any(not self._fill_id(f) for f in stream):
+                    self._mark_pending(sym, j, reason, "체결 id 없는 청산 체결 · 손익 기록 안 함")
+                    return "flat", Decimal(0)
+                fills = self._dedupe_trade_ids(raw_rows)
                 entry_fills = self._entry_fills(j, fills, opened)
                 raw_exit = [f for f in fills if str(f.get("order_id")) in own]
                 want = self._opened_qty(j, entry_fills)
@@ -2029,20 +2050,20 @@ class V6Engine:
             want = self._opened_qty(j, entry_fills)
             closed = sum((f["qty"] for f in self._merge_exit_fills(raw_exit, stream)), Decimal(0))
             self._hold_close(sym, j, want, closed, reason, fetch_failed=True)
-            return
+            return "flat", Decimal(0)                         # the position read was 0; the fill read is what failed
         want = self._opened_qty(j, entry_fills)
         exit_fills = self._merge_exit_fills(raw_exit, stream)
         if any(not self._fill_id(f) for f in exit_fills):
             self._mark_pending(sym, j, reason, "체결 id 없는 청산 체결 · 손익 기록 안 함")
-            return
+            return "flat", Decimal(0)
         closed_qty = sum((f["qty"] for f in exit_fills), Decimal(0))
         if closed_qty > want:
             self._mark_pending(sym, j, reason,
                                f"이 거래 주문 체결 {closed_qty.normalize():f} > 열린 {want.normalize():f} · 손익 기록 안 함")
-            return
+            return "flat", Decimal(0)
         if closed_qty < want:
             self._hold_close(sym, j, want, closed_qty, reason)   # stays open; the bound only re-alerts
-            return
+            return "flat", Decimal(0)
         self.st["pos"].pop(sym, None)
         gross = sum((f["realized_pnl"] for f in exit_fills), Decimal(0))
         fees = sum((f["commission"] for f in entry_fills + exit_fills), Decimal(0))
@@ -2121,6 +2142,7 @@ class V6Engine:
                      + "\n".join(leg_lines + [f"• 진입 수수료 {efee:.4f}"]), kind="exit", event_ms=t_x)
         self._emit("trades", lambda: dict(self._trade_line(j, rec, entry_fills, exit_fills, t_x), outcome=rec["outcome"]))
         self.check_halts(daily=False)   # daily-loss check runs at the end of reconcile
+        return "flat", Decimal(0)
 
     # ───────────────────────── reconcile (exchange → local) ─────────────────────────
     def reconcile(self):
@@ -2141,6 +2163,10 @@ class V6Engine:
         mismatch = []
         for sym in self.cfg.symbols:
             amt = pos[sym]["amt"]
+            if amt == 0:
+                self._flat_confirmed.add(sym)                # latest successful snapshot; a later nonzero clears it
+            else:
+                self._flat_confirmed.discard(sym)
             j = self.st["pos"].get(sym)
             orders = self.x("open_orders", sym)
             filled = None
@@ -2154,9 +2180,15 @@ class V6Engine:
                         marks[sym] = self.x("mark_prices")[sym]
                     except (ExchangeError, KeyError):
                         marks.pop(sym, None)
+            if amt == 0 and j:
+                # record_close re-reads. A newer nonzero, or a failed read, replaces this snapshot: do not cancel.
+                verdict, fresh = self.record_close(sym, j.get("close_reason") or j.get("exit_fill") or "stop_loss")
+                if verdict == "open":
+                    amt = fresh
+                elif verdict != "flat":
+                    side = 1 if int(j.get("side", 1)) > 0 else -1
+                    amt = D(j.get("qty") or 0) * side or Decimal(side)
             if amt == 0:
-                if j:
-                    self.record_close(sym, j.get("close_reason") or j.get("exit_fill") or "stop_loss")
                 u = self.st["unknown"].pop(sym, None)
                 if u is not None:                               # TA R4: resolved by hand (or its stop fired)
                     self.save()
@@ -2585,8 +2617,11 @@ class V6Engine:
             self.save()
         if self.clock() - self.meta.get("heartbeat_at", 0) >= self.cfg.heartbeat_s:
             self.meta["heartbeat_at"] = self.clock()
+            held = [s for s, jj in self.st["pos"].items()
+                    if isinstance(jj, dict) and (jj.get("close_held") or jj.get("reconcile_pending"))]
             self.notify(f"💓 작동 중 · 잔고 {D(self.meta.get('wallet', '0')):.2f} USDT · 포지션 {self._open_position_count()}개"
                          + (f" · 기록 없는 포지션 {','.join(self.st['unknown'])}" if self.st["unknown"] else "")
+                         + (f" · 청산 미확정 {','.join(sorted(held))}" if held else "")
                          + (f" · 진입 보류: {','.join(self.blocks)}" if self.blocks else "")
                          + (f" · 중단: {self.meta['halted']}" if self.meta.get("halted") else ""))
             self.save()
