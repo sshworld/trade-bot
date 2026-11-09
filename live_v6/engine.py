@@ -1668,6 +1668,8 @@ class V6Engine:
                                "commission": str(r.get("n") or 0), "realized_pnl": str(r.get("rp") or 0),
                                "time": int(r.get("T") or 0)})
                     del fs[:-40]
+                # durable before the next reconcile: a restart must still see fills the stream already delivered
+                self.save()
         except Exception as e:  # noqa: BLE001
             log.error("exit order note failed: %r", e)
 
@@ -1796,38 +1798,103 @@ class V6Engine:
                 "incidents": c.get("incidents", 0), "log_write_fail": c.get("log_write_fail", 0),
                 "code_commit": self.events.commit}
 
-    def record_close(self, sym, reason):
-        j = self.st["pos"].pop(sym, None)
+    @staticmethod
+    def _opened_qty(j, entry_fills) -> Decimal:
+        """Quantity the close must cover: the entry qty, else the entry fills, else the journal qty (pre entry_qty rows)."""
+        if j.get("entry_qty") is not None:
+            return D(j["entry_qty"])
+        got = sum((D(f["qty"]) for f in entry_fills), Decimal(0))
+        return got if got else D(j["qty"])
+
+    @staticmethod
+    def _fill_id(f) -> str:
+        tid = str(f.get("trade_id") or "")
+        return "" if tid in ("", "None", "0") else tid
+
+    @classmethod
+    def _as_fill(cls, f) -> dict:
+        return {"order_id": str(f["order_id"]), "trade_id": cls._fill_id(f), "side": f.get("side"),
+                "price": D(f["price"]), "qty": D(f["qty"]), "commission": D(f.get("commission") or 0),
+                "realized_pnl": D(f.get("realized_pnl") or 0), "time": int(f.get("time") or 0),
+                "client_id": f.get("client_id")}
+
+    @classmethod
+    def _merge_exit_fills(cls, rest, stream) -> list:
+        """Union userTrades with user-stream fills by trade id.
+
+        A remainder often fills as several partials of one order (SOL 2026-11-02, order 254785178715, four trade ids).
+        Dropping every stream fill whose order id is already in userTrades throws away the slices REST has not indexed
+        yet. Trade ids make the union exact. Rows with no trade id keep the older rule: use the stream's fills for
+        that order only when they cover strictly more quantity (a partial REST slice, the stream saw the whole order).
+        """
+        rest_f = [cls._as_fill(f) for f in rest]
+        seen, stream_f = set(), []
+        for f in stream or []:
+            g = cls._as_fill(f)
+            if g["trade_id"]:
+                if g["trade_id"] in seen:
+                    continue
+                seen.add(g["trade_id"])
+            stream_f.append(g)
+        rest_ids = {f["trade_id"] for f in rest_f if f["trade_id"]}
+        rest_by, stream_by = {}, {}
+        for f in rest_f:
+            rest_by.setdefault(f["order_id"], []).append(f)
+        for f in stream_f:
+            stream_by.setdefault(f["order_id"], []).append(f)
+        out = list(rest_f)
+        for oid, sfs in stream_by.items():
+            rfs = rest_by.get(oid)
+            if not rfs:
+                out.extend(sfs)
+                continue
+            if any(f["trade_id"] for f in rfs):
+                out.extend(f for f in sfs if f["trade_id"] and f["trade_id"] not in rest_ids)
+                continue
+            if sum((f["qty"] for f in sfs), Decimal(0)) > sum((f["qty"] for f in rfs), Decimal(0)):
+                out = [f for f in out if f["order_id"] != oid]
+                out.extend(sfs)
+        return out
+
+    def _hold_close(self, sym, j, opened_qty, closed_qty):
+        """Exit qty != opened qty: leave the position journal open and warn once. The next reconcile reads again."""
+        log.error("%s close record held: exit qty %s != opened qty %s", sym, closed_qty, opened_qty)
+        if not j.get("close_incomplete_alerted"):
+            j["close_incomplete_alerted"] = True
+            self.alert(f"청산 기록 보류 — {sym} 체결 수량이 열린 수량과 다름",
+                       f"열린 {opened_qty.normalize():f} · 청산 체결 {closed_qty.normalize():f}"
+                       f" · 종료로 기록하지 않음 · 다음 대조에서 다시 집계")
         self.save()
+
+    def record_close(self, sym, reason):
+        j = self.st["pos"].get(sym)
         if not j:
             return
         opened = int(j.get("opened_ms", self.now_ms()))
-        fills, fund, entry_fills, exit_fills = [], [], [], []
+        fills, fund, entry_fills, raw_exit = [], [], [], []
         try:
             # the closing fill can lag userTrades right after the close (live SOL 2026-11-01: only the TP1 leg came
-            # back, so the record said time_exit at the TP1 time with half the qty) -> re-read until the exits cover
-            # the entry qty, bounded by query_retries
+            # back). Re-read until the exits cover the entry qty, bounded by query_retries. Still short → do not
+            # commit the row (SOL 2026-11-02/03: the journal finalized on the TP1 leg and the remainder never attached).
             for i in range(self.cfg.query_retries):
                 if i:
                     self.sleep(self.cfg.query_delay_s)
                 fills = self.x("user_trades", sym, opened - 60_000)
                 entry_fills = [f for f in fills if f["order_id"] == str(j.get("entry_order_id"))]
-                exit_fills = [f for f in fills if f["side"] == self._cs(j) and f["time"] >= opened - 1000]
-                want = D(j.get("entry_qty") or sum((f["qty"] for f in entry_fills), Decimal(0)) or j["qty"])
-                if sum((f["qty"] for f in exit_fills), Decimal(0)) >= want:
+                raw_exit = [f for f in fills if f["side"] == self._cs(j) and f["time"] >= opened - 1000]
+                want = self._opened_qty(j, entry_fills)
+                if sum((f["qty"] for f in self._merge_exit_fills(raw_exit, j.get("stream_fills"))), Decimal(0)) == want:
                     break
             fund = self.x("income", sym, "FUNDING_FEE", opened)
         except ExchangeError as e:
-            log.error("%s fills fetch failed, journaling estimate: %s", sym, e)
-        want = D(j.get("entry_qty") or sum((f["qty"] for f in entry_fills), Decimal(0)) or j["qty"])
-        have = {str(f["order_id"]) for f in exit_fills}
-        if sum((f["qty"] for f in exit_fills), Decimal(0)) < want:   # userTrades still short: exit orders the stream filled
-            exit_fills = exit_fills + [dict(f, price=D(f["price"]), qty=D(f["qty"]), commission=D(f["commission"]),
-                                            realized_pnl=D(f["realized_pnl"]))
-                                       for f in j.get("stream_fills") or [] if f["order_id"] not in have]
-        short = sum((f["qty"] for f in exit_fills), Decimal(0)) < want
-        if short:
-            log.error("%s close record incomplete: exit fills cover less than the entry qty %s", sym, want)
+            log.error("%s fills fetch failed, close record held: %s", sym, e)
+        want = self._opened_qty(j, entry_fills)
+        exit_fills = self._merge_exit_fills(raw_exit, j.get("stream_fills"))
+        closed_qty = sum((f["qty"] for f in exit_fills), Decimal(0))
+        if closed_qty != want:
+            self._hold_close(sym, j, want, closed_qty)
+            return
+        self.st["pos"].pop(sym, None)
         gross = sum((f["realized_pnl"] for f in exit_fills), Decimal(0))
         fees = sum((f["commission"] for f in entry_fills + exit_fills), Decimal(0))
         funding = sum((r["amount"] for r in fund), Decimal(0))
@@ -1875,8 +1942,6 @@ class V6Engine:
                "actual_risk_pct": str((self._loss_to_stop(eq, e0, stop0, int(j.get("side", 1))) / w0 * 100)
                                       .quantize(Decimal("0.0001"))) if w0 > 0 else None,
                "exit_legs": exit_legs, "exit_px_avg": str(xpx)}       # exit_px = exit_px_avg (qty-weighted, kept for old readers)
-        if short:
-            rec["fills_incomplete"] = True
         rec["outcome"] = REASON_KO.get(reason.split(" ")[0], reason)   # TA: TP1 then the BE stop = "1차 익절 후 본절"
         t_x = max((f["time"] for f in exit_fills), default=self.now_ms())
         if reason.split(" ")[0] not in MODEL_EXITS:              # exchange stop / safety close, not a model exit
@@ -1902,8 +1967,7 @@ class V6Engine:
                      f"수량 {eq} · {j['entry_px']} → {'평균 ' if len(exit_legs) > 1 else ''}{xpx:.8g}"
                      + (" (" + " / ".join(f"{x['qty']}@{x['price']}" for x in exit_legs) + ")" if len(exit_legs) > 1 else "")
                      + f" · 손절 {j['stop_px']}\n"
-                     + "\n".join(leg_lines + [f"• 진입 수수료 {efee:.4f}"])
-                     + ("\n⚠️ 체결 내역 일부 누락" if short else ""), kind="exit", event_ms=t_x)
+                     + "\n".join(leg_lines + [f"• 진입 수수료 {efee:.4f}"]), kind="exit", event_ms=t_x)
         self._emit("trades", lambda: dict(self._trade_line(j, rec, entry_fills, exit_fills, t_x), outcome=rec["outcome"]))
         self.check_halts(daily=False)   # daily-loss check runs at the end of reconcile
 

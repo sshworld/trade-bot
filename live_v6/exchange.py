@@ -286,9 +286,9 @@ class BinanceREST:
 
     def user_trades(self, symbol, start_ms) -> list[dict]:
         rows = self._req("GET", "/fapi/v1/userTrades", {"symbol": symbol, "startTime": int(start_ms), "limit": 1000})
-        return [{"order_id": str(r["orderId"]), "side": r["side"], "price": Decimal(r["price"]), "qty": Decimal(r["qty"]),
-                 "commission": Decimal(r["commission"]), "realized_pnl": Decimal(r.get("realizedPnl", "0")),
-                 "time": int(r["time"])} for r in rows]
+        return [{"order_id": str(r["orderId"]), "trade_id": str(r.get("id") or ""), "side": r["side"],
+                 "price": Decimal(r["price"]), "qty": Decimal(r["qty"]), "commission": Decimal(r["commission"]),
+                 "realized_pnl": Decimal(r.get("realizedPnl", "0")), "time": int(r["time"])} for r in rows]
 
     def income(self, symbol, income_type, start_ms) -> list[dict]:
         p = {"startTime": int(start_ms), "limit": 1000}
