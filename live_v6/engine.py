@@ -2154,6 +2154,13 @@ class V6Engine:
         except ExchangeError:
             self._flat_confirmed.clear()                    # unknown size: keep every journal in the risk sum
             raise
+        # Apply the whole snapshot before any per-symbol read. A later symbol must not keep a stale flat
+        # flag when an earlier symbol's open_orders (or any other follow-up) raises.
+        for sym, row in pos.items():
+            if row["amt"] == 0:
+                self._flat_confirmed.add(sym)
+            else:
+                self._flat_confirmed.discard(sym)
         try:
             marks = self.x("mark_prices")
         except ExchangeError:
@@ -2163,10 +2170,6 @@ class V6Engine:
         mismatch = []
         for sym in self.cfg.symbols:
             amt = pos[sym]["amt"]
-            if amt == 0:
-                self._flat_confirmed.add(sym)                # latest successful snapshot; a later nonzero clears it
-            else:
-                self._flat_confirmed.discard(sym)
             j = self.st["pos"].get(sym)
             orders = self.x("open_orders", sym)
             filled = None
