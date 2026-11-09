@@ -121,13 +121,21 @@ def test_be_leg_without_stream_cid_still_be_stop(offline, tmp_path):
     assert rec["reason"] == "be_stop" and rec["outcome"] == "1차 익절 후 본절" and "1차 익절 후 본절" in sent[-1].splitlines()[0]
 
 
-def test_record_still_short_is_flagged(offline, tmp_path):
+def test_record_still_short_is_not_closed(offline, tmp_path):
+    # only the TP1 leg is back: the trade stays open (no closed row, no trades jsonl) and one warning is sent
     t0, cid = 1793633163679, "v6SOL1793633163"
     j = _journal(cid, -1, "1.70", "94.2900", "94.19", "95.37", "1.69", t0, entry_qty="3.39")
     fills = [_fill("E1", "SELL", "94.29", "3.39", "0.15982155", "0", t0),
              _fill("254824457044", "BUY", "93.21", "1.69", "0.07876245", "1.8252", 1793635101103)]
-    rec, line, _ = _close(offline, tmp_path, SOL, j, fills, "0")
-    assert rec["fills_incomplete"] is True
+    eng = exit_engine(offline)
+    eng.events = EventLog(str(tmp_path), "t", commit="c0ffee123456")
+    offline.fx.inject("user_trades", lambda fn, *a: fills, times=9)
+    offline.fx.inject("income", lambda fn, *a: [{"amount": D("0"), "time": j["opened_ms"], "symbol": SOL}], times=9)
+    eng.st["pos"][SOL] = j
+    eng.record_close(SOL, "stop_loss")
+    assert SOL in eng.st["pos"] and not eng.meta.get("trades")
+    assert any("청산 기록 보류" in m for m in eng.tg.sent)
+    assert not (tmp_path / "t_trades.jsonl").exists()
 
 
 # ───────────────────────── peak-drawdown entry guard ─────────────────────────

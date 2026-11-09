@@ -313,9 +313,14 @@ def test_v6h7_live_close_hook_leaves_virtual_hold_alone(offline):
     assert not st.on_live_closed(DOGE, None, "stop_loss", 0, eng)       # adopted / unknown trade
     assert not st.on_live_closed(DOGE, 222, "stop_loss", 0, eng)        # a different model trade
     assert st.state["models"][DOGE]["pos"] == 1
-    eng.st["pos"][DOGE] = {"cid": "v6tX", "qty": "1", "entry_px": "1", "stop_px": "0.9", "model_entry_open": 111}
+    # the close record is written only when exit qty covers the opened qty (no estimate row)
+    t = eng.now_ms()
+    offline.inner.fills.append({"symbol": DOGE, "order_id": "X", "side": "SELL", "price": Decimal("1"),
+                                "qty": Decimal("1"), "commission": Decimal("0"), "realized_pnl": Decimal("0"), "time": t})
+    row = {"cid": "v6tX", "qty": "1", "entry_px": "1", "stop_px": "0.9", "model_entry_open": 111, "opened_ms": t - 1000}
+    eng.st["pos"][DOGE] = dict(row)
     eng.record_close(DOGE, "signal_exit")
     assert st.state["models"][DOGE]["pos"] == 1                          # model exit path: model owns its state
-    eng.st["pos"][DOGE] = {"cid": "v6tX", "qty": "1", "entry_px": "1", "stop_px": "0.9", "model_entry_open": 111}
+    eng.st["pos"][DOGE] = dict(row)
     eng.record_close(DOGE, "stop_breach")                                # L1 safety close → model follows
     assert st.state["models"][DOGE]["pos"] == 0 and st.state["model_stopouts"][-1]["reason"] == "stop_breach"
