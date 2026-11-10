@@ -3,7 +3,7 @@ import pytest
 from decimal import Decimal as D
 
 from live_v6.engine import MISMATCH, PROTECT_AUDIT_S
-from live_v6.exchange import ExchangeUnavailable, OrderRejected
+from live_v6.exchange import ExchangeUnavailable, OrderRejected, WouldTrigger
 from live_v6.tests.test_protection_policy_v1 import _alerts, _closes, _sleeps, engine_for
 from live_v6.tests.test_qrmtf import DOGE, open_pos
 
@@ -338,4 +338,115 @@ def test_be_cap_unreadable_does_not_close(offline, side, read):
     assert offline.amt(DOGE) == qty
     assert any(o["id"] == old["id"] for o in _stops(offline))
     notes = [m for m in _alerts(eng) if "조회" in m and "유지" in m and DOGE in m]
+    assert len(notes) == 1, notes
+
+
+def _pop_t1(offline):
+    gone = [o for o in offline.inner.algos.values()
+            if o["symbol"] == DOGE and str(o["client_id"]).endswith("t1")]
+    for o in gone:
+        offline.inner.algos.pop(o["id"], None)
+    return gone
+
+
+def _through(j, side):
+    return D(j["tp"]["tp1"]) + side * D("0.001")
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_tp_would_trigger_still_through_realizes_slice(offline, side):
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    j = eng.st["pos"][DOGE]
+    q1 = D(j["tp"]["q1"])
+    qty = offline.amt(DOGE)
+    _sleeps(eng)
+    offline.inner.stops_fire = False
+    offline.inner.set_price(DOGE, _through(j, side))
+    _pop_t1(offline)
+    stops0, tps0 = len(_stop_posts(offline)), len(_tp_posts(offline))
+    eng.tick()
+    assert eng.st["pos"][DOGE].get("tp1_done") is True
+    assert offline.amt(DOGE) == qty - side * q1
+    exits = _exit_orders(offline)
+    assert len(exits) == 1 and exits[0]["reduce_only"] is True
+    assert exits[0]["side"] == ("SELL" if qty > 0 else "BUY")
+    assert exits[0]["orig_qty"] == q1
+    assert len(_stop_posts(offline)) == stops0 + 1
+    runners = [o for o in offline.inner.open_orders(DOGE) if "t3" in str(o["client_id"])]
+    assert len(runners) == 1 and runners[0]["qty"] == abs(offline.amt(DOGE))
+    assert len(_tp_posts(offline)) >= tps0 + 1
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_tp_would_trigger_price_back_inside_replaces_once(offline, side):
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    j = eng.st["pos"][DOGE]
+    qty = offline.amt(DOGE)
+    inside = D(j["entry_px"])
+    _sleeps(eng)
+    offline.inner.stops_fire = False
+    offline.inner.set_price(DOGE, _through(j, side))
+    _pop_t1(offline)
+
+    def back_inside(fn, s, sd, trigger, c, qty=None, **k):
+        offline.inner.price[DOGE] = inside
+        raise WouldTrigger(-2021, "Order would immediately trigger.")
+
+    offline.fx.inject("take_profit", back_inside, times=1)
+    before = len(_markets(offline))
+    eng.tick()
+    assert len(_markets(offline)) == before
+    assert offline.amt(DOGE) == qty
+    assert eng.st["pos"][DOGE].get("tp1_done") is not True
+    live = [o for o in offline.inner.open_orders(DOGE) if o["type"] == "TAKE_PROFIT_MARKET" and str(o["client_id"]).endswith("t1")]
+    want = eng.rules[DOGE].price(D(j["tp"]["tp1"]), "up" if side > 0 else "down")
+    assert len(live) == 1 and live[0]["stop_price"] == want
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_tp_would_trigger_market_rejected_waits_a_minute(offline, side):
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    j = eng.st["pos"][DOGE]
+    qty = offline.amt(DOGE)
+    _sleeps(eng)
+    offline.inner.stops_fire = False
+    offline.inner.set_price(DOGE, _through(j, side))
+    _pop_t1(offline)
+    offline.fx.inject("market", "reject", times=10)
+    before = len(_markets(offline))
+    eng.tick()
+    assert len(_markets(offline)) == before + 1
+    assert offline.amt(DOGE) == qty
+    assert _stops(offline)
+    assert len([m for m in _alerts(eng) if "거절" in m and DOGE in m]) == 1
+    for _ in range(3):
+        eng.tick()
+    assert len(_markets(offline)) == before + 1
+    eng.clock.off += PROTECT_AUDIT_S + 1
+    eng.tick()
+    assert len(_markets(offline)) == before + 2
+    assert offline.amt(DOGE) == qty
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_tp_would_trigger_unreadable_sends_nothing(offline, side):
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    j = eng.st["pos"][DOGE]
+    qty = offline.amt(DOGE)
+    _sleeps(eng)
+    offline.inner.stops_fire = False
+    offline.inner.set_price(DOGE, _through(j, side))
+    _pop_t1(offline)
+    offline.fx.inject("book", "unavailable", times=20)
+    before_m, before_tp = len(_markets(offline)), len(_tp_posts(offline))
+    eng.tick()
+    eng.tick()
+    assert len(_markets(offline)) == before_m
+    assert len(_tp_posts(offline)) == before_tp + 1          # the WouldTrigger POST, and no re-place
+    assert offline.amt(DOGE) == qty and _stops(offline)
+    notes = [m for m in _alerts(eng) if "조회" in m and DOGE in m]
     assert len(notes) == 1, notes
