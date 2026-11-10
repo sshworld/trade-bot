@@ -186,7 +186,10 @@ def test_n5_closep_take_profit_is_not_the_stop(offline, side):
     _enter(eng, side)
     j = eng.st["pos"][DOGE]
     assert DOGE in eng.st["pos"] and offline.amt(DOGE) != 0
-    assert not any(c[0] == "cancel" and str(c[1][1].get("client_id", "")).endswith("p") for c in offline.fx.calls)
+    assert not any(
+        c[0] == "cancel" and str(c[1][1].get("client_id", "")).endswith("p")
+        and str(c[1][1].get("client_id", "")).startswith(eng.cfg.cid_prefix)
+        for c in offline.fx.calls)
     assert D(j["stop_px"]) != D(9)
     assert not _closes(offline)
 

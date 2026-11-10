@@ -235,6 +235,7 @@ class V6Engine:
         self._protect_audit_at = self.clock()              # protection audit is due PROTECT_AUDIT_S after this
         self._audit_unknown: set = set()                    # coins whose audit confirm is unread; alert once until known
         self._cp_hold: set = set()                          # -4130 hold already alerted; cleared when a read shows the stop
+        self._cp_block_alerted: set = set()                 # one notice per symbol when a closePosition take-profit blocks the stop
         self._cp_retry_at: dict = {}                        # sym → earliest clock() for another empty-book re-arm
         self._cp_book_sig: dict = {}                        # last book we already re-armed against during the hold
         self._tp_unknown: set = set()                       # book unreadable: TP not placed, alerted once until known
@@ -1298,21 +1299,16 @@ class V6Engine:
                     saw_4130 = True
                     last = str(e)
                     log.error("%s closePosition stop attempt %d already present (-4130)", sym, i + 1)
-                    self._stop_covers(sym, j)                # confirm before any alert
-                    try:
-                        oo = self.x("open_orders", sym)
-                    except ExchangeError as ex:
-                        last = str(ex)
-                        oo = None
-                    cp = self._close_position_stop(j, oo) if oo is not None else None
-                    if cp:
+                    outcome = self.ensure_protected(sym, journal=j, role="repair", want_cid=cid_s, what="진입 손절")
+                    if outcome in {"covered", "placed"}:
                         self._release_cp_hold(sym)
-                        j["stop_px"] = str(cp["stop_price"])
-                        j["stop_cid"] = cp.get("client_id")
-                        j.update(stop_confirmed_ms=self.now_ms(), stop_px_entry=j.get("stop_px_entry") or j["stop_px"])
+                        if not j.get("stop_px_entry"):
+                            j["stop_px_entry"] = str(j["stop_px"])
                         self._cancel_quiet(sym, pre)
                         self.save()
                         return "ok"
+                    if outcome == "flat":
+                        return "kept"
                     if sym not in self._cp_hold:
                         self.alert(f"보호 점검 보류 — {sym}", "진입 손절 · -4130 손절 존재 · 조회와 불일치 · 유지")
                     self._note_cp_hold(sym)                 # same hold as a missing-stop -4130: stop POSTing
@@ -1556,13 +1552,16 @@ class V6Engine:
         self._protect_close_failed = not bool(self.close(sym, "protection_failed"))
         return False
 
-    def _on_4130(self, sym, j, what) -> bool:
-        """A closePosition stop already exists. A visible one is success.
-        Otherwise hold and do not market-close."""
-        cover = self._stop_covers(sym, j)
-        if cover == "yes":
+    def _on_4130(self, sym, j, what, cid=None) -> bool:
+        """-4130 on a journaled stop. A visible stop is success. A closePosition
+        take-profit is cancelled and our stop is placed. An unreadable or empty
+        book holds, and does not market-close."""
+        outcome = self.ensure_protected(sym, journal=j, role="repair", want_cid=cid, what=what)
+        if outcome in {"covered", "placed"}:
             self._release_cp_hold(sym)
             return True
+        if outcome == "flat":
+            return False
         if sym not in self._cp_hold:
             self.alert(f"보호 점검 보류 — {sym}", f"{what} · -4130 손절 존재 · 조회와 불일치 · 유지")
         self._note_cp_hold(sym)
@@ -1626,7 +1625,7 @@ class V6Engine:
                                 raise
                             except OrderRejected as e2:
                                 if getattr(e2, "code", None) == -4130:
-                                    return self._on_4130(sym, j, what)
+                                    return self._on_4130(sym, j, what, cur_cid)
                                 last = e2
                             except ExchangeError as e2:
                                 last = e2
@@ -1642,7 +1641,7 @@ class V6Engine:
                         self._note_dup_unknown(sym, what)
                         return False
                 elif code == -4130:
-                    return self._on_4130(sym, j, what)
+                    return self._on_4130(sym, j, what, cur_cid)
                 else:
                     last = e
                     state = self._cid_state(sym, cur_cid)
@@ -2910,6 +2909,7 @@ class V6Engine:
         self._cp_hold.discard(sym)
         self._cp_retry_at.pop(sym, None)
         self._cp_book_sig.pop(sym, None)
+        self._cp_block_alerted.discard(sym)
 
     def _clear_symbol_holds(self, sym):
         self._release_cp_hold(sym)
@@ -3744,7 +3744,8 @@ class V6Engine:
             if amt == 0:
                 u = self.st["unknown"].pop(sym, None)
                 if u is not None:                               # TA R4: resolved by hand (or its stop fired)
-                    self._stash_fallback(sym, u.get("stop_cid"), "stop")
+                    for cid_u in [u.get("stop_cid"), *(u.get("fallback_stop_cids") or [])]:
+                        self._stash_fallback(sym, cid_u, "stop")
                     for cid_x in u.get("exit_cids") or []:
                         self._stash_fallback(sym, cid_x, "exit")
                     self._clear_symbol_holds(sym)               # this path does not go through _after_flat
@@ -4041,6 +4042,190 @@ class V6Engine:
             out.append(("t3", D(tp["tp3"]), D(tp.get("q3") or abs(amt)), "MARK_PRICE"))
         return out
 
+    def _read_protection(self, sym):
+        """(amount, orders) from a fresh position read and a per-symbol book. None when either read fails."""
+        try:
+            pos = self.x("positions", self.cfg.symbols)
+        except ExchangeError:
+            return None
+        amt = self._row_amt(pos, sym)
+        if amt is None:
+            return None
+        try:
+            oo = self.x("open_orders", sym)
+        except ExchangeError:
+            return None
+        return amt, list(oo)
+
+    def _without_orphans(self, orders):
+        """An orphan pre-arm is the bot's own leftover. It is not protection of a position the bot does not own."""
+        return [o for o in orders if not self._is_orphan_prearm(o)]
+
+    def _cp_blockers(self, amt, orders):
+        """Same-side closePosition orders that are not stops. A take-profit here blocks the stop slot."""
+        cs = "SELL" if amt > 0 else "BUY"
+        return [o for o in orders if o.get("close_position") and o.get("side") == cs
+                and not (o.get("type") or "").startswith("STOP")]
+
+    def _adopt_cover(self, sym, order, journal, unknown, src):
+        if not order:
+            return
+        if unknown is not None:
+            if unknown.get("stop_cid") != order.get("client_id"):
+                self._accept_unknown_stop(sym, unknown, order, order.get("client_id"), src)
+            else:
+                if order.get("stop_price"):
+                    unknown["stop_px"] = str(order["stop_price"])
+                unknown.pop("unprotected", None)
+                unknown.pop("stop_rejects", None)
+                unknown.pop("book_unread", None)
+        if journal is not None:
+            journal["stop_px"] = str(order.get("stop_price") or journal.get("stop_px"))
+            if order.get("client_id"):
+                journal["stop_cid"] = order["client_id"]
+                extra = journal.setdefault("fallback_stop_cids", [])
+                if order["client_id"] not in extra:
+                    extra.append(order["client_id"])
+            journal["stop_confirmed_ms"] = self.now_ms()
+            if not journal.get("stop_px_entry"):
+                journal["stop_px_entry"] = journal["stop_px"]
+            self._release_cp_hold(sym)
+            self.save()
+
+    def _alert_block_once(self, sym, blockers, unknown, what):
+        if unknown is not None:
+            if unknown.get("cp_block_alerted"):
+                return
+            unknown["cp_block_alerted"] = True
+        elif sym in self._cp_block_alerted:
+            return
+        else:
+            self._cp_block_alerted.add(sym)
+        self.alert(f"손절 자리 점유 — {sym} closePosition 익절 취소 후 손절 재등록",
+                   f"{what} · " + ", ".join(str(o.get("client_id")) for o in blockers))
+
+    def _account_reject(self, sym, unknown, journal, err) -> str:
+        """Count a stop reject only after a fresh read shows the position still open and uncovered."""
+        snap = self._read_protection(sym)
+        if snap is None:
+            if unknown is not None:
+                unknown["book_unread"] = True
+            return "unread"
+        amt, oo = snap
+        if amt == 0:
+            if unknown is not None:
+                unknown.pop("closing", None)
+            return "flat"
+        cover = self._close_position_stop(journal, oo) if journal is not None else self.find_stop(amt, self._without_orphans(oo))
+        if cover:
+            self._adopt_cover(sym, cover, journal, unknown, "exchange (re-read)")
+            return "covered"
+        if unknown is None:
+            return "held"
+        unknown["stop_rejects"] = int(unknown.get("stop_rejects", 0)) + 1
+        unknown["last_reject"] = str(err)[:80]
+        unknown["amt"] = str(amt)
+        unknown["qty"] = str(abs(amt))
+        self._unknown_unprotected(sym, unknown, f"손절 거부: {str(err)[:80]}")
+        return "rejected"
+
+    def _lost_post(self, sym, unknown, journal, cid, px, src) -> str:
+        """The stop POST raised. A failed follow-up read is unread and never a last-resort."""
+        try:
+            oo = self.x("open_orders", sym)
+        except ExchangeError:
+            if unknown is not None:
+                unknown["book_unread"] = True
+            return "unread"
+        landed = next((o for o in oo if o.get("client_id") == cid), None)
+        if landed:
+            self._adopt_cover(sym, landed, journal, unknown, src)
+            return "placed"
+        try:
+            amt = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+        except ExchangeError:
+            if unknown is not None:
+                unknown["book_unread"] = True
+            return "unread"
+        if amt is None:
+            if unknown is not None:
+                unknown["book_unread"] = True
+            return "unread"
+        if amt == 0:
+            if unknown is not None:
+                unknown.pop("closing", None)
+            return "flat"
+        if unknown is not None:
+            self._unknown_unprotected(sym, unknown, f"손절 등록 결과 불명 {px} (재조회 후 재시도)")
+        return "unread"
+
+    def _place_journal_stop(self, sym, j, cid) -> str:
+        px = D(j["stop_px"])
+        if not cid:
+            cid, _place = self._mint_stop(sym, j)
+
+        def place(cid=cid):
+            self.x("stop", sym, self._cs(j), px, cid)
+            j["stop_cid"] = cid
+            self.save()
+
+        try:
+            place()
+        except OrderRejected as e:
+            return self._account_reject(sym, None, j, e)
+        except ExchangeError as e:
+            return self._lost_post(sym, None, j, cid, px, "journal")
+        self._release_cp_hold(sym)
+        if not j.get("stop_px_entry"):
+            j["stop_px_entry"] = str(j["stop_px"])
+        self.save()
+        return "placed"
+
+    def ensure_protected(self, sym, *, journal=None, unknown=None, mark=None, role="arm", want_cid=None, what="손절") -> str:
+        """One protection pass. Read the position and this symbol's book, classify the orders,
+        cancel a non-covering closePosition, and place a missing stop. A failed read does nothing.
+        A reject is counted only when a fresh read still shows the position open and uncovered."""
+        snap = self._read_protection(sym)
+        if snap is None:
+            if unknown is not None:
+                unknown["book_unread"] = True
+            return "unread"
+        amt, oo = snap
+        if amt == 0:
+            if unknown is not None:
+                unknown.pop("closing", None)
+            return "flat"
+        cover = self._close_position_stop(journal, oo) if journal is not None and unknown is None else self.find_stop(amt, self._without_orphans(oo))
+        if cover:
+            self._adopt_cover(sym, cover, journal, unknown, "exchange (existing, untouched)")
+            return "covered"
+        blockers = self._cp_blockers(amt, oo)
+        if blockers:
+            self._alert_block_once(sym, blockers, unknown, what)
+            for o in blockers:
+                self._cancel_quiet(sym, o)
+            snap = self._read_protection(sym)
+            if snap is None:
+                if unknown is not None:
+                    unknown["book_unread"] = True
+                return "unread"
+            amt, oo = snap
+            if amt == 0:
+                if unknown is not None:
+                    unknown.pop("closing", None)
+                return "flat"
+            cover = self._close_position_stop(journal, oo) if journal is not None and unknown is None else self.find_stop(amt, self._without_orphans(oo))
+            if cover:
+                self._adopt_cover(sym, cover, journal, unknown, "exchange")
+                return "covered"
+        elif role == "repair":
+            return "held"
+        if unknown is not None:
+            return self._unknown_stop(sym, unknown, amt, mark)
+        if journal is not None:
+            return self._place_journal_stop(sym, journal, want_cid)
+        return "held"
+
     def _unknown_position(self, sym, p, orders, mark):
         """TA R4: exchange position that is NOT in the state file (opened by hand, or the state file was lost).
         Never market-closed by the bot. 🚨 once, entries blocked for this coin (st["unknown"]), risk counted in the
@@ -4059,36 +4244,30 @@ class V6Engine:
             if self._schema_lock:
                 u.pop("closing", None)                      # keep placing a stop; the market stays gated
             else:
-                self._unknown_last_resort(sym, u, amt)
+                self._unknown_last_resort(sym, u)
                 return
         if mark is None:
             try:
                 mark = self.x("mark_prices").get(sym)
             except ExchangeError:
                 mark = None
-        prot = self.find_stop(amt, orders)
-        if prot is not None:
-            if u.get("stop_cid") != prot.get("client_id"):
-                u["stop_src"] = "exchange (existing, untouched)"
-            u.update(stop_px=str(prot["stop_price"]), stop_cid=prot.get("client_id"))
-            u.pop("unprotected", None)
-            u.pop("stop_rejects", None)
-        elif not self._unknown_stop(sym, u, amt, mark):
+        outcome = self.ensure_protected(sym, unknown=u, mark=mark, what="기록 없는 포지션 손절")
+        if outcome == "rejected":
             age = self.now_ms() - int(u["detected_ms"])
-            if u.pop("book_unread", None):
-                pass                                    # an unread -4130 check is not a license to market-close
+            snap = self._read_protection(sym)
+            if snap is None or snap[0] == 0:
+                u.pop("closing", None)
+                if snap is None:
+                    u["book_unread"] = True
+            elif self.find_stop(snap[0], self._without_orphans(snap[1])):
+                self._adopt_cover(sym, self.find_stop(snap[0], self._without_orphans(snap[1])), None, u, "exchange (re-read)")
             elif int(u.get("stop_rejects", 0)) > 0 and age >= self.cfg.unknown_stop_deadline_s * 1000:
                 if self._schema_lock:
                     self._lock_hold_alert(sym, "unknown_stop_rejected",
                                           f"거부 {u.get('stop_rejects')}회 · 손절 재시도 · 시장가 안 냄",
                                           kept=False)
                 else:
-                    u["closing"] = True                         # TA R4 last resort: protection beats ownership
-                    self.save()
-                    self.alert(f"기록 없는 포지션 손절이 {self.cfg.unknown_stop_deadline_s / 60:.0f}분 넘게 거부됨 — 최후 수단으로 {sym} 시장가 정리",
-                               f"{sym} {amt} · 발견 {age / 1000:.0f}초 전 · 손절 거부 {u.get('stop_rejects')}회 · "
-                               f"마지막 사유 {u.get('last_reject', '-')} · reduceOnly MARKET")
-                    self._unknown_last_resort(sym, u, amt)
+                    self._unknown_last_resort(sym, u)
                     return
         self._unknown_risk(u, mark if mark is not None else p["entry"])
         self.save()
@@ -4113,6 +4292,16 @@ class V6Engine:
                 changed = True
         if changed:
             self.save()
+
+    def _remember_stop_cid(self, sym, u, cid):
+        """Record a stop id before its POST, so a fill that lands first can still be booked."""
+        if not cid:
+            return
+        if u is not None:
+            extra = u.setdefault("fallback_stop_cids", [])
+            if cid not in extra:
+                extra.append(cid)
+        self._stash_fallback(sym, cid, "stop")
 
     def _take_fallback_cids(self, j, sym, intent):
         """Copy fallback stop and exit ids from the unknown row and the intent onto the new journal."""
@@ -4148,55 +4337,13 @@ class V6Engine:
         u.pop("book_unread", None)
         self._stash_fallback(sym, placed, "stop")
 
-    def _unknown_landed(self, sym, cid):
-        try:
-            oo = self.x("open_orders", sym)
-        except ExchangeError:
-            return None
-        return next((o for o in oo if o.get("client_id") == cid), None)
-
-    def _unknown_on_4130(self, sym, u, amt, cs, px, cid, src) -> bool:
-        """-4130 means some closePosition order is in the way. A failed read is not a reject."""
-        try:
-            oo = self.x("open_orders", sym)
-        except ExchangeError:
-            u["book_unread"] = True
-            return False
-        prot = self.find_stop(amt, oo)
-        if prot:
-            self._accept_unknown_stop(sym, u, prot, prot.get("client_id") or cid, "exchange (-4130, verified)")
-            return True
-        blockers = [o for o in oo if o.get("close_position") and o.get("side") == cs
-                    and not (o.get("type") or "").startswith("STOP")]
-        if blockers:
-            if not u.get("cp_block_alerted"):
-                u["cp_block_alerted"] = True
-                self.alert(f"기록 없는 포지션 손절 자리 점유 — {sym} closePosition 익절 취소 후 손절 재등록",
-                           ", ".join(str(o.get("client_id")) for o in blockers))
-            for o in blockers:
-                self._cancel_quiet(sym, o)
-            try:
-                placed = self.x("stop", sym, cs, px, cid)
-            except OrderRejected as e2:
-                u["stop_rejects"] = int(u.get("stop_rejects", 0)) + 1
-                u["last_reject"] = str(e2)[:80]
-                self._unknown_unprotected(sym, u, f"손절 거부 {px}: {str(e2)[:80]}")
-                return False
-            except ExchangeError:
-                u["book_unread"] = True
-                return False
-            self._accept_unknown_stop(sym, u, placed, cid, src)
-            return True
-        u["book_unread"] = True                         # -4130 but nothing we can see: do not market-close
-        return False
-
-    def _unknown_stop(self, sym, u, amt, mark) -> bool:
-        """Place the protective stop for an unknown position. True = placed (exchange accepted it). Rejections
-        (OrderRejected / WouldTrigger) are counted for the 5-min last resort; transient errors are not."""
+    def _unknown_stop(self, sym, u, amt, mark) -> str:
+        """Place the protective stop for an unknown position. 'placed' = the exchange accepted it.
+        'rejected' is counted for the 5-min last resort only after a fresh read. 'unread' and 'flat' are not."""
         side = 1 if amt > 0 else -1
         if mark is None:
             self._unknown_unprotected(sym, u, "mark 가격 없음 — 손절 계산 불가, 재시도")
-            return False
+            return "held"
         r = self.rules[sym]
         rnd = "down" if side > 0 else "up"                  # away from the price
         ref = self.strategy.exit_line(sym, side)            # (20-bar channel line, ATR14 4h) or None
@@ -4213,6 +4360,7 @@ class V6Engine:
         self.save()
         cs = "SELL" if side > 0 else "BUY"
         cid = f"{self.cfg.cid_prefix}{sym.removesuffix('USDT')}u{int(u['detected_ms']) // 1000}s{seq}"
+        self._remember_stop_cid(sym, u, cid)             # the id is kept even if this POST fills before we see it
         try:
             try:
                 o = self.x("stop", sym, cs, px, cid)          # closePosition=true, MARK_PRICE (reduce-only by nature)
@@ -4221,59 +4369,88 @@ class V6Engine:
                     raise
                 px = r.price(mark - side * atr, rnd)
                 src = "1×ATR14 from mark (line would trigger)"
-                o = self.x("stop", sym, cs, px, f"{cid}b")
+                cid = f"{cid}b"
+                self._remember_stop_cid(sym, u, cid)
+                o = self.x("stop", sym, cs, px, cid)
         except OrderRejected as e:
-            if getattr(e, "code", None) == -4130:
-                return self._unknown_on_4130(sym, u, amt, cs, px, cid, src)
-            u["stop_rejects"] = int(u.get("stop_rejects", 0)) + 1
-            u["last_reject"] = str(e)[:80]
-            self._unknown_unprotected(sym, u, f"손절 거부 {px}: {str(e)[:80]}")
-            return False
+            return self._account_reject(sym, u, None, e)
         except ExchangeError as e:
-            landed = self._unknown_landed(sym, cid)
-            if landed:
-                self._accept_unknown_stop(sym, u, landed, cid, src)
-                return True
-            self._unknown_unprotected(sym, u, f"손절 등록 결과 불명 {px}: {str(e)[:80]} (재조회 후 재시도)")
-            return False
+            log.error("%s unknown stop %s response lost: %s", sym, cid, e)
+            return self._lost_post(sym, u, None, cid, px, src)
         self._accept_unknown_stop(sym, u, o, cid, src)
         if line is not None:
             u.update(stop_line=str(line), stop_atr=str(atr))
         u.pop("unprotected", None)
         u.pop("stop_rejects", None)
         log.warning("%s unknown position %s: stop %s placed (%s)", sym, amt, u["stop_px"], src)
-        return True
+        return "placed"
 
-    def _unknown_last_resort(self, sym, u, amt):
-        """TA R4 last resort (only after 5 min of REJECTED stops): reduceOnly MARKET for the whole position, retried
-        every reconcile until the exchange shows flat; then the unknown entry is cleared (reconcile flat branch)."""
+    def _unknown_last_resort(self, sym, u, amt=None):
+        """Last resort only after a fresh read shows the position still open and uncovered.
+        A flat book, a failed read, or a reduceOnly reject leaves no closing flag behind."""
         if self._schema_lock:
+            u.pop("closing", None)
             log.warning("%s unknown last-resort close refused: schema lock", sym)
+            return
+        snap = self._read_protection(sym)
+        if snap is None:
+            u.pop("closing", None)
+            u["book_unread"] = True
+            self.save()
+            return
+        live, oo = snap
+        cover = self.find_stop(live, self._without_orphans(oo)) if live != 0 else None
+        if live == 0 or cover:
+            u.pop("closing", None)
+            if cover:
+                self._adopt_cover(sym, cover, None, u, "exchange (last-resort re-read)")
+            self.save()
             return
         seq = int(u.get("exit_seq", 0))
         u["exit_seq"] = seq + 1
-        self.save()
         cid = f"{self.cfg.cid_prefix}{sym.removesuffix('USDT')}u{int(u['detected_ms']) // 1000}x{seq}"
         self._stash_fallback(sym, cid, "exit")
         u.setdefault("exit_cids", [])
         if cid not in u["exit_cids"]:
             u["exit_cids"].append(cid)
+        u["closing"] = True
+        u["amt"] = str(live)
         self.save()
         try:
-            self.submit_market(sym, "SELL" if amt > 0 else "BUY", abs(amt), cid, reduce_only=True)
-            left = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+            self.submit_market(sym, "SELL" if live > 0 else "BUY", abs(live), cid, reduce_only=True)
+        except OrderRejected as e:
+            log.error("%s unknown position last-resort close failed: %s", sym, e)
+            u.pop("closing", None)
+            self.save()
+            return
         except ExchangeError as e:
             log.error("%s unknown position last-resort close failed (retry next reconcile): %s", sym, e)
+            left = None
+            try:
+                left = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+            except ExchangeError:
+                left = None
+            if left in (None, 0):
+                u.pop("closing", None)
+                self.save()
             return
+        self.alert(f"기록 없는 포지션 손절이 {self.cfg.unknown_stop_deadline_s / 60:.0f}분 넘게 거부됨 — 최후 수단으로 {sym} 시장가 정리",
+                   f"{sym} {live} · 손절 거부 {u.get('stop_rejects')}회 · 마지막 사유 {u.get('last_reject', '-')} · reduceOnly MARKET")
+        try:
+            left = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+        except ExchangeError:
+            left = None
         if left is None:
-            return                                          # missing row is not a confirmed flat
+            u.pop("closing", None)
+            self.save()
+            return
         if left == 0:
             self._stash_fallback(sym, u.get("stop_cid"), "stop")
-            for cid_x in u.get("exit_cids") or []:
-                self._stash_fallback(sym, cid_x, "exit")
+            for cid_x in [*(u.get("fallback_stop_cids") or []), *(u.get("exit_cids") or [])]:
+                self._stash_fallback(sym, cid_x, "stop" if cid_x == u.get("stop_cid") else "exit")
             self.st["unknown"].pop(sym, None)
             self.save()
-            self.alert(f"기록 없는 포지션 최후 수단 정리 완료 — {sym}", f"{amt} → 0 · 손절이 계속 거부되어 시장가로 정리함")
+            self.alert(f"기록 없는 포지션 최후 수단 정리 완료 — {sym}", f"{live} → 0 · 손절이 계속 거부되어 시장가로 정리함")
         else:
             log.warning("%s unknown position last-resort close left %s → retry next reconcile", sym, left)
 
