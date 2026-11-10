@@ -616,8 +616,8 @@ class V6Engine:
             self._countdown(sym, 0)
             return
         j = self.st["pos"][sym]
-        # Disarm before the reduce-only TP. On testnet, countdownCancelAll(0) cancels qty conditional
-        # orders already resting (the TP) and leaves a closePosition stop. The entry limit is not reduce-only.
+        # Stop the dead-man once the limit has filled. countdownCancelAll(0) does not cancel a resting
+        # TP or a closePosition stop; when it is sent relative to the TP does not matter.
         self._countdown(sym, 0)
         if self.cfg.take_profit and self.cfg.exit_mode == "full_tp_pct":
             self._resize_full_tp(sym, j)
@@ -1590,6 +1590,8 @@ class V6Engine:
         every stop stays on MARK_PRICE. A live TP placed on MARK_PRICE before this change is left as-is (re-placed only
         when missing, by client id, so never duplicated)."""
         cid = f"{j['cid']}{which}"
+        if self._confirm_algo(sym, cid):
+            return True                                    # same client id already working: do not post a second one
         try:
             self.x("take_profit", sym, self._cs(j), px, cid, qty, working_type="CONTRACT_PRICE")
         except WouldTrigger:
@@ -1611,16 +1613,33 @@ class V6Engine:
             else:
                 self._dirty = True
             return False
+        except OrderRejected as e:
+            if e.code == -4116 and self._confirm_algo(sym, cid):
+                return True
+            log.error("%s %s placement failed (reconcile retries): %s", sym, which, e)
+            return False
         except ExchangeError as e:
             log.error("%s %s placement failed (reconcile retries): %s", sym, which, e)
             return False
-        try:
-            oo = self.x("open_orders", sym)
-        except ExchangeError:
+        # openAlgoOrders can omit a NEW order right after POST. GET /fapi/v1/algoOrder?clientAlgoId= is the check.
+        if self._confirm_algo(sym, cid):
             return True
-        if any(o.get("client_id") == cid for o in oo):
-            return True
-        log.error("%s %s placement failed: accepted but not on the book", sym, which)
+        log.error("%s %s placement failed: not on the book after GET algoOrder", sym, which)
+        return False
+
+    def _confirm_algo(self, sym, cid, tries=3) -> bool:
+        """True when GET algoOrder shows `cid` still working. A short retry covers the post-POST lag."""
+        dead = {"CANCELED", "CANCELLED", "EXPIRED", "REJECTED", "FINISHED"}
+        for i in range(tries):
+            try:
+                st = self.x("algo_order", sym, cid)
+            except ExchangeError:
+                st = None
+            status = str((st or {}).get("status") or "").upper() if isinstance(st, dict) else ""
+            if status and status not in dead:
+                return True
+            if i + 1 < tries:
+                self.sleep(0.2)
         return False
 
     def _full_tp_px(self, sym, j) -> Decimal:

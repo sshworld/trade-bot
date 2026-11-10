@@ -214,7 +214,9 @@ class FakeExchange:
         if qty is None:                                   # closePosition: Binance rules
             if not p:
                 raise OrderRejected(-4509, "Time in Force (TIF) GTE can only be used with open positions.")
-            if any(o["symbol"] == s and o["side"] == side and o["close_position"] for o in self.algos.values()):
+            # -4130 is a second closePosition STOP. A closePosition take-profit does not block the stop.
+            if any(o["symbol"] == s and o["side"] == side and o["close_position"]
+                   and (o.get("type") or "").startswith("STOP") for o in self.algos.values()):
                 raise OrderRejected(-4130, "An open stop or take profit order with GTE and closePosition in the direction is existing.")
         if p and ((p["amt"] > 0 and self.price[s] <= trigger) or (p["amt"] < 0 and self.price[s] >= trigger)):
             raise WouldTrigger(-2021, "Order would immediately trigger.")
@@ -274,26 +276,18 @@ class FakeExchange:
         return dict(o)
 
     def countdown_cancel_all(self, symbol, countdown_ms):
-        """POST /fapi/v1/countdownCancelAll. 0 stops the timer and, on testnet, also drops reduce-only qty
-        algo orders already on the symbol (a closePosition stop is left). A positive value arms the dead-man."""
+        """POST /fapi/v1/countdownCancelAll. 0 stops the timer and does not cancel resting orders.
+        A positive value arms the dead-man; when that timer lapses, open orders on the symbol are cancelled."""
         ms = int(countdown_ms)
         if ms <= 0:
             self.countdown.pop(symbol, None)
-            self._cancel_qty_algos(symbol)
             return {"symbol": symbol, "countdownTime": 0}
         self.countdown[symbol] = {"ms": ms, "set_at": time.time()}
         return {"symbol": symbol, "countdownTime": ms}
 
-    def _cancel_qty_algos(self, symbol):
-        """Reduce-only qty conditional orders (the TP). closePosition stops stay."""
-        for aid, o in list(self.algos.items()):
-            if o["symbol"] == symbol and not o.get("close_position"):
-                self.algos.pop(aid, None)
-                self._algo_end(o, "CANCELED")
-
     def _housekeep(self, symbol):
-        """Exchange-side maintenance observed on testnet: a flat reduce-only qty stop dies within ~1s,
-        and a countdown timer cancels every open order on the symbol when it reaches 0."""
+        """A flat reduce-only qty stop dies within ~1s. An armed countdown that is not refreshed
+        cancels open orders when it lapses. Calling countdownCancelAll(0) only stops that timer."""
         now = time.time()
         for aid, o in list(self.algos.items()):
             if o["symbol"] != symbol or o["symbol"] in self.pos:

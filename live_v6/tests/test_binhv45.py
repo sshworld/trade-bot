@@ -627,22 +627,60 @@ def _assert_covered(b, eng):
     assert len(tps) == 1 and tps[0]["reduce_only"] and tps[0]["qty"] >= amt
 
 
-def test_tp_is_placed_after_countdown_disarm_and_stays(offline):
-    """countdownCancelAll(0) drops a reduce-only TP already on the book and leaves a closePosition SL.
-    The TP send has to come after that disarm, and the order has to still be open."""
+def test_countdown_zero_leaves_the_tp_and_the_close_position_sl(offline):
+    """countdownCancelAll(0) only stops the timer. It does not cancel a reduce-only TP or a closePosition SL."""
+    eng, _j = _filled(offline)
+    assert _tps(offline) and any(o["close_position"] for o in _stops(offline))
+    offline.inner.countdown_cancel_all(DOGE, 0)
+    assert DOGE not in offline.inner.countdown
+    assert len(_tps(offline)) == 1
+    assert any(o["close_position"] and (o.get("type") or "").startswith("STOP") for o in _stops(offline))
+    # disarm on fill still happens; order versus the TP send does not matter
+    assert any(c[0] == "countdown_cancel_all" and int(c[1][1]) == 0 for c in offline.fx.calls)
+
+
+def test_open_orders_lag_confirms_tp_by_algo_order_without_a_second_post(offline):
+    """openAlgoOrders can omit a NEW order right after POST. Confirm with GET algoOrder, and do not post cid twice."""
     eng = _eng(offline)
     offline.inner.set_price(DOGE, D("0.151"))
     assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"))
     cid = next(iter(eng.st["intents"]))
     offline.inner.fill_limit(cid)
+    missed = {"tf": False}
+
+    def hide_tf(fn, sym):
+        return [o for o in fn(sym) if not str(o.get("client_id") or "").endswith("tf")]
+
+    def lag_algo(fn, sym, client_id):
+        if str(client_id).endswith("tf") and not missed["tf"]:
+            missed["tf"] = True
+            return None
+        return fn(sym, client_id)
+
+    offline.fx.inject("open_orders", hide_tf, times=30)
+    offline.fx.inject("algo_order", lag_algo, times=30)
     eng.reconcile()
-    seq = list(offline.fx.calls)
-    zeros = [i for i, c in enumerate(seq) if c[0] == "countdown_cancel_all" and int(c[1][1]) == 0]
-    tps = [i for i, c in enumerate(seq) if c[0] == "take_profit"]
-    assert zeros and tps and zeros[-1] < tps[0]
-    live = _tps(offline)
-    assert len(live) == 1 and live[0]["qty"] == abs(offline.amt(DOGE))
-    assert live[0]["working_type"] == "CONTRACT_PRICE"
+    posts = [c for c in offline.fx.calls if c[0] == "take_profit" and str(c[1][3]).endswith("tf")]
+    assert len(posts) == 1
+    assert any(o["client_id"].endswith("tf") and o["type"] == "TAKE_PROFIT_MARKET" for o in offline.inner.algos.values())
+    assert offline.inner.algo_order(DOGE, cid + "tf")["status"] == "NEW"
+
+
+def test_close_position_take_profit_does_not_block_a_close_position_stop(offline):
+    """-4130 is a second closePosition STOP. A closePosition take-profit can sit beside the stop."""
+    eng, j = _filled(offline)
+    for o in _stops(offline):
+        offline.inner.cancel(DOGE, o)
+    offline.inner.algos["cptp"] = {
+        "kind": "algo", "id": "cptp", "client_id": "manual-closep-tp", "symbol": DOGE,
+        "type": "TAKE_PROFIT_MARKET", "side": "SELL", "stop_price": D("1"),
+        "close_position": True, "reduce_only": True, "qty": D(0), "working_type": "CONTRACT_PRICE",
+    }
+    placed = offline.inner.stop(DOGE, "SELL", D(j["stop_px"]), j["cid"] + "s9")
+    assert placed["close_position"] and (placed.get("type") or "").startswith("STOP")
+    eng._drop_other_close_stops(DOGE, "SELL", j["cid"] + "s9")
+    ids = {o["client_id"] for o in offline.inner.algos.values()}
+    assert "manual-closep-tp" in ids and j["cid"] + "s9" in ids
 
 
 def test_pending_fill_replaces_a_foreign_close_position(offline):
