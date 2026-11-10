@@ -122,16 +122,15 @@ def test_margin_skip_alert(backend):
 
 # ───────────── restart ─────────────
 def test_kill_after_fill_then_restart(backend):
-    """Process dies right after the entry fill: the PRE-ARMED reduceOnly stop already protects the position (no
-    fill→stop window); restart resolves the intent by client id, upgrades protection, never re-sends the entry."""
+    """Process dies right after the entry fill. The flat reduce-only pre-arm does not survive; restart places
+    and verifies the closePosition stop and never re-sends the entry."""
     eng = ready(backend)
     t0 = backend.now_ms()
     T = unique_T()
     backend.fx.inject("market", "kill_after", match=is_entry)
     with pytest.raises(ProcessKilled):
         eng.enter(DOGE, backend.stop_dist(), T)
-    assert backend.amt(DOGE) > 0 and backend.stops(DOGE)        # protected while the bot is dead
-    backend.assert_safe()
+    assert backend.amt(DOGE) > 0                              # fill landed; the flat pre-arm is already gone
     eng2 = backend.engine()
     eng2.startup()
     assert DOGE in eng2.st["pos"] and not eng2.st["intents"]
@@ -336,20 +335,21 @@ def _drop_stops(backend, sym):
 
 
 def test_stop_rejected_closes_only_that_position(backend):
-    """§8c L1: a missing stop is re-placed 3× (within 10 s); still rejected → close ONLY that position
+    """A missing stop is retried at 1s, 3s, 10s; still rejected → close ONLY that position
     (reduceOnly MARKET). Other positions untouched, no halt."""
+    from live_v6.engine import PROTECT_RETRY_S
     eng = ready(backend)
     opened(backend, eng, SOL)
     opened(backend, eng)
     _drop_stops(backend, DOGE)
-    backend.fx.inject("stop", "reject", times=eng.cfg.stop_attempts, match=lambda s, *a, **k: s == DOGE)
+    backend.fx.inject("stop", "reject", times=len(PROTECT_RETRY_S) + 1, match=lambda s, *a, **k: s == DOGE)
     t = time.time()
     eng.reconcile()
     assert time.time() - t < 15
     assert backend.amt(DOGE) == 0 and backend.amt(SOL) > 0 and backend.stops(SOL)
-    assert not eng.meta.get("halted") and any("이 포지션만 정리" in m for m in alerts(eng))
+    assert not eng.meta.get("halted") and any("시장가 청산" in m for m in alerts(eng))
     assert [c[1][0] for c in close_calls(backend)] == [DOGE]
-    assert sum(1 for c in backend.fx.calls if c[0] == "stop" and c[1][0] == DOGE) >= eng.cfg.stop_attempts
+    assert sum(1 for c in backend.fx.calls if c[0] == "stop" and c[1][0] == DOGE) >= len(PROTECT_RETRY_S) + 1
     backend.assert_safe()
 
 
@@ -358,8 +358,9 @@ def test_unprotectable_position_flattens_all_and_halts(backend):
     eng = ready(backend)
     opened(backend, eng, SOL)
     opened(backend, eng)
+    from live_v6.engine import PROTECT_RETRY_S
     _drop_stops(backend, DOGE)
-    backend.fx.inject("stop", "reject", times=eng.cfg.stop_attempts, match=lambda s, *a, **k: s == DOGE)
+    backend.fx.inject("stop", "reject", times=len(PROTECT_RETRY_S) + 1, match=lambda s, *a, **k: s == DOGE)
     backend.fx.inject("market", "reject", times=eng.cfg.exit_attempts, match=lambda s, *a, **k: s == DOGE)
     eng.reconcile()
     for _ in range(3):
@@ -406,8 +407,8 @@ def test_drawdown_25pct_flattens_all_and_halts(backend):
 
 
 def test_api_dead_5min_with_unprotected_position_flattens_all(offline):
-    """§8c L3(c): stop placement outcome unknown (unprotected) and the API then stays dead > 5 min → flatten all.
-    Counter-case: API dead > 5 min while every position is protected → nothing closed."""
+    """API dead > 5 min while every position is protected → nothing closed.
+    A missing stop whose placement stays unavailable is closed by the 1s/3s/10s procedure (that position only)."""
     clk = OffsetClock()
     eng = ready(offline, clock=clk)
     opened(offline, eng, SOL)
@@ -422,16 +423,10 @@ def test_api_dead_5min_with_unprotected_position_flattens_all(offline):
     eng.reconcile()
     _drop_stops(offline, DOGE)
     offline.fx.inject("stop", "unavailable", times=99)
-    eng.reconcile()                                      # stop not confirmable → unprotected, NOT closed yet
-    assert eng.st["pos"][DOGE].get("unprotected") and offline.amt(DOGE) > 0 and close_orders(offline) == 0
-    offline.fx.inject("account", "unavailable", times=99)
-    eng.tick()
-    clk.off += 301
-    eng.tick()
-    assert str(eng.meta.get("halted")).startswith("emergency")
-    offline.fx.clear()
-    eng.reconcile()
-    assert offline.amt(DOGE) == 0 and offline.amt(SOL) == 0
+    eng.reconcile()                                      # item 2: retries then reduceOnly-close ONLY this position
+    assert offline.amt(DOGE) == 0 and offline.amt(SOL) > 0 and close_orders(offline) == 1
+    assert not str(eng.meta.get("halted") or "").startswith("emergency")
+    assert any("시장가 청산" in m for m in alerts(eng))
 
 
 # ───────────── §8c over-reaction: transient faults must send ZERO close orders ─────────────

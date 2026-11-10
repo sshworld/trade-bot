@@ -189,6 +189,9 @@ class SimExchange:
         v = Decimal(repr(self.px[s]))
         return {"bid": v, "ask": v}
 
+    def last_price(self, s):
+        return Decimal(repr(self.px[s]))
+
     def klines(self, s, interval, limit):
         if interval == "1d":
             j = bisect.bisect_right(self.daily_t, self.now - DAY_MS)
@@ -205,6 +208,9 @@ class SimExchange:
         return [{"kind": "algo", "id": st["id"], "client_id": st["cid"], "symbol": s, "type": "STOP_MARKET", "side": "SELL",
                  "stop_price": st["trigger"], "close_position": st["qty"] is None, "reduce_only": True,
                  "qty": st["qty"] or Decimal(0)} for st in self.stops.get(s, [])]
+
+    def open_orders_all(self):
+        return [o for s in list(self.stops) for o in self.open_orders(s)]
 
     def set_margin_type(self, s, mt="ISOLATED"):
         self.mt[s] = mt

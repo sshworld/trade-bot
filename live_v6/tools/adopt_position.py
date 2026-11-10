@@ -33,7 +33,8 @@ def unit_active(unit: str) -> bool:
     return r.stdout.strip() in ("active", "activating", "reloading", "deactivating")
 
 
-def build(state: dict, sym: str, model_entry_open: str, cid_prefix: str, now_ms: int) -> tuple[dict, list[str]]:
+def build(state: dict, sym: str, model_entry_open: str, cid_prefix: str, now_ms: int,
+          opened_qty=None) -> tuple[dict, list[str]]:
     unknown, pos = state.get("unknown") or {}, state.get("pos") or {}
     if sym in pos:
         raise SystemExit(f"{sym} is already in the state file (pos) — nothing to adopt")
@@ -44,6 +45,11 @@ def build(state: dict, sym: str, model_entry_open: str, cid_prefix: str, now_ms:
         raise SystemExit(f"{sym} is a SHORT ({u.get('amt')}) — the strategy is long-only: close it by hand instead")
     if not u.get("stop_px") or u.get("unprotected"):
         raise SystemExit(f"{sym} has no confirmed exchange stop yet — not adoptable (wait for the bot to place it)")
+    if opened_qty in (None, ""):
+        raise SystemExit(f"{sym}: refusing adopt without --opened-qty. The exchange qty is not proof of the opened size.")
+    opened = Decimal(str(opened_qty))
+    if opened <= 0:
+        raise SystemExit(f"{sym}: opened size must be positive, got {opened_qty}")
     qty, entry, stop = Decimal(u["qty"]), Decimal(u["entry_px"]), Decimal(u["stop_px"])
     model = ((state.get("strategy") or {}).get("models") or {}).get(sym) or {}
     notes = []
@@ -58,7 +64,9 @@ def build(state: dict, sym: str, model_entry_open: str, cid_prefix: str, now_ms:
                      f"adopted model_entry_open={meo}) → the bot will CLOSE {sym} at the next 4h close (model_sync).")
     sd = entry - stop
     j = {"cid": f"{cid_prefix}{sym.removesuffix('USDT')}a{now_ms // 1000}", "side": 1, "qty": str(qty),
-         "entry_px": str(entry), "stop_px": str(stop), "stop_dist": str(sd), "risk_usdt": str(max(sd, Decimal(0)) * qty),
+         "entry_qty": str(opened),
+         "entry_px": str(entry), "stop_px": str(stop), "stop_px_entry": str(stop), "stop_dist": str(sd),
+         "risk_usdt": str(max(sd, Decimal(0)) * qty),
          "risk_frac": u.get("risk_frac"), "lev": None, "mmr": None, "model_entry_open": meo, "opened_ms": now_ms,
          "adopted": True, "adopted_from_unknown": {k: u.get(k) for k in ("detected_ms", "stop_src", "stop_cid")},
          "stop_seq": int(u.get("stop_seq", 0)) + 1, "exit_seq": 0}
@@ -74,11 +82,12 @@ def main(argv=None) -> int:
     ap.add_argument("--unit", help="systemd unit of that bot; --apply is refused while it is active")
     ap.add_argument("--model-entry-open", default="auto", help="auto (default) | none | <ms>")
     ap.add_argument("--cid-prefix", default="v6")
+    ap.add_argument("--opened-qty", help="proved opened size (entry fill). Required. The exchange qty is not accepted as proof.")
     ap.add_argument("--apply", action="store_true", help="write the change (default: dry run)")
     a = ap.parse_args(argv)
     with open(a.state) as f:
         state = json.load(f)
-    j, notes = build(state, a.sym, a.model_entry_open, a.cid_prefix, int(time.time() * 1000))
+    j, notes = build(state, a.sym, a.model_entry_open, a.cid_prefix, int(time.time() * 1000), a.opened_qty)
     print(json.dumps({"adopt": a.sym, "journal_entry": j, "remove_from_unknown": state["unknown"][a.sym]}, indent=2, default=str))
     for n in notes:
         print(n)
@@ -91,6 +100,8 @@ def main(argv=None) -> int:
         raise SystemExit(f"{a.unit} is active — stop it first (the running bot would overwrite the state file)")
     bak = f"{a.state}.bak-adopt-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
     shutil.copy2(a.state, bak)
+    from live_v6.engine import STATE_SCHEMA
+    state["schema"] = STATE_SCHEMA
     state.setdefault("pos", {})[a.sym] = j
     state["unknown"].pop(a.sym, None)
     st = os.stat(a.state)

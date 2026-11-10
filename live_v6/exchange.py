@@ -230,6 +230,11 @@ class BinanceREST:
         d = self._req("GET", "/fapi/v1/ticker/bookTicker", {"symbol": symbol}, signed=False)
         return {"bid": Decimal(d["bidPrice"]), "ask": Decimal(d["askPrice"])}
 
+    def last_price(self, symbol) -> Decimal:
+        """Last traded price. bookTicker has no trade price, only the bid and the ask."""
+        d = self._req("GET", "/fapi/v1/ticker/price", {"symbol": symbol}, signed=False)
+        return Decimal(d["price"])
+
     # ── account ──
     def brackets(self, symbol) -> list[dict]:
         rows = self._req("GET", "/fapi/v1/leverageBracket", {"symbol": symbol})
@@ -278,14 +283,33 @@ class BinanceREST:
                     raise ExchangeError(f"symbolConfig: bad leverage for {symbol}: {type(e).__name__}") from e
         raise ExchangeError(f"symbolConfig: no row for {symbol}")
 
+    def _order_list(self, payload, what) -> list:
+        """A JSON list is the book. null or any other shape is unknown, not an empty book. [] stays empty."""
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict) and isinstance(payload.get("orders"), list):
+            return payload["orders"]
+        raise ExchangeUnavailable(f"{what} response is not a list")
+
+    def _collect_orders(self, std, algo, symbol) -> list[dict]:
+        std_rows = self._order_list(std, "openOrders")
+        algo_rows = self._order_list(algo, "openAlgoOrders")
+        out = [{"kind": "std", "id": str(o["orderId"]), "client_id": o.get("clientOrderId", ""),
+                "symbol": symbol or o.get("symbol"), "type": o.get("type"), "side": o.get("side"),
+                "stop_price": Decimal(str(o.get("stopPrice") or 0)),
+                "close_position": bool(o.get("closePosition")), "reduce_only": bool(o.get("reduceOnly"))} for o in std_rows]
+        return out + [_norm_algo(o) for o in algo_rows]
+
     def open_orders(self, symbol) -> list[dict]:
         std = self._req("GET", "/fapi/v1/openOrders", {"symbol": symbol}, critical=True)
         algo = self._req("GET", "/fapi/v1/openAlgoOrders", {"symbol": symbol}, critical=True)
-        algo = algo if isinstance(algo, list) else (algo.get("orders") or [])
-        out = [{"kind": "std", "id": str(o["orderId"]), "client_id": o.get("clientOrderId", ""), "symbol": symbol,
-                "type": o.get("type"), "side": o.get("side"), "stop_price": Decimal(str(o.get("stopPrice") or 0)),
-                "close_position": bool(o.get("closePosition")), "reduce_only": bool(o.get("reduceOnly"))} for o in std]
-        return out + [_norm_algo(o) for o in algo]
+        return self._collect_orders(std, algo, symbol)
+
+    def open_orders_all(self) -> list[dict]:
+        """Every open order, one standard read and one algo read, not one pair per symbol."""
+        std = self._req("GET", "/fapi/v1/openOrders", {}, critical=True)
+        algo = self._req("GET", "/fapi/v1/openAlgoOrders", {}, critical=True)
+        return self._collect_orders(std, algo, None)
 
     def user_trades(self, symbol, start_ms) -> list[dict]:
         rows = self._req("GET", "/fapi/v1/userTrades", {"symbol": symbol, "startTime": int(start_ms), "limit": 1000})
@@ -379,7 +403,9 @@ class BinanceREST:
                 return None
             raise
         oid = str(a.get("actualOrderId") or "")
-        out = {"status": a.get("algoStatus"), "order_id": oid or None, "executed_qty": Decimal(0), "avg_price": Decimal(0)}
+        out = {"status": a.get("algoStatus"), "id": str(a.get("algoId") or "") or None,
+               "order_id": oid or None, "executed_qty": Decimal(0), "avg_price": Decimal(0),
+               "kind": "algo", "client_id": client_id}
         if oid and oid != "0":
             o = _norm_order(self._req("GET", "/fapi/v1/order", {"symbol": symbol, "orderId": oid}, critical=True))
             out.update(executed_qty=o["executed_qty"], avg_price=o["avg_price"], order_status=o["status"])

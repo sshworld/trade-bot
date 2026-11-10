@@ -49,7 +49,9 @@ def set_market(b, sym, big, mid, fast, now, px=0.15, n=None):
 
 class Clock:
     def __init__(self):
-        self.t = (time.time() // 60) * 60 + 5.0      # 5 s after a minute boundary
+        # 2026-06-10 12:07:05 UTC. Mid 15m/30m/1h window, so +60s cannot cross
+        # a :15/:30/:45/:00 boundary (:14/:29/:44/:59 were the flake).
+        self.t = 1781093225.0
 
     def __call__(self):
         return self.t
@@ -627,7 +629,10 @@ def test_tp1_fill_booked_from_order_status_in_the_race(offline, side):
     _fire_between_reads(offline, Decimal(j["tp"]["tp1"]))
     eng.reconcile()
     j = eng.st["pos"][DOGE]
-    assert not [c for c in offline.fx.calls[calls0:] if c[0] in ("market", "take_profit")]
+    sent = [c for c in offline.fx.calls[calls0:] if c[0] in ("market", "take_profit")]
+    # TP1 itself is not re-sent (that was the double-close). The +3R runner is armed once the fill is booked.
+    assert not [c for c in sent if c[0] == "market"]
+    assert [c[1][3] for c in sent if c[0] == "take_profit"] == [j["cid"] + "t3"]
     assert j["tp1_done"] and Decimal(j["qty"]) == Decimal(j["tp"]["q2"]) == abs(offline.amt(DOGE))
     assert "reconcile_mismatch" not in eng.blocks
     eng.reconcile()

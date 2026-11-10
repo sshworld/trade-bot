@@ -335,7 +335,7 @@ def test_restart_orphan_bot_stops_no_position_cancelled(sticky):
     eng = sticky.engine()
     eng.startup()
     assert_no_residual(sticky, eng, DOGE)
-    assert eng.started and eng.entries_allowed()
+    assert eng.started and eng.meta.get("halted")          # open orders and no current state: not a fresh start
 
 
 def test_restart_foreign_order_no_position_is_left_alone(sticky):

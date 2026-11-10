@@ -53,6 +53,7 @@ class FakeExchange:
         self.incomes = []
         self.accepted = {}     # client id -> times accepted (duplicate detector)
         self.stops_fire = True # False: exchange stop "does not fire" (breach test)
+        self.countdown = {}    # symbol -> countdownCancelAll timer; 0 does not cancel orders
         self._id = itertools.count(1)
         self.kl = {}           # (sym, interval) -> kline rows (tests set them; forming bar = close_time in the future)
 
@@ -93,6 +94,12 @@ class FakeExchange:
     def book(self, s):
         return {"bid": self.price[s], "ask": self.price[s]}
 
+    def last_price(self, s):
+        over = getattr(self, "last", None)
+        if isinstance(over, dict) and s in over:
+            return over[s]
+        return self.price[s]
+
     def klines(self, s, interval, limit):
         return [dict(r) for r in self.kl.get((s, interval), [])[-limit:]]
 
@@ -102,6 +109,9 @@ class FakeExchange:
     def open_orders(self, s):
         return [dict(o) for o in self.algos.values() if o["symbol"] == s]
 
+    def open_orders_all(self):
+        return [dict(o) for o in self.algos.values()]
+
     def get_order(self, s, cid):
         return dict(self.orders[cid]) if cid in self.orders else None
 
@@ -109,7 +119,10 @@ class FakeExchange:
         return dict(self.algo_hist[cid]) if cid in self.algo_hist else None
 
     def _algo_end(self, o, status, oid=None, q=Decimal(0), px=Decimal(0)):
-        self.algo_hist[o["client_id"]] = {"status": status, "order_id": oid, "executed_qty": q, "avg_price": px}
+        self.algo_hist[o["client_id"]] = {
+            "status": status, "order_id": oid, "executed_qty": q, "avg_price": px,
+            "id": o.get("id"), "kind": "algo", "client_id": o.get("client_id"),
+        }
 
     def user_trades(self, s, start_ms):
         return [f for f in self.fills if f["symbol"] == s and f["time"] >= start_ms]
@@ -133,6 +146,8 @@ class FakeExchange:
         return self.lev[s]
 
     def market(self, s, side, qty, cid, reduce_only=False, fill_qty=None):
+        if not reduce_only:
+            self._cancel_flat_qty_stops(s)               # a reduce-only qty stop cannot live while flat
         if cid in self.orders:
             raise OrderRejected(-4116, "ClientOrderId is duplicated.")
         qty = Decimal(qty)
@@ -199,17 +214,31 @@ class FakeExchange:
         if qty is None:                                   # closePosition: Binance rules
             if not p:
                 raise OrderRejected(-4509, "Time in Force (TIF) GTE can only be used with open positions.")
-            if any(o["symbol"] == s and o["side"] == side and o["close_position"] for o in self.algos.values()):
-                raise OrderRejected(-4130, "An open stop or take profit order with GTE and closePosition in the direction is existing.")
+            if any(o["symbol"] == s and o["side"] == side and o["close_position"]
+                   and (o.get("type") or "").startswith("STOP") for o in self.algos.values()):
+                raise OrderRejected(-4130, "An open stop order with GTE and closePosition in the direction is existing.")
         if p and ((p["amt"] > 0 and self.price[s] <= trigger) or (p["amt"] < 0 and self.price[s] >= trigger)):
             raise WouldTrigger(-2021, "Order would immediately trigger.")
         aid = str(next(self._id))
+        flat = not p or p.get("amt", 0) == 0
         self.algos[aid] = {"kind": "algo", "id": aid, "client_id": cid, "symbol": s, "type": "STOP_MARKET", "side": side,
                            "stop_price": trigger, "close_position": qty is None, "reduce_only": True,
-                           "qty": Decimal(qty) if qty is not None else Decimal(0), "working_type": "MARK_PRICE"}
+                           "qty": Decimal(qty) if qty is not None else Decimal(0), "working_type": "MARK_PRICE",
+                           "flat_prearm": qty is not None and flat}
         self.accepted[cid] = self.accepted.get(cid, 0) + 1
         self._algo_end(self.algos[aid], "NEW")
         return dict(self.algos[aid])
+
+    def _cancel_flat_qty_stops(self, sym):
+        """Binance auto-cancels a reduce-only qty STOP_MARKET within ~1s when the symbol is flat."""
+        p = self.pos.get(sym)
+        if p and p.get("amt", 0) != 0:
+            return
+        for aid, o in list(self.algos.items()):
+            if o.get("symbol") == sym and o.get("flat_prearm"):
+                self.algos.pop(aid, None)
+                self._algo_end(o, "CANCELED")
+                self.algo_hist[o["client_id"]]["flat_autocancel"] = True
 
     def take_profit(self, s, side, trigger, cid, qty, working_type="MARK_PRICE"):
         if any(o["client_id"] == cid for o in self.algos.values()):
@@ -228,6 +257,12 @@ class FakeExchange:
     def cancel(self, s, o):
         if self.algos.pop(o["id"], None) is not None:
             self._algo_end(o, "CANCELED")
+
+    def countdown_cancel_all(self, s, countdown_time=0):
+        """countdownTime 0 clears the auto-cancel timer. It does not cancel resting orders,
+        including reduce-only quantity conditional orders."""
+        self.countdown[s] = int(countdown_time)
+        return {"symbol": s, "countdownTime": int(countdown_time)}
 
     # test helpers
     def set_price(self, s, px):
