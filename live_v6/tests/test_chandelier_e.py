@@ -2,8 +2,8 @@
 # best = 1m high/low extreme since entry, updated once per closed minute, never looser; TP1 +1R 50 % unchanged; after TP1
 # stop = tighter(stop, be·(1 ± 0.0015)), be = fee-inclusive breakeven (f = 0.0005); NO TP2 order. Offline (FakeExchange).
 import json
-import time
 import pytest
+from datetime import datetime, timezone
 from decimal import Decimal as D
 
 from live_v6.runner import live_settings
@@ -13,12 +13,17 @@ M1, H1 = 60_000, 3_600_000
 F = D("0.0005")
 
 
+# Mid-hour on a fixed day. A few minutes of advance stay inside that hour, so the
+# zero-range forming 1h bar never becomes closed (that made Wilder ATR 13/14 of the target).
+_FIXED = datetime(2026, 1, 15, 12, 30, tzinfo=timezone.utc).timestamp()
+
+
 class Clk:
     def __init__(self):
         self.off = 0.0
 
     def __call__(self):
-        return time.time() + self.off
+        return _FIXED + self.off
 
     def ms(self):
         return int(self() * 1000)

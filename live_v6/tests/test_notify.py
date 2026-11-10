@@ -91,7 +91,11 @@ def test_incident_alert_format():
 def test_daily_settlement_and_heartbeat():
     from datetime import datetime, timedelta, timezone
     kst = timezone(timedelta(hours=9))
-    t0 = time.time()                   # fake exchange stamps fills with the wall clock
+    wall = datetime.fromtimestamp(time.time(), kst)
+    # 09:00 KST, so the jump to the next midnight is always longer than one heartbeat.
+    # A start 2–4 h before midnight makes the settlement tick skip the heartbeat and
+    # the following half-interval tick fire one.
+    t0 = datetime(wall.year, wall.month, wall.day, 9, 0, tzinfo=kst).timestamp()
     today = datetime.fromtimestamp(t0, kst)
     midnight = datetime(today.year, today.month, today.day, tzinfo=kst) + timedelta(days=1)
     clk = Clock(t0)

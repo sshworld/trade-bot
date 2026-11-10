@@ -245,6 +245,7 @@ class V6Engine:
         self._tp_retry_at: dict = {}                        # (sym, what) → earliest clock() for another rejected-TP cycle
         self._tp_cooled: set = set()                        # rejected TPs whose next try is a single POST, not 1s+3s+10s
         self._armed_now: set = set()                        # symbols already stop-armed in this reconcile
+        self._through_retry_at: dict = {}                   # sym → earliest clock() for another through-stop retry
         self._cap_retry_at: dict = {}                       # sym → earliest clock() to retry a rejected BE cap close
         self._cap_alerted: set = set()                      # symbols already told that a cap close was held
         self._schema_lock = False                          # old state: SL only, no take-profit and no entries
@@ -269,13 +270,15 @@ class V6Engine:
         self.tg.alert(title, detail, event_ms=event_ms, decision_ms=self.now_ms())
         self._day_count("incidents")
 
-    def _lock_hold_alert(self, sym, incident: str, detail: str = ""):
-        """One truthful notice per incident while the schema lock refuses a market close."""
+    def _lock_hold_alert(self, sym, incident: str, detail: str = "", *, kept: bool = True):
+        """One truthful notice per incident while the schema lock refuses a market close.
+        `kept` is false when no covering stop is on the book: the title must not say the stop is held."""
         key = (str(sym), incident)
         if key in self._lock_hold_alerted:
             return
         self._lock_hold_alerted.add(key)
-        self.alert(f"구 상태 잠금 — {sym} 손절만 유지 · 시장가 안 냄",
+        state = "손절만 유지" if kept else "손절 없음 · 재시도 중"
+        self.alert(f"구 상태 잠금 — {sym} {state} · 시장가 안 냄",
                    incident + (f" · {detail}" if detail else ""))
 
     def notify(self, text, kind=None, event_ms=None):
@@ -750,7 +753,7 @@ class V6Engine:
                 if mark is not None:
                     self._arm_through_stop(sym, j, D(j["qty"]) * int(j.get("side", 1)), D(mark))
                 else:
-                    self._lock_hold_alert(sym, "lost_stop_breach", "mark 없음 · 보호 손절 재시도")
+                    self._lock_hold_alert(sym, "lost_stop_breach", "mark 없음 · 보호 손절 재시도", kept=False)
                 return False
             self.lost_stop_breach(sym, self.marks.get(sym))
             return False
@@ -762,7 +765,7 @@ class V6Engine:
             self.save()
             if self._schema_lock:
                 self._lock_hold_alert(sym, "replace_lost_stop",
-                                      f"원래 손절 {lost['px']} 재등록 실패 · 시장가 안 냄 · {e}")
+                                      f"원래 손절 {lost['px']} 재등록 실패 · 시장가 안 냄 · {e}", kept=False)
                 return False
             self.alert(f"손절 재등록 실패 — {sym} 시장가가 원래 손절가 {lost['px']} 도달 시 즉시 시장가 정리",
                        f"{str(e)[:100]} · 대조 루프가 계속 재시도")
@@ -779,7 +782,7 @@ class V6Engine:
         if not j or j.get("closing"):
             return
         if self._schema_lock:
-            self._lock_hold_alert(sym, "lost_stop_breach", f"mark {mark}")
+            self._lock_hold_alert(sym, "lost_stop_breach", f"mark {mark}", kept=False)
             return
         self.alert("손절 주문 없음 + 손절가 돌파 — 이 포지션 시장가 정리" + (" (IP 차단 중: 해제 즉시 전송)" if self.ban_left() else ""),
                    f"{sym} mark {mark} vs 손절 {j['stop_lost']['px']} · 다른 포지션 유지")
@@ -809,7 +812,21 @@ class V6Engine:
         except ExchangeError:
             return                                          # REST reconcile retries in ≤5 s
         if self._schema_lock:
-            self._lock_hold_alert(sym, "stop_breach", f"mark {mark} vs {self.st['pos'][sym]['stop_px']} ({source})")
+            j = self.st["pos"].get(sym) or {}
+            prot = None
+            try:
+                prot = self.find_stop(amt_now, self.x("open_orders", sym))
+            except ExchangeError:
+                prot = None
+            if prot and prot.get("stop_price"):
+                px = prot["stop_price"]
+                self._lock_hold_alert(
+                    sym, f"covered_stop:{px}",
+                    f"원래 손절 {j.get('stop_px')} 돌파 · 거래소 손절 {px} 유지 · 시장가 안 냄")
+            else:
+                self._lock_hold_alert(
+                    sym, "stop_breach_missing",
+                    f"mark {mark} vs {j.get('stop_px')} ({source}) · 손절 재시도", kept=False)
             return
         self.alert("손절가 돌파인데 거래소 손절 미작동 — 이 포지션만 정리",
                    f"{sym} mark {mark} vs 손절 {self.st['pos'][sym]['stop_px']} ({source}) · 다른 포지션 유지")
@@ -1519,7 +1536,7 @@ class V6Engine:
         if amt == 0 or (baseline > 0 and abs(amt) < baseline):
             return False                                    # flat or partial fill: next reconcile books it
         if self._schema_lock:
-            self._lock_hold_alert(sym, "protection_failed", f"{what} · {err}")
+            self._lock_hold_alert(sym, "protection_failed", f"{what} · {err}", kept=False)
             return False
         self.alert(f"보호 주문 실패 — {sym} 시장가 청산", f"{what} · reduceOnly MARKET · {err}")
         self._protect_close_failed = not bool(self.close(sym, "protection_failed"))
@@ -1646,7 +1663,10 @@ class V6Engine:
 
     def _arm_through_stop(self, sym, j, amt, mark) -> bool:
         """Schema lock, price already through the journal stop: rest a stop just beyond the mark.
-        No market. Retried by the next reconcile until the exchange accepts it."""
+        No market. A reject keeps the same client id and waits a minute before the next try."""
+        self._armed_now.add(sym)
+        if self.clock() < self._through_retry_at.get(sym, 0):
+            return False
         side = 1 if amt > 0 else -1
         rules = self.rules[sym]
         buf = max(rules.tick_size, abs(D(mark)) * D("0.001"))
@@ -1657,16 +1677,18 @@ class V6Engine:
         if side < 0 and px <= D(mark):
             px = rules.price(D(mark) + rules.tick_size, "up")
         seq = int(j.get("stop_seq", 0))
-        j["stop_seq"] = seq + 1
-        self.save()
         cid = f"{j['cid']}s{seq}"
         cs = "SELL" if side > 0 else "BUY"
         try:
             o = self.x("stop", sym, cs, px, cid)
         except (WouldTrigger, ExchangeError) as e:
+            self._through_retry_at[sym] = self.clock() + PROTECT_AUDIT_S
             self._lock_hold_alert(sym, "through_stop_retry",
-                                  f"원래 손절 {j['stop_px']} 돌파 · 보호 손절 {px} 재시도 · 시장가 안 냄 · {e}")
+                                  f"원래 손절 {j['stop_px']} 돌파 · 보호 손절 {px} 재시도 · 시장가 안 냄 · {e}",
+                                  kept=False)
             return False
+        j["stop_seq"] = seq + 1
+        self._through_retry_at.pop(sym, None)
         placed = D(o.get("stop_price") or px)
         j["stop_px"] = str(placed)
         j["stop_cid"] = o.get("client_id", cid)
@@ -2858,6 +2880,7 @@ class V6Engine:
         self._tp_retry_at = {k: v for k, v in self._tp_retry_at.items() if k[0] != sym}
         self._cap_retry_at.pop(sym, None)
         self._cap_alerted.discard(sym)
+        self._through_retry_at.pop(sym, None)
         self._lock_hold_alerted = {k for k in self._lock_hold_alerted if k[0] != sym}
 
     @staticmethod
@@ -3694,9 +3717,12 @@ class V6Engine:
                     self.ensure_isolated(sym)
                 continue
             if j is None:
-                if any(it.get("sym") == sym for it in self.st["intents"].values()):
+                pending_intent = any(it.get("sym") == sym for it in self.st["intents"].values())
+                if pending_intent and not self._schema_lock:
                     mismatch.append(f"{sym} 진입 결과 확인 중 {amt}")     # our own unresolved entry (pre-arm protects it)
                     continue
+                if pending_intent:                                  # lock: the intent stays, but a missing pre-arm must not
+                    mismatch.append(f"{sym} 진입 결과 확인 중 {amt} · 잠금 중 손절 재시도")
                 # TA condition 1 (2026-10-26): an orphan pre-arm (entry definitively rejected, its cancel failed, no intent) is the BOT's own
                 # order protecting nothing. It must never count as protection of a position the bot does not own, and it is cancelled
                 # right away (after _unknown_position, whether or not that position has a stop): left alive it could close the user's
@@ -3731,7 +3757,7 @@ class V6Engine:
                     else:
                         prot = self.find_stop(amt, orders)
                         self._lock_hold_alert(
-                            sym, "stop_breach",
+                            sym, f"covered_stop:{prot['stop_price']}",
                             f"원래 손절 {stp} 돌파 · 거래소 손절 {prot['stop_price']} 유지 · 시장가 안 냄")
                     continue
                 self.breach_check(sym, mk, "5s reconcile")
@@ -3892,6 +3918,18 @@ class V6Engine:
         self._book_down_since.pop(sym, None)            # a successful confirm ends the outage window
         seen = self.find_stop(amt, orders)
         already = sym in self._armed_now
+        if not seen and not already and self._schema_lock and j.get("stop_px"):
+            mk = self.marks.get(sym)
+            if mk is None:
+                try:
+                    mk = self.x("mark_prices").get(sym)
+                except ExchangeError:
+                    mk = None
+            stp = D(j["stop_px"])
+            through = mk is not None and ((amt > 0 and mk <= stp) or (amt < 0 and mk >= stp))
+            if through:
+                self._arm_through_stop(sym, j, amt, mk)   # journal price would trigger; do not mint a new id
+                return
         if seen:
             self._release_cp_hold(sym)                      # covering stop is visible: the -4130 hold may alert again
         elif not already and sym in self._cp_hold and self._hold_should_rearm(sym, orders):
@@ -3965,7 +4003,8 @@ class V6Engine:
             if int(u.get("stop_rejects", 0)) > 0 and age >= self.cfg.unknown_stop_deadline_s * 1000:
                 if self._schema_lock:
                     self._lock_hold_alert(sym, "unknown_stop_rejected",
-                                          f"거부 {u.get('stop_rejects')}회 · 손절 재시도 · 시장가 안 냄")
+                                          f"거부 {u.get('stop_rejects')}회 · 손절 재시도 · 시장가 안 냄",
+                                          kept=False)
                 else:
                     u["closing"] = True                         # TA R4 last resort: protection beats ownership
                     self.save()
