@@ -101,7 +101,11 @@ def test_replacement_fails_during_429_then_mark_cross_closes_reduce_only(offline
     assert len(cc) == 1 and cc[0][1][0] == DOGE and _amt(offline, DOGE) == 0
     assert clk() < offline.inner.backoff_until                  # during the 429 backoff
     assert _amt(offline, SOL) > 0 and not eng.meta.get("halted")   # only that position
-    assert eng.meta["trades"][-1]["reason"] == "stop_lost_breach"
+    # userTrades is non-critical and not sent during the backoff, so the journal stays open instead of an estimate row
+    assert DOGE in eng.st["pos"] and not eng.meta.get("trades")
+    offline.inner.backoff_until = clk() - 1
+    eng.reconcile()
+    assert DOGE not in eng.st["pos"] and eng.meta["trades"][-1]["reason"] == "stop_lost_breach"
     offline.assert_safe()
 
 

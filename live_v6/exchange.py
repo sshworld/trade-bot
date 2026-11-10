@@ -250,11 +250,14 @@ class BinanceREST:
         raise ExchangeError("no USDT asset in account")
 
     def positions(self, symbols) -> dict[str, dict]:
+        """Rows the exchange actually returned. A requested symbol with no row is absent, not amount 0:
+        a missing row is not a confirmed flat position."""
         rows = self._req("GET", "/fapi/v2/positionRisk", critical=True)
-        out = {s: {"amt": Decimal(0), "entry": Decimal(0), "leverage": None, "margin_type": None} for s in symbols}
+        wanted = set(symbols)
+        out: dict[str, dict] = {}
         for r in rows:
             s = r.get("symbol")
-            if s in out:
+            if s in wanted:
                 mt = str(r.get("marginType", "")).lower()
                 out[s] = {"amt": Decimal(r["positionAmt"]), "entry": Decimal(r["entryPrice"]),
                           "leverage": int(r["leverage"]),
@@ -286,9 +289,9 @@ class BinanceREST:
 
     def user_trades(self, symbol, start_ms) -> list[dict]:
         rows = self._req("GET", "/fapi/v1/userTrades", {"symbol": symbol, "startTime": int(start_ms), "limit": 1000})
-        return [{"order_id": str(r["orderId"]), "side": r["side"], "price": Decimal(r["price"]), "qty": Decimal(r["qty"]),
-                 "commission": Decimal(r["commission"]), "realized_pnl": Decimal(r.get("realizedPnl", "0")),
-                 "time": int(r["time"])} for r in rows]
+        return [{"order_id": str(r["orderId"]), "trade_id": str(r.get("id") or ""), "side": r["side"],
+                 "price": Decimal(r["price"]), "qty": Decimal(r["qty"]), "commission": Decimal(r["commission"]),
+                 "realized_pnl": Decimal(r.get("realizedPnl", "0")), "time": int(r["time"])} for r in rows]
 
     def income(self, symbol, income_type, start_ms) -> list[dict]:
         p = {"startTime": int(start_ms), "limit": 1000}

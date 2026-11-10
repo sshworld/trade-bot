@@ -533,6 +533,9 @@ def test_be_stop_instant_fire_cleans_up(offline):
         o = real(s, side, trigger, cid, qty=qty)
         offline.inner.algos.pop(o["id"])
         offline.inner.market(s, side, abs(offline.amt(s)), cid + "f", True)
+        m = offline.inner.orders[cid + "f"]                 # the fill belongs to this stop, not a neighbor
+        offline.inner.algo_hist[cid] = {"status": "FINISHED", "order_id": m["id"],
+                                        "executed_qty": m["executed_qty"], "avg_price": m["avg_price"]}
         return o
     offline.inner.stop = fire
     eng.reconcile()
