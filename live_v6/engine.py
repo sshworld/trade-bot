@@ -338,7 +338,8 @@ class V6Engine:
                            event_ms=int(self._block_since.get(r, now) * 1000))
 
     def entries_allowed(self) -> bool:
-        return not self.blocks and not self.meta.get("halted") and not self.meta.get("peak_dd")
+        return (not self._schema_lock and not self.blocks and not self.meta.get("halted")
+                and not self.meta.get("peak_dd"))
 
     def halt(self, reason):
         if not self.meta.get("halted"):
@@ -738,6 +739,18 @@ class V6Engine:
             self.x("stop", sym, self._cs(j), D(lost["px"]), f"{j['cid']}s{seq}",       # replaced by a qty stop
                    **({} if lost.get("cp") else {"qty": D(j["qty"])}))
         except WouldTrigger:
+            if self._schema_lock:
+                mark = self.marks.get(sym)
+                if mark is None:
+                    try:
+                        mark = self.x("mark_prices").get(sym)
+                    except ExchangeError:
+                        mark = None
+                if mark is not None:
+                    self._arm_through_stop(sym, j, D(j["qty"]) * int(j.get("side", 1)), D(mark))
+                else:
+                    self._lock_hold_alert(sym, "lost_stop_breach", "mark 없음 · 보호 손절 재시도")
+                return False
             self.lost_stop_breach(sym, self.marks.get(sym))
             return False
         except ExchangeError as e:
@@ -746,6 +759,10 @@ class V6Engine:
                 return False
             lost["failed"] = str(e)[:120]
             self.save()
+            if self._schema_lock:
+                self._lock_hold_alert(sym, "replace_lost_stop",
+                                      f"원래 손절 {lost['px']} 재등록 실패 · 시장가 안 냄 · {e}")
+                return False
             self.alert(f"손절 재등록 실패 — {sym} 시장가가 원래 손절가 {lost['px']} 도달 시 즉시 시장가 정리",
                        f"{str(e)[:100]} · 대조 루프가 계속 재시도")
             return False
@@ -1155,8 +1172,8 @@ class V6Engine:
         existing = self.x("get_order", sym, cid)
         if existing is not None:
             return existing
-        if reduce_only and self._schema_lock:
-            log.warning("%s reduceOnly market %s not sent: schema lock", sym, cid)
+        if self._schema_lock:
+            log.warning("%s market %s not sent: schema lock", sym, cid)
             return None
         try:
             return self.x("market", sym, side, qty, cid, reduce_only)
@@ -1625,6 +1642,37 @@ class V6Engine:
             self._tp_fail_once(sym, what, last)            # a rejected take-profit never market-closes
             return False
         return self._give_up_protection(sym, j, what, last)
+
+    def _arm_through_stop(self, sym, j, amt, mark) -> bool:
+        """Schema lock, price already through the journal stop: rest a stop just beyond the mark.
+        No market. Retried by the next reconcile until the exchange accepts it."""
+        side = 1 if amt > 0 else -1
+        rules = self.rules[sym]
+        buf = max(rules.tick_size, abs(D(mark)) * D("0.001"))
+        raw = D(mark) - side * buf
+        px = rules.price(raw, "down" if side > 0 else "up")
+        if side > 0 and px >= D(mark):
+            px = rules.price(D(mark) - rules.tick_size, "down")
+        if side < 0 and px <= D(mark):
+            px = rules.price(D(mark) + rules.tick_size, "up")
+        seq = int(j.get("stop_seq", 0))
+        j["stop_seq"] = seq + 1
+        self.save()
+        cid = f"{j['cid']}s{seq}"
+        cs = "SELL" if side > 0 else "BUY"
+        try:
+            o = self.x("stop", sym, cs, px, cid)
+        except (WouldTrigger, ExchangeError) as e:
+            self._lock_hold_alert(sym, "through_stop_retry",
+                                  f"원래 손절 {j['stop_px']} 돌파 · 보호 손절 {px} 재시도 · 시장가 안 냄 · {e}")
+            return False
+        placed = D(o.get("stop_price") or px)
+        j["stop_px"] = str(placed)
+        j["stop_cid"] = o.get("client_id", cid)
+        self.save()
+        self._lock_hold_alert(sym, f"through_stop:{placed}",
+                              f"원래 손절 돌파 · 거래소 보호 손절 {placed} · 시장가 안 냄")
+        return True
 
     def _arm_stop(self, sym, j, amt) -> bool:
         """One closePosition STOP at the journal stop. False → the position was closed or the read stayed unknown."""
@@ -2809,6 +2857,7 @@ class V6Engine:
         self._tp_retry_at = {k: v for k, v in self._tp_retry_at.items() if k[0] != sym}
         self._cap_retry_at.pop(sym, None)
         self._cap_alerted.discard(sym)
+        self._lock_hold_alerted = {k for k in self._lock_hold_alerted if k[0] != sym}
 
     @staticmethod
     def _book_sig(orders):
@@ -3674,6 +3723,15 @@ class V6Engine:
             mk = marks.get(sym)
             stp = D(j["stop_px"])
             if mk is not None and ((amt > 0 and mk <= stp) or (amt < 0 and mk >= stp)):
+                if self._schema_lock:
+                    if not self.find_stop(amt, orders):
+                        self._arm_through_stop(sym, j, amt, mk)
+                    else:
+                        prot = self.find_stop(amt, orders)
+                        self._lock_hold_alert(
+                            sym, "stop_breach",
+                            f"원래 손절 {stp} 돌파 · 거래소 손절 {prot['stop_price']} 유지 · 시장가 안 냄")
+                    continue
                 self.breach_check(sym, mk, "5s reconcile")
                 if (self.meta.get("halted") or "").startswith("emergency"):
                     self._in_reconcile = False
@@ -4090,9 +4148,15 @@ class V6Engine:
             self.meta.pop("daily_halt")
             if str(self.meta.get("halted") or "").startswith("daily_loss"):
                 self.meta.pop("halted")
+            if self._schema_lock and not self.meta.get("halted"):
+                self.meta["halted"] = SCHEMA_HALT          # daily expiry must not reopen entries
             self.save()
-            self.notify(f"✅ 일일 손실 중단 해제 — 24시간 경과 · 신규 진입 재개 (중단 시각 {kst(int(dh['trigger_ms']))})",
-                        kind="resume")
+            if self._schema_lock:
+                self.notify(f"✅ 일일 손실 중단 해제 — 구 상태 잠금은 유지 · 신규 진입 없음 (중단 시각 {kst(int(dh['trigger_ms']))})",
+                            kind="resume")
+            else:
+                self.notify(f"✅ 일일 손실 중단 해제 — 24시간 경과 · 신규 진입 재개 (중단 시각 {kst(int(dh['trigger_ms']))})",
+                            kind="resume")
         day = datetime.fromtimestamp(now / 1000, timezone.utc).strftime("%Y-%m-%d")
         if self.meta.get("dl_day") != day:               # 00:00 UTC (09:00 KST): new baseline = equity now
             base = D(self.meta["equity"])
