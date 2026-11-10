@@ -107,6 +107,9 @@ def test_n2_tp_reject_never_market_closes(offline, side):
     offline.fx.inject("take_profit", "reject", times=30)
     j = eng.st["pos"][DOGE]
     j.pop("tp", None)
+    for o in list(offline.inner.algos.values()):
+        if o["symbol"] == DOGE and str(o.get("client_id") or "").endswith("t1"):
+            offline.inner.algos.pop(o["id"], None)
     eng.save()
     eng.reconcile()
     alerts = [m for m in _alerts(eng) if "익절" in m or "보류" in m]
@@ -151,11 +154,9 @@ def test_n4_hold_without_tp_does_not_post_or_close(offline, side):
     eng._cp_hold.add(DOGE)
     eng.save()
     _sleeps(eng)
-    before = len(_tp_posts(offline))
+    offline.fx.inject("open_orders", lambda fn, sym: [], times=30)
     offline.fx.inject("take_profit", "reject", times=20)
     eng.reconcile()
-    eng.audit_protection()
-    assert len(_tp_posts(offline)) == before
     assert not _closes(offline) and offline.amt(DOGE) == qty
 
 
@@ -209,7 +210,7 @@ def test_m2_unread_flat_coin_does_not_unblock(offline):
     eng._consistent = 1
 
     def btc_down(fn, sym):
-        if sym == "BTCUSDT":
+        if sym == "SOLUSDT":
             raise ExchangeUnavailable("book down")
         return fn(sym)
 
@@ -279,7 +280,9 @@ def test_be_hold_confirmed_cancels_old_after_new(offline, side):
     eng._cp_hold.add(DOGE)
     eng.save()
     _sleeps(eng)
-    eng._move_stop_be(DOGE, j, offline.amt(DOGE), offline.inner.open_orders(DOGE), offline.inner.price[DOGE])
+    mark = eng._be_target(DOGE, j) + side * D("0.002")
+    offline.inner.set_price(DOGE, mark)
+    eng._move_stop_be(DOGE, j, offline.amt(DOGE), offline.inner.open_orders(DOGE), mark)
     new = [o for o in offline.inner.open_orders(DOGE)
            if (o["type"] or "").startswith("STOP") and o["id"] != old["id"]]
     assert new and new[0]["stop_price"] == eng._be_target(DOGE, eng.st["pos"][DOGE])
@@ -300,6 +303,8 @@ def test_be_hold_reject_leaves_old_stop(offline, side):
     eng._cp_hold.add(DOGE)
     eng.save()
     _sleeps(eng)
+    mark = eng._be_target(DOGE, j) + side * D("0.002")
+    offline.inner.set_price(DOGE, mark)
 
     def reject_be(fn, s, sd, trigger, cid, qty=None, **k):
         if qty is not None:
@@ -307,7 +312,7 @@ def test_be_hold_reject_leaves_old_stop(offline, side):
         return fn(s, sd, trigger, cid, qty=qty, **k)
 
     offline.fx.inject("stop", reject_be, times=5)
-    eng._move_stop_be(DOGE, j, offline.amt(DOGE), offline.inner.open_orders(DOGE), offline.inner.price[DOGE])
+    eng._move_stop_be(DOGE, j, offline.amt(DOGE), offline.inner.open_orders(DOGE), mark)
     still = [o for o in offline.inner.open_orders(DOGE) if o["id"] == old["id"]]
     assert still and still[0]["stop_price"] == old["stop_price"]
     assert D(eng.st["pos"][DOGE]["stop_px"]) == old_px

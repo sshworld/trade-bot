@@ -181,7 +181,9 @@ def test_r1_tp1_be_then_unknown_book_no_posts(offline, side):
     offline.fx.inject("open_orders", "unavailable", times=80)
     offline.fx.inject("open_orders_all", "unavailable", times=20)
     alerts_before = len(_unknown_book_alerts(eng, DOGE))
-    _monitor(eng, 5)
+    eng.tick()
+    eng.clock.off += eng.cfg.transient_alert_s + 1
+    _monitor(eng, 4)
     unknown = _unknown_book_alerts(eng, DOGE)
     assert len(unknown) == alerts_before + 1, unknown
     assert len(_stop_posts(offline)) == posts_stop, "stop POST while book unknown"
@@ -206,7 +208,9 @@ def test_r2_crash_journal_unknown_book_then_place(offline, side):
     _sleeps(eng)
     offline.fx.inject("open_orders", "unavailable", times=80)
     before = len(_tp_posts(offline))
-    _monitor(eng, 4)
+    eng.tick()
+    eng.clock.off += eng.cfg.transient_alert_s + 1
+    _monitor(eng, 3)
     assert len(_tp_posts(offline)) == before
     assert len([m for m in _alerts(eng) if "보류" in m and DOGE in m]) == 1
     assert offline.amt(DOGE) == qty and not _closes(offline)

@@ -50,21 +50,22 @@ def test_retry_timing_exactly_1_3_10_and_alert_per_attempt(offline):
 
 
 def test_flatten_only_known_nonzero_reduceonly_market(offline):
-    """Spec 2: exhausted retries flatten a known nonzero row with reduceOnly MARKET, and nothing else."""
+    """A rejected take-profit does not flatten. The stop stays; the other coin is untouched."""
     eng = engine_for(offline, "e")
     open_pos(offline, eng, 1, SOL)
     open_pos(offline, eng, 1)
     sol_amt = offline.amt(SOL)
     sol_ids = _ids(_orders(offline, SOL))
+    doge_qty = offline.amt(DOGE)
     _pop_cid_suffix(offline, "t1")
     _sleeps(eng)
     offline.fx.inject("take_profit", "reject", times=4)
     eng.reconcile()
-    assert offline.amt(DOGE) == 0 and DOGE not in eng.st["pos"]
+    assert offline.amt(DOGE) == doge_qty and DOGE in eng.st["pos"]
+    assert _stops(offline)
     assert offline.amt(SOL) == sol_amt and _ids(_orders(offline, SOL)) == sol_ids
-    closes = [c for c in _closes(offline) if c[1][0] == DOGE]
-    assert len(closes) == 1 and closes[0][1][4] is True
-    assert not any(c[1][0] == SOL for c in _closes(offline))
+    assert not _closes(offline)
+    assert sum("보류" in m for m in _alerts(eng)) == 1
     assert not str(eng.meta.get("halted") or "").startswith("emergency")
 
 

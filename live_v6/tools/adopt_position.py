@@ -57,15 +57,12 @@ def build(state: dict, sym: str, model_entry_open: str, cid_prefix: str, now_ms:
         notes.append(f"WARNING: the model does not hold this trade (model pos={model.get('pos')} ei_open={model.get('ei_open')}, "
                      f"adopted model_entry_open={meo}) → the bot will CLOSE {sym} at the next 4h close (model_sync).")
     sd = entry - stop
-    r = abs(entry - stop)
-    q1 = qty * Decimal("0.5")
     j = {"cid": f"{cid_prefix}{sym.removesuffix('USDT')}a{now_ms // 1000}", "side": 1, "qty": str(qty),
          "entry_px": str(entry), "stop_px": str(stop), "stop_px_entry": str(stop), "stop_dist": str(sd),
          "risk_usdt": str(max(sd, Decimal(0)) * qty),
          "risk_frac": u.get("risk_frac"), "lev": None, "mmr": None, "model_entry_open": meo, "opened_ms": now_ms,
          "adopted": True, "adopted_from_unknown": {k: u.get(k) for k in ("detected_ms", "stop_src", "stop_cid")},
-         "stop_seq": int(u.get("stop_seq", 0)) + 1, "exit_seq": 0,
-         "tp": {"tp1": str(entry + r), "q1": str(q1), "tp2": None, "q2": str(qty - q1)}}
+         "stop_seq": int(u.get("stop_seq", 0)) + 1, "exit_seq": 0}
     if sd <= 0:
         notes.append(f"NOTE: stop {stop} is not below the entry {entry} (risk recorded as 0).")
     return j, notes

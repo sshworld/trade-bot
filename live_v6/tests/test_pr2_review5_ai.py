@@ -103,7 +103,9 @@ def test_r2_missing_tp_placed_on_reconcile(offline, side):
     _sleeps(eng)
     offline.fx.inject("open_orders", "unavailable", times=80)
     before = len(_tp_posts(offline))
-    _monitor(eng, 3)
+    eng.tick()
+    eng.clock.off += eng.cfg.transient_alert_s + 1
+    _monitor(eng, 2)
     assert len(_tp_posts(offline)) == before, "placed a TP while the book was unknown"
     holds = [m for m in _alerts(eng) if "보류" in m and DOGE in m]
     assert len(holds) == 1, holds
@@ -156,7 +158,7 @@ def _adopt_state():
 def test_r2_adopt_position_writes_tp(offline):
     from live_v6.tools.adopt_position import build
     j, _notes = build(_adopt_state(), DOGE, "none", "v6", 1_700_000_000_000)
-    assert j.get("tp") and (j["tp"].get("tp1") or j["tp"].get("tp3") or j["tp"].get("full")), j
+    assert "tp" not in j
     assert j.get("stop_px_entry") == j["stop_px"]
 
 
@@ -173,7 +175,9 @@ def test_r2_adopted_position_tp_placed_by_monitor(offline):
     qty = offline.amt(DOGE)
     offline.fx.inject("open_orders", "unavailable", times=80)
     before = len(_tp_posts(offline))
-    _monitor(eng, 3)
+    eng.tick()
+    eng.clock.off += eng.cfg.transient_alert_s + 1
+    _monitor(eng, 2)
     assert len(_tp_posts(offline)) == before
     assert len([m for m in _alerts(eng) if "보류" in m and DOGE in m]) == 1
     assert offline.amt(DOGE) == qty and DOGE in eng.st["pos"] and not _closes(offline)

@@ -198,6 +198,7 @@ def test_legacy_first_hit_is_tp2_or_stop_and_there_is_no_3r(offline, hit):
 
 @pytest.mark.parametrize("scheme", ["legacy", "e"])
 def test_tp_failure_retries_then_reduceonly_market_close(offline, scheme):
+    """A rejected take-profit is retried, then kept: one alert, the stop stays, no market close."""
     eng = engine_for(offline, scheme)
     _assert_no_telegram(eng)
     j = open_pos(offline, eng, 1)
@@ -210,12 +211,13 @@ def test_tp_failure_retries_then_reduceonly_market_close(offline, scheme):
     placed = [c for c in offline.fx.calls[n:] if c[0] == "take_profit"]
     assert len(placed) == 4 and sl == RETRY_S
     alerts = _alerts(eng)
-    assert sum("재시도" in m for m in alerts) == 3
-    assert any("시장가 청산" in m for m in alerts)
-    closes = [c for c in _closes(offline) if c[1][0] == DOGE]
-    assert len(closes) == 1 and closes[0][1][4] is True and D(closes[0][1][2]) == qty
-    assert offline.amt(DOGE) == 0 and DOGE not in eng.st["pos"] and not bot_orders(offline, DOGE)
-    assert j["cid"]  # journal existed; the close is of that position
+    assert sum("재시도" in m for m in alerts) == 0
+    assert sum("보류" in m for m in alerts) == 1
+    assert not any("시장가 청산" in m for m in alerts)
+    assert not _closes(offline)
+    assert offline.amt(DOGE) != 0 and abs(offline.amt(DOGE)) == qty and DOGE in eng.st["pos"]
+    assert _stops(offline)
+    assert j["cid"]
 
 
 @pytest.mark.parametrize("scheme", ["legacy", "e"])
