@@ -85,7 +85,9 @@ def _stage_exec(offline, base, which, q1=None):
             total += D(st.get("executed_qty") or 0)
     if which != "t1":
         return total
-    cap = D(q1) if q1 is not None else None
+    # q1 names the slice for callers. A market larger than it is still this stage's sell:
+    # skipping it hid a breakeven flatten of the runner.
+    del q1
     for o in offline.inner.orders.values():
         cid = str(o.get("client_id") or "")
         if o.get("symbol") != DOGE or not o.get("reduce_only"):
@@ -93,10 +95,7 @@ def _stage_exec(offline, base, which, q1=None):
         tail = cid[len(base) + 1:] if cid.startswith(base + "x") else ""
         if not tail.isdigit():
             continue
-        ex = D(o.get("executed_qty") or 0)
-        if cap is not None and ex > cap:
-            continue
-        total += ex
+        total += D(o.get("executed_qty") or 0)
     return total
 
 
@@ -296,7 +295,8 @@ def test_m8_1_filled_short_of_target_can_be_replaced(offline, side):
     assert _covered(offline)
 
 
-KINDS = ("zero", "partial", "full", "reject", "unknown", "restart_mid", "legacy")
+KINDS = ("zero", "partial", "full", "reject", "unknown", "restart_mid", "legacy",
+         "legacy_lag", "legacy_partial", "no_entry")
 
 
 def _inv(offline, base, entry, q1, seed, side, tag):
@@ -317,7 +317,8 @@ def _property_script(offline, side, seed):
 
     rng = random.Random(seed)
     kind = KINDS[seed % len(KINDS)]
-    info = {"kind": kind, "reject_used": 0, "unknown_used": 0, "restart_mid": 0, "ticks": 0}
+    info = {"kind": kind, "reject_used": 0, "unknown_used": 0, "restart_mid": 0,
+            "ticks": 0, "rest_checked": 0, "live_market_restart": 0}
     eng = engine_for(offline, "e")
     open_pos(offline, eng, side)
     j = eng.st["pos"][DOGE]
@@ -336,8 +337,24 @@ def _property_script(offline, side, seed):
         if not _covered(offline):
             return f"seed {seed} side {side} {tag}: stop missing over {offline.amt(DOGE)}"
         pos = eng.st["pos"].get(DOGE) or {}
-        if pos.get("tp1_done") and _ledger_sum(pos, "t1") < q1:
-            return f"seed {seed} side {side} {tag}: tp1_done with ledger {_ledger_sum(pos, 't1')} < {q1}"
+        got = _ledger_sum(pos, "t1")
+        if pos.get("tp1_done") and got < q1:
+            return f"seed {seed} side {side} {tag}: tp1_done with ledger {got} < {q1}"
+        rows = ((pos.get("tp_ledger") or {}).get("t1") or {}).get("cids") or []
+        pending = ((pos.get("tp_market_once") or {}).get("t1") or {})
+        if pending.get("cid") and any(str(r.get("cid") or "").endswith(":legacy") for r in rows):
+            return (f"seed {seed} side {side} {tag}: legacy row beside pending {pending.get('cid')} "
+                    f"ledger {got}")
+        live = _live_tp(offline, "t1")
+        reserve = entry - q1
+        room = abs(offline.amt(DOGE)) - reserve
+        for o in live:
+            qty_o = D(o.get("qty") or 0)
+            info["rest_checked"] += 1
+            if qty_o > max(q1 - got, D(0)):
+                return f"seed {seed} side {side} {tag}: replacement {qty_o} > slice left {q1 - got}"
+            if qty_o > max(room, D(0)):
+                return f"seed {seed} side {side} {tag}: replacement {qty_o} eats the runner (room {room})"
         return None
 
     def tick(tag):
@@ -372,8 +389,12 @@ def _property_script(offline, side, seed):
         _end(offline, t1, D(0), "CANCELED")
 
         def hide(fn, s, cid, **k):
-            info["unknown_used"] += 1
-            raise ExchangeUnavailable("status unknown")
+            # The pre-send lookup is a cid that does not exist yet. Raising there
+            # swallows the inject and the lost market is never sent.
+            if cid in offline.inner.orders:
+                info["unknown_used"] += 1
+                raise ExchangeUnavailable("status unknown")
+            return fn(s, cid, **k)
 
         offline.fx.inject("market", "lost", times=1)
         offline.fx.inject("get_order", hide, times=6)
@@ -408,6 +429,64 @@ def _property_script(offline, side, seed):
         _at_entry(offline, eng)
         err = tick("legacy-expire")
         return err, info
+    if kind in ("legacy_lag", "legacy_partial"):
+        cancelled = D(100) if kind == "legacy_partial" else D(0)
+        cached, filled = (D(8000), D(8000)) if kind == "legacy_partial" else (D(7000), D(8000))
+        _end(offline, t1, cancelled, "CANCELED")
+        _shrink(offline, side, cancelled + filled)
+        cid = f"{base}x0"
+        offline.inner.orders[cid] = {
+            "id": "lag", "client_id": cid, "status": "PARTIALLY_FILLED", "executed_qty": filled,
+            "orig_qty": q1, "symbol": DOGE, "reduce_only": True,
+        }
+        j["tp_got"] = {"t1": str(cached)}
+        j["tp_market_once"] = {"t1": {"cid": cid, "before": str(entry), "accepted": True}}
+        j.pop("tp_ledger", None)
+        eng.save()
+        eng = e_engine(offline, eng.clock)
+        eng.cfg.trail_atr_k = 0
+        _sleeps(eng)
+        info["restart_mid"] += 1
+        err = check("legacy-variant")
+        if err:
+            return err, info
+        offline.inner.orders[cid]["status"] = "EXPIRED"
+        _at_entry(offline, eng)
+        err = tick("legacy-variant-expire")
+        return err, info
+    if kind == "no_entry":
+        j.pop("entry_qty", None)
+        _end(offline, t1, D(0), "CANCELED")
+        _shrink(offline, side, q1)
+        eng.save()
+        _at_entry(offline, eng)
+        err = tick("no-entry")
+        if err:
+            return err, info
+        eng.clock.off += 1
+        err = tick("no-entry-2")
+        return err, info
+    if kind == "restart_mid":
+        partial = D(100)
+        _end(offline, t1, partial, "CANCELED")
+        _shrink(offline, side, partial + D(50))
+        cid = f"{base}x0"
+        offline.inner.orders[cid] = {
+            "id": "rm", "client_id": cid, "status": "PARTIALLY_FILLED", "executed_qty": D(50),
+            "orig_qty": q1, "symbol": DOGE, "reduce_only": True,
+        }
+        j["tp_market_once"] = {"t1": {"cid": cid, "before": str(entry), "accepted": True}}
+        eng.save()
+        eng = e_engine(offline, eng.clock)
+        eng.cfg.trail_atr_k = 0
+        _sleeps(eng)
+        info["restart_mid"] += 1
+        info["live_market_restart"] += 1
+        err = check("restart-live-market")
+        if err:
+            return err, info
+        err = tick("restart-still-live")
+        return err, info
     partial = D(rng.choice([10, 100, 500, 8000]))
     status = rng.choice(["CANCELED", "EXPIRED", "FINISHED"])
     _end(offline, t1, partial, status)
@@ -416,14 +495,6 @@ def _property_script(offline, side, seed):
     err = tick("partial-1")
     if err:
         return err, info
-    if kind == "restart_mid":
-        eng = e_engine(offline, eng.clock)
-        eng.cfg.trail_atr_k = 0
-        _sleeps(eng)
-        info["restart_mid"] += 1
-        err = check("restart")
-        if err:
-            return err, info
     eng.clock.off += 1
     err = tick("partial-2")
     return err, info
@@ -441,6 +512,8 @@ def _run_seeds(tmp_path, side, seeds):
         counts["unknown_used"] += info["unknown_used"]
         counts["restart_mid"] += info["restart_mid"]
         counts["ticks"] += info["ticks"]
+        counts["rest_checked"] += info["rest_checked"]
+        counts["live_market_restart"] += info["live_market_restart"]
         if reason:
             failed.append((seed, reason))
     return failed, counts
@@ -463,6 +536,8 @@ def test_ledger_invariants_1000(tmp_path, side):
     assert counts["reject_used"] >= 100
     assert counts["unknown_used"] >= 100
     assert counts["restart_mid"] >= 100
+    assert counts["live_market_restart"] >= 100
+    assert counts["rest_checked"] >= 100
     assert counts["ticks"] >= 1000
     assert failed == [], failed[:8]
 
@@ -475,4 +550,5 @@ def test_ledger_invariants_alt_1000(tmp_path, side):
     for kind in KINDS:
         assert counts[kind] >= 100, counts
     assert counts["reject_used"] >= 100 and counts["unknown_used"] >= 100
+    assert counts["live_market_restart"] >= 100 and counts["rest_checked"] >= 100
     assert failed == [], failed[:8]
