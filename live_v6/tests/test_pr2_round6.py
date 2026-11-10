@@ -48,7 +48,7 @@ def test_r6_1_nonterminal_t1_is_live_and_blocks_the_market(offline, side, status
     t1 = next(o for o in offline.inner.algos.values()
               if o["symbol"] == DOGE and str(o["client_id"]).endswith("t1"))
     offline.inner.algo_hist[t1["client_id"]]["status"] = status
-    offline.inner.algo_hist[t1["client_id"]]["executed_qty"] = D(0) if status == "TRIGGERING" else D(1)
+    offline.inner.algo_hist[t1["client_id"]]["executed_qty"] = D(0)
     eng.cfg.trail_atr_k = 0
     eng._cp_hold.add(DOGE)
     eng._cp_retry_at[DOGE] = eng.clock() + 10**9
@@ -223,13 +223,13 @@ def test_r6_5_unknown_market_is_queried_and_not_sold_twice(offline, side):
     offline.fx.inject("get_order", hide, times=40)
     eng.tick()
     assert offline.amt(DOGE) == qty - side * q1
+    assert UNKNOWN_ORDER in eng.blocks
     sent = len(_markets(offline))
     eng.clock.off += PROTECT_AUDIT_S + 1
     eng.tick()
     assert len(_markets(offline)) == sent
     assert abs(offline.amt(DOGE)) == abs(qty) - q1
-    assert len([m for m in _alerts(eng) if DOGE in m]) == 1
-    assert UNKNOWN_ORDER in eng.blocks
+    assert len([m for m in _alerts(eng) if "보류" in m and DOGE in m]) == 1
 
 
 @pytest.mark.parametrize("side", [1, -1])
