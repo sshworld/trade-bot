@@ -336,6 +336,12 @@ class BinanceREST:
         except (TypeError, ValueError):
             return None                      # unparseable echo = not confirmed (engine skips the entry)
 
+    def limit(self, symbol, side, qty, price, client_id, tif="GTX") -> dict:
+        """Post-only limit when tif is GTX. The exchange rejects it if it would take liquidity."""
+        p = {"symbol": symbol, "side": side, "type": "LIMIT", "timeInForce": tif, "quantity": fmt(qty),
+             "price": fmt(price), "newClientOrderId": client_id, "newOrderRespType": "RESULT"}
+        return _norm_order(self._req("POST", "/fapi/v1/order", p, critical=False))
+
     def market(self, symbol, side, qty, client_id, reduce_only=False) -> dict:
         p = {"symbol": symbol, "side": side, "type": "MARKET", "quantity": fmt(qty), "newClientOrderId": client_id,
              "newOrderRespType": "RESULT"}

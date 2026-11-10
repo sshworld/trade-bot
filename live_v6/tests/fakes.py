@@ -225,9 +225,36 @@ class FakeExchange:
         self._algo_end(self.algos[aid], "NEW")
         return dict(self.algos[aid])
 
+    def limit(self, s, side, qty, price, cid, tif="GTX"):
+        if cid in self.orders or any(o["client_id"] == cid for o in self.algos.values()):
+            raise OrderRejected(-4116, "ClientOrderId is duplicated.")
+        px, qty = Decimal(price), Decimal(qty)
+        if tif == "GTX" and ((side == "BUY" and px >= self.price[s]) or (side == "SELL" and px <= self.price[s])):
+            raise OrderRejected(-5022, "Due to the order could not be executed as maker, the Post Only order will be rejected.")
+        oid = str(next(self._id))
+        self.orders[cid] = {"id": oid, "client_id": cid, "status": "NEW", "avg_price": Decimal(0), "executed_qty": Decimal(0),
+                            "orig_qty": qty, "update_time": 0, "symbol": s, "side": side, "reduce_only": False,
+                            "price": px, "tif": tif, "type": "LIMIT"}
+        self.accepted[cid] = self.accepted.get(cid, 0) + 1
+        return dict(self.orders[cid])
+
+    def fill_limit(self, cid):
+        """Test helper: the exchange reports the resting limit filled. Does nothing if it is not still NEW."""
+        o = self.orders.get(cid)
+        if not o or o["status"] != "NEW":
+            return None
+        signed = o["orig_qty"] if o["side"] == "BUY" else -o["orig_qty"]
+        self._fill(o["symbol"], signed, o["price"], o["id"])
+        o.update(status="FILLED", executed_qty=o["orig_qty"], avg_price=o["price"])
+        return dict(o)
+
     def cancel(self, s, o):
         if self.algos.pop(o["id"], None) is not None:
             self._algo_end(o, "CANCELED")
+            return
+        cid = o.get("client_id")
+        if cid in self.orders and self.orders[cid].get("status") == "NEW":
+            self.orders[cid]["status"] = "CANCELED"
 
     # test helpers
     def set_price(self, s, px):

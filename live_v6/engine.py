@@ -62,6 +62,8 @@ SIX = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT")
 # research portfolio used at its first full 6-coin tie (2023-01-14 00:00 UTC); see README "Simultaneous-signal tie
 # order" for why research itself has no fixed order. The only live setting — never change without a TA review.
 ENTRY_ORDER = ("BTCUSDT", "ETHUSDT", "BNBUSDT", "DOGEUSDT", "XRPUSDT", "SOLUSDT")
+# BinHV45 tie order (TA PASS 2026-11-10): the coins named in the entry spec, in that order. BNB is not in it.
+BINHV45_ENTRY_ORDER = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT")
 H4 = S.H4_MS
 KST = timezone(timedelta(hours=9))
 
@@ -146,6 +148,10 @@ class Settings:
     # for the whole qty at entry*(1±tp_pct), CONTRACT_PRICE. No split, no breakeven, no trail.
     exit_mode: str = "r"
     tp_pct: float = 0.002               # 0.002 = 0.2% price. Ignored unless exit_mode == "full_tp_pct"
+    sl_pct: float | None = None         # set: SL = fill*(1 ∓ sl_pct), tick-round toward entry (BinHV45 0.0075). None: stop_dist
+    limit_ttl_s: float = 24 * 3600.0    # unfilled post-only entry is cancelled this long after the signal
+    restart_gate_mode: str = "off"      # off | lock30 (stay 3x, alert if net<0 after N) | halt_on_negative
+    restart_gate_n: int = 30
     be_offset: float = 0.001            # after TP1: SL → be ± be_offset (live 0.15 %, TA 2026-11-03), safe-side tick
     be_fee: float | None = None         # None: be = entry; f: be = fee-inclusive breakeven entry·(1±f)/(1∓f) (E: f = 0.0005)
     # E chandelier (TA 2026-11-04, replay variant E): from entry, SL = tighter(SL, best ∓ trail_atr_k·ATR14) where ATR14 =
@@ -434,8 +440,12 @@ class V6Engine:
                 self.brackets.setdefault(s, [])
 
     def resolve_intents(self):
-        """An entry intent survives a crash between 'order sent' and 'position journaled': resolve it by client id."""
+        """An entry intent survives a crash between 'order sent' and 'position journaled': resolve it by client id.
+        A resting post-only limit stays until the exchange reports a fill or it is older than limit_ttl_s."""
         for cid, it in list(self.st["intents"].items()):
+            if it.get("order") == "limit":
+                self._resolve_limit(cid, it)
+                continue
             try:
                 o = self.x("get_order", it["sym"], cid)
             except ExchangeUnavailable:
@@ -445,6 +455,71 @@ class V6Engine:
                 self._journal_entry(it["sym"], it, o)
             self.st["intents"].pop(cid, None)
             self.save()
+
+    def _resolve_limit(self, cid, it):
+        sym = it["sym"]
+        try:
+            o = self.x("get_order", sym, cid)
+        except ExchangeUnavailable:
+            self.block(UNKNOWN_ORDER, cid, "주문 상태 확인 불가 — 신규 진입 중단")
+            return
+        if sym in self.st["pos"]:
+            if o and o.get("status") not in ("FILLED", "CANCELED", "EXPIRED", "REJECTED") and o["executed_qty"] == 0:
+                self._cancel_quiet(sym, o)
+            self.st["intents"].pop(cid, None)
+            self.save()
+            return
+        if o and o["executed_qty"] > 0:
+            self._finish_fill(sym, it, o)
+            if o.get("status") not in ("FILLED", "CANCELED", "EXPIRED"):
+                self._cancel_quiet(sym, o)               # a partial must not add later
+            return
+        age = self.now_ms() - int(it.get("signal_ms") or it.get("T") or 0)
+        dead = o is None or str(o.get("status")) in ("CANCELED", "EXPIRED", "REJECTED")
+        if dead or (o and o["executed_qty"] == 0 and age >= int(self.cfg.limit_ttl_s * 1000)):
+            if o and not dead:
+                self._cancel_quiet(sym, o)
+            self.st["intents"].pop(cid, None)
+            self.save()
+
+    def _rest_limit(self, sym, stop_dist, T, model_id, signal_px, side, sz, acct, ref) -> bool:
+        """Post-only limit at `ref` (already the tick-rounded signal price). No position until a fill report."""
+        cid = self.cid(sym, T)
+        px = self.rules[sym].price(D(ref), "down" if side > 0 else "up")
+        intent = {"sym": sym, "cid": cid, "T": T, "side": side, "model_id": model_id if model_id is not None else T,
+                  "signal_px": str(signal_px) if signal_px is not None else str(px), "stop_dist": str(stop_dist),
+                  "ref": str(px), "qty": str(sz.qty), "lev": sz.lev, "mmr": sz.mmr, "risk_frac": sz.risk_frac,
+                  "risk_pct_used": sz.risk_pct_used, "wallet": str(acct["wallet"]), "path": sz.path, "q0": str(sz.q0),
+                  "loss_frac": sz.loss_frac, "order": "limit", "signal_ms": int(T), "limit_px": str(px)}
+        self.st["intents"][cid] = intent
+        self.save()
+        try:
+            self.x("limit", sym, "BUY" if side > 0 else "SELL", sz.qty, px, cid, "GTX")
+        except OrderRejected as e:
+            self.st["intents"].pop(cid, None)
+            self.save()
+            self.skip(sym, "post_only_reject", f"{sz.qty} @ {px}: {str(e)[:120]}")
+            return False
+        except ExchangeError as e:
+            self.alert("지정가 진입 결과 불명", f"{cid} {sz.qty} {sym}: {str(e)[:100]} · 대조 루프가 확인")
+            return False
+        return True
+
+    def _finish_fill(self, sym, intent, order):
+        """Exchange reported a fill. Journal it and arm the SL and the full TP immediately."""
+        j = self._journal_entry(sym, intent, order)
+        self.st["intents"].pop(intent["cid"], None)
+        self.save()
+        if D(j["qty"]) * D(j["entry_px"]) < self.rules[sym].min_notional:
+            self.close(sym, "dust_entry")
+            return
+        amt = D(j["qty"]) * int(j.get("side", 1))
+        if not self.protect(sym, amt, D(j["stop_px"]), j["cid"]):
+            return                                  # would-trigger / rejected → protect already market-closes
+        if sym not in self.st["pos"] or self.st["pos"][sym].get("closing"):
+            return
+        if self.cfg.take_profit:
+            self._place_tps(sym, j)
 
     def ensure_isolated(self, sym) -> bool:
         err = ""
@@ -573,8 +648,9 @@ class V6Engine:
                     self.skip(sym, "late", f"signal {(self.now_ms() - t) / 1000:.1f}s old > {max_age}s",
                               signal_px=it.get("signal_px"), signal_ms=it.get("model_id") or t)
                     continue
+                lp = it.get("limit_px")
                 self.enter(sym, it["stop_dist"], t, model_id=it.get("model_id"), signal_px=it.get("signal_px"),
-                           side=int(it.get("side", 1)))
+                           side=int(it.get("side", 1)), limit_px=D(lp) if lp not in (None, "") else None)
 
     # ───────────────────────── stream events ─────────────────────────
     def on_event(self, ev):
@@ -840,7 +916,8 @@ class V6Engine:
         """Closing side of a journaled position."""
         return "SELL" if int(j.get("side", 1)) > 0 else "BUY"
 
-    def _size_fresh(self, sym, stop_dist: Decimal, book: list, fixed_lev: int | None = None, side: int = 1):
+    def _size_fresh(self, sym, stop_dist: Decimal, book: list, fixed_lev: int | None = None, side: int = 1,
+                    ref_px: Decimal | None = None):
         """Read EVERYTHING the order depends on right now (exchangeInfo filters, leverage bracket, book, mark price,
         wallet/available) and size from it. Nothing is taken from the startup cache or an earlier pass. Any failed
         read → skip `filter_read_failed`, no order. Returns (Sized, account, ref) or None (skip already recorded)."""
@@ -849,6 +926,8 @@ class V6Engine:
             brk = self.x("brackets", sym)
             bk = self.x("book", sym)
             ref, bid = (D(bk["ask"]), D(bk["bid"])) if side > 0 else (D(bk["bid"]), D(bk["ask"]))   # short: sells at the bid
+            if ref_px is not None:
+                ref = D(ref_px)                         # post-only limit: size off the limit, not the far side of the book
             mark = D(self.x("mark_price", sym)) if rules.pct_up is not None else None
             acct = self.x("account")
         except (ExchangeError, KeyError, ArithmeticError, TypeError, ValueError, AttributeError) as e:
@@ -868,16 +947,39 @@ class V6Engine:
             return None
         return sz, acct, ref
 
-    def enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None, side: int = 1) -> bool:
-        """Entry flow (`_enter`); remembers the signal so a skip on the way is logged with its signal price."""
+    def enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None, side: int = 1, *,
+              limit_px: Decimal | None = None) -> bool:
+        """Entry flow (`_enter`); remembers the signal so a skip on the way is logged with its signal price.
+        `limit_px` set → post-only (GTX) limit that rests until the exchange reports a fill."""
         self._sig = (sym, signal_px, model_id or T)
         self._sig_side = side
         try:
-            return self._enter(sym, stop_dist, T, model_id=model_id, signal_px=signal_px, side=side)
+            return self._enter(sym, stop_dist, T, model_id=model_id, signal_px=signal_px, side=side, limit_px=limit_px)
         finally:
             self._sig, self._sig_side = None, 1
 
-    def _enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None, side: int = 1) -> bool:
+    def _restart_gate_block(self) -> bool:
+        """True → this entry must not be sent. lock30 never blocks and never raises leverage; it alerts once."""
+        mode = self.cfg.restart_gate_mode or "off"
+        if mode == "off":
+            return False
+        nets = [D(t.get("net") or 0) for t in (self.meta.get("trades") or [])]
+        n, cum = len(nets), sum(nets, Decimal(0))
+        if mode == "halt_on_negative" and n > 0 and cum < 0:
+            self.block("restart_gate", f"net {cum} after {n}", "재시작 게이트 — 누적 순손익 음수, 신규 진입 중단")
+            return True
+        if (mode == "lock30" and n >= int(self.cfg.restart_gate_n) and cum < 0
+                and not self.meta.get("restart_gate_alerted")):
+            self.meta["restart_gate_alerted"] = True
+            self.save()
+            self.alert("30거래 순손익 음수 — 레버리지 3배 유지, TA 재판단", f"{n}건 · 순손익 {cum}")
+        return False
+
+    def _enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None, side: int = 1,
+               limit_px: Decimal | None = None) -> bool:
+        if self._restart_gate_block():
+            self.skip(sym, "restart_gate", "cumulative net after fees < 0")
+            return False
         if side < 0 and not self.cfg.enable_short:
             self.skip(sym, "short_disabled", "short entries are off (enable_short=False)")
             return False
@@ -903,6 +1005,9 @@ class V6Engine:
             if amt0 is None or amt0 != 0 or sym in self.st["pos"]:
                 log.warning("entry %s refused: position %s (no averaging)", sym, "unknown" if amt0 is None else amt0)
                 return False
+            if any(it.get("sym") == sym for it in self.st["intents"].values()):
+                self.skip(sym, "pending_entry", "one resting entry already")
+                return False
             oo = self.x("open_orders", sym)
             if any(not (o["close_position"] or o["reduce_only"]) for o in oo):
                 self.block(MISMATCH, f"{sym} open entry order before entry", "대조 불일치 — 신규 진입 중단")
@@ -923,7 +1028,8 @@ class V6Engine:
             return False
         if self._dir_capped(sym, book, side):
             return False
-        got = self._size_fresh(sym, stop_dist, book, side=side)
+        ref_px = D(limit_px) if limit_px is not None else None
+        got = self._size_fresh(sym, stop_dist, book, side=side, ref_px=ref_px)
         if got is None:
             return False
         sz, acct, ref = got
@@ -966,13 +1072,15 @@ class V6Engine:
         # SECOND PASS right before the order: price, ATR-based stop distance (as passed in), wallet, available balance,
         # exchangeInfo and brackets are read again and qty / minNotional / margin / bracket are recomputed with the
         # CONFIRMED leverage; nothing computed before the leverage call is reused.
-        got = self._size_fresh(sym, stop_dist, book, fixed_lev=sz.lev, side=side)
+        got = self._size_fresh(sym, stop_dist, book, fixed_lev=sz.lev, side=side, ref_px=ref_px)
         if got is None:
             return False
         sz, acct, ref = got
         if sum(b["risk_frac"] for b in book) + sz.risk_frac > sz.cap_frac + 1e-12:
             self.skip(sym, sz.cap_label, f"open {sum(b['risk_frac'] for b in book):.4%} + {sz.risk_frac:.4%}")
             return False
+        if limit_px is not None:
+            return self._rest_limit(sym, stop_dist, T, model_id, signal_px, side, sz, acct, ref)
         cid = self.cid(sym, T)
         intent = {"sym": sym, "cid": cid, "T": T, "side": side, "model_id": model_id if model_id is not None else T,
                   "signal_px": str(signal_px) if signal_px is not None else None, "stop_dist": str(stop_dist), "ref": str(ref), "qty": str(sz.qty),
@@ -1107,7 +1215,11 @@ class V6Engine:
         fill = o["avg_price"] if o["avg_price"] > 0 else D(intent["ref"])
         qty = o["executed_qty"]
         side = int(intent.get("side", 1))
-        stp = stop_price(self.rules[sym], fill, side, sd)    # re-placed from the FILL at the same distance (TA)
+        if self.cfg.sl_pct:
+            raw = fill * (1 - side * D(str(self.cfg.sl_pct)))
+            stp = round_full_tp(raw, self.rules[sym].tick_size, -side)   # toward entry, never past sl_pct
+        else:
+            stp = stop_price(self.rules[sym], fill, side, sd)    # re-placed from the FILL at the same distance (TA)
         j = {"cid": intent["cid"], "side": side, "qty": str(qty), "entry_qty": str(qty), "entry_px": str(fill), "stop_px": str(stp),
              "stop_dist": str(sd), "risk_usdt": str(abs(fill - stp) * qty), "risk_frac": intent["risk_frac"],
              "lev": intent["lev"], "mmr": intent["mmr"], "model_entry_open": intent.get("model_id", intent["T"]), "opened_ms": self.now_ms(),

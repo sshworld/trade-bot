@@ -145,6 +145,16 @@ optionally rebases the peak to the last recorded wallet (without `--reset-peak` 
 still under the line), and logs who / when / sudo user / old halt / peak before-after in `meta.peak_dd_clears` and
 `/var/lib/live_v6-live/peak_dd_clears.jsonl`.
 
+**BinHV45 (TA PASS 2026-11-10, `LIVE_V6_STRATEGY=binhv45`, the process default):** long only, closed 1m,
+Bollinger(40, 2, ddof=1), `buy_bbdelta=7`, `buy_closedelta=17`, `buy_tail=25`. Post-only (GTX) limit buy at the
+signal bar's close; a fill is taken only from the exchange report; the order is cancelled 24h after the signal if it
+is still open. One position or one resting entry per symbol. On the fill: full-qty `TAKE_PROFIT_MARKET` at
+`entry*1.020` (`CONTRACT_PRICE`) and `STOP_MARKET` at `entry*0.9925` (`MARK_PRICE`), both tick-rounded toward entry.
+Risk 1% of equity at that 0.75% stop (notional ≈ 1.333× equity), leverage fixed at 3x and never raised. `restart_gate_mode`
+`lock30` (default) alerts once if the first 30 completed trades have negative net and stays at 3x; `halt_on_negative`
+blocks new entries as soon as cumulative net is negative. Daily −10% halt and the peak-drawdown latch are unchanged
+(`clear_peak_halt.py` is still the only clear). Rollback to the previous entry: `LIVE_V6_STRATEGY=qrmtf`.
+
 **Live exit (TA lock, qrmtf `exit_mode="full_tp_pct"`, `tp_pct=0.002`):** one reduce-only TAKE_PROFIT_MARKET for the full
 quantity at entry×(1±0.002), workingType CONTRACT_PRICE. Rounded to the tick toward entry (an exact half-tick goes
 toward entry) and never past the raw 0.2% level. Price already through that level → reduce-only market for the
