@@ -1640,8 +1640,7 @@ class V6Engine:
         try:
             ok = self._arm_protection(sym, j, what, cid, place, renew=renew, once=key in self._tp_cooled)
         except WouldTrigger:
-            self._tp_fail_once(sym, what, "즉시 발동")
-            ok = False
+            ok = self._on_tp_would_trigger(sym, j, which, px, qty, working_type)
         if ok:
             self._tp_cooled.discard(key)
             self._tp_retry_at.pop(key, None)
@@ -1649,6 +1648,76 @@ class V6Engine:
             self._tp_cooled.add(key)
             self._tp_retry_at[key] = self.clock() + PROTECT_AUDIT_S
         return ok
+
+    def _on_tp_would_trigger(self, sym, j, which, px, qty, working_type) -> bool:
+        """Price was through this take-profit. Re-read it. Still through → reduceOnly
+        market of this slice only. Back inside → rest the rounded order once.
+        A failed read sends nothing. A rejected close waits a minute."""
+        what = f"익절 {which}"
+        rules = self.rules[sym]
+        s = int(j.get("side", 1))
+        try:
+            last = D(self.x("book", sym)["bid"])
+        except ExchangeError:
+            self._tp_fail_once(sym, what, "가격 조회 실패 · 기존 손절 유지")
+            return False
+        try:
+            amt = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+        except ExchangeError:
+            amt = None
+        if amt is None:
+            self._tp_fail_once(sym, what, "포지션 조회 실패 · 기존 손절 유지")
+            return False
+        try:
+            self.x("open_orders", sym)
+        except ExchangeError:
+            self._tp_fail_once(sym, what, "주문 조회 실패 · 기존 손절 유지")
+            return False
+        through = (s > 0 and last >= D(px)) or (s < 0 and last <= D(px))
+        if not through:
+            try:
+                self.x("take_profit", sym, self._cs(j), px, self._tp_cid(j, which), qty, working_type=working_type)
+            except OrderRejected as e:
+                self._tp_fail_once(sym, what, f"시장가 청산 거절 · {e}")
+                return False
+            except ExchangeError as e:
+                self._tp_fail_once(sym, what, f"주문 조회 실패 · {e}")
+                return False
+            return True
+        if qty * last < rules.min_notional:
+            self._arm_unsplittable(sym, j)                  # too small to split: full-qty path
+            return True
+        sell = min(D(qty), abs(amt))
+        if sell <= 0:
+            return False
+        seq = int(j.get("exit_seq", 0))
+        j["exit_seq"] = seq + 1
+        self.save()
+        side = "SELL" if amt > 0 else "BUY"                # reduceOnly, capped at the position just read
+        try:
+            self.submit_market(sym, side, sell, f"{j['cid']}x{seq}", reduce_only=True)
+        except OrderRejected as e:
+            self._tp_fail_once(sym, what, f"시장가 청산 거절 · {e}")
+            return False
+        except ExchangeError as e:
+            self._tp_fail_once(sym, what, f"시장가 청산 결과 불명 · {e}")
+            return False
+        if which == "t1":
+            try:
+                left = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+            except ExchangeError:
+                left = None
+            j["tp1_done"] = True
+            if left not in (None, 0):
+                j["qty"] = str(abs(left))
+            self.save()
+        elif which == "t2" and not j.get("tp2_done"):
+            j["tp2_done"] = True
+            self.save()
+        elif which == "t3" and not j.get("tp3_done"):
+            j["tp3_done"] = True
+            self.save()
+        return True
 
     def _arm_unsplittable(self, sym, j):
         """Cannot split off TP1: +3R reduceOnly TP and the SL, both on the full qty. No TP is not allowed."""
@@ -1718,6 +1787,17 @@ class V6Engine:
             self._place_tp(sym, j, "t1", D(tp["tp1"]), D(tp["q1"]))
             if not self._position_open(sym):
                 return
+            if j.get("tp1_done"):
+                try:
+                    fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+                except ExchangeError:
+                    fresh = None
+                if fresh == 0:
+                    return
+                if fresh is not None:
+                    amt = fresh
+                    j["qty"] = str(abs(fresh))
+                    self.save()
         if tp.get("tp2") and not self.cfg.tp2_r:                   # adopted pre-E position: TP2 cancelled (E has none)
             o2 = next((o for o in orders if o["client_id"] == self._tp_cid(j, "t2")), None)
             try:
