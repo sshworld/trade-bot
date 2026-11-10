@@ -283,7 +283,8 @@ class V6Engine:
 
     _UNCOVERED_HOLDS = frozenset({
         "lost_stop_breach", "replace_lost_stop", "stop_breach_missing",
-        "protection_failed", "through_stop_retry", "unknown_stop_rejected",
+        "protection_failed", "through_stop_retry", "through_stop_unknown",
+        "unknown_stop_rejected",
     })
 
     def _clear_uncovered_holds(self, sym):
@@ -1269,12 +1270,12 @@ class V6Engine:
     def _upgrade_stop(self, sym, j, pre):
         """After the fill: closePosition stop at the fill-based price; the pre-arm is cancelled only once the new stop
         is confirmed (new before old). Failures retry at 1s, 3s, 10s with an alert each time. If that budget ends
-        and the pre-arm still protects the qty, it stays. Otherwise the caller market-closes. WouldTrigger (the
+        and the pre-arm still protects the qty, it stays. A reduce-only qty stop placed while flat is not that
+        protection: Binance cancels it within about a second when no position exists. Success is a closePosition
+        stop read back from the book. Otherwise the caller market-closes. WouldTrigger (the
         price is already through the stop) returns 'rejected' so the caller closes at once.
         Returns 'ok' | 'kept' | 'rejected' | 'failed'."""
-        amt = self._signed_qty(j)
         last = "closePosition stop not confirmed"
-        rejected = False
         saw_4130 = False
         for i, delay in enumerate((*PROTECT_RETRY_S, None)):
             seq = int(j.get("stop_seq", 0))
@@ -1312,7 +1313,6 @@ class V6Engine:
                     self._note_cp_hold(sym)                 # same hold as a missing-stop -4130: stop POSTing
                     break                                   # one -4130 is enough; do not POST s{n} again
                 else:
-                    rejected = True
                     last = str(e)
                     log.error("%s closePosition stop attempt %d rejected: %s", sym, i + 1, e)
             except ExchangeError as e:
@@ -1341,18 +1341,15 @@ class V6Engine:
                 j["stop_px_entry"] = str(j["stop_px"])      # R is the initial stop, even if this book stayed unread
                 self.save()
             return "kept"                                  # unknown book: do not flatten a confirmed pre-arm or a landed -4130
-        if self.find_stop(amt, oo) or saw_4130:
-            if self.find_stop(amt, oo):
-                self._release_cp_hold(sym)                  # a covering stop is visible: the hold may alert again
-            log.warning("%s keeps the protective stop %s", sym, pre["stop_price"])
-            j["stop_px"] = str(pre["stop_price"])
-            j.update(stop_confirmed_ms=j.get("prearm_ms"), stop_px_entry=j["stop_px"])  # live log only
-            self.save()
-            self._dirty = True                              # reconcile re-verifies (qty ≥ position) right away
-            return "kept"                                   # pre-arm or -4130 covers the qty; a bare reject does not flatten it
-        if rejected:
-            return "failed"                                 # book was read and nothing covers the filled qty
-        return "failed"
+        if self._close_position_stop(j, oo):
+            self._release_cp_hold(sym)
+            log.warning("%s closePosition stop verified; flat qty pre-arm is not the post-fill stop", sym)
+            return "ok"
+        if saw_4130:
+            log.warning("%s closePosition reported -4130; holding for a read-back, not the flat pre-arm", sym)
+            self._dirty = True
+            return "kept"
+        return "failed"                                 # a qty stop placed while flat is not verified protection
 
     # ───────────────────────── take profit / breakeven (qrmtf) ─────────────────────────
     def _tp_levels(self, sym, j):
@@ -1727,7 +1724,8 @@ class V6Engine:
             self._through_retry_at[sym] = self.clock() + PROTECT_AUDIT_S
             self.save()
             self._lock_hold_alert(sym, "through_stop_unknown",
-                                  f"손절 {cid} 응답 불명 · id 기록 · 시장가 안 냄 · {err}")
+                                  f"손절 {cid} 응답 불명 · id 기록 · 시장가 안 냄 · {err}",
+                                  kept=False)
             return False
         self._through_retry_at[sym] = self.clock() + PROTECT_AUDIT_S
         self._lock_hold_alert(sym, "through_stop_retry",
@@ -1742,11 +1740,14 @@ class V6Engine:
             return False
         cid, place = self._mint_stop(sym, j)
         try:
-            return self._arm_protection(sym, j, "손절", cid, place, renew=lambda: self._mint_stop(sym, j))
+            ok = self._arm_protection(sym, j, "손절", cid, place, renew=lambda: self._mint_stop(sym, j))
         except WouldTrigger:
             log.error("%s stop %s would trigger — market close", sym, D(j["stop_px"]))
             self._give_up_protection(sym, j, f"손절 {j['stop_px']} 즉시 발동", "would trigger")
             return False
+        if ok:
+            self._clear_uncovered_holds(sym)
+        return ok
 
     def _place_tp(self, sym, j, which, px, qty, working_type="CONTRACT_PRICE") -> bool:
         if self._schema_lock:
@@ -3845,6 +3846,8 @@ class V6Engine:
             mine = next((o for o in orders if j.get("stop_cid") and o["client_id"] == j["stop_cid"]), None)
             if mine and self.find_stop(amt, [mine]):
                 prot = mine                                     # the moved (BE) stop is the bot's stop, not an old one
+            if prot:
+                self._clear_uncovered_holds(sym)
             if prot and prot["stop_price"] > 0 and D(prot["stop_price"]) != stp:
                 j["stop_px"] = str(prot["stop_price"])          # §8c L2: the live exchange stop is the truth
                 self.save()

@@ -426,7 +426,7 @@ def _enter(eng, side=1):
 
 @pytest.mark.parametrize("scheme", ["legacy", "e"])
 def test_entry_stop_upgrade_retries_1s_3s_10s_and_keeps_live_prearm(offline, scheme):
-    """ClosePosition upgrade fails, the pre-arm stop is still live: retry on the new schedule, do not flatten."""
+    """ClosePosition upgrade fails. A flat reduce-only pre-arm is not protection, so the position is closed."""
     eng = engine_for(offline, scheme)
     _assert_no_telegram(eng)
     sl = _sleeps(eng)
@@ -438,11 +438,13 @@ def test_entry_stop_upgrade_retries_1s_3s_10s_and_keeps_live_prearm(offline, sch
         return fn(s, side, trigger, cid, qty=qty, **k)
 
     offline.fx.inject("stop", fail_cp, times=20)
-    open_pos(offline, eng, 1)
+    px = D(str(offline.inner.price[DOGE]))
+    t = now_ms()
+    eng.execute([dict(enter(DOGE, px * D("0.008"), t, side=1), model_id=t, max_age_s=20)])
     cp = [c for c in offline.fx.calls if c[0] == "stop" and not str(c[1][3]).endswith("p")]
     assert len(cp) == 4 and sl == RETRY_S
-    assert sum("재시도" in m for m in _alerts(eng)) == 3
-    assert not _closes(offline) and offline.amt(DOGE) != 0 and _stops(offline)
+    assert sum(m.startswith("🚨 보호 주문 실패 — 재시도") for m in _alerts(eng)) == 3
+    assert _closes(offline) and offline.amt(DOGE) == 0
 
 
 @pytest.mark.parametrize("scheme", ["legacy", "e"])

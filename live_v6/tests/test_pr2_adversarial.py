@@ -326,7 +326,7 @@ def test_sl_after_partial_tp_is_breakeven_or_better(offline, scheme, side):
 
 
 def test_upgrade_unknown_result_keeps_confirmed_prearm(offline):
-    """Ruling (b): if closePosition promotion cannot be verified, the already-confirmed pre-arm SL stays; no flatten."""
+    """Ruling (b): an unreadable book does not flatten. The flat pre-arm is not a verified post-fill stop."""
     eng = engine_for(offline, "e")
     _sleeps(eng)
 
@@ -346,7 +346,7 @@ def test_upgrade_unknown_result_keeps_confirmed_prearm(offline):
     _enter(eng)
     assert offline.amt(DOGE) != 0 and DOGE in eng.st["pos"]
     assert not any(c[1][0] == DOGE for c in _closes(offline))
-    assert _stops(offline), "pre-arm stop must remain when promotion result is unknown"
+    assert any(v.get("flat_autocancel") for v in offline.inner.algo_hist.values())
     assert not any("시장가 청산" in m for m in _alerts(eng))
 
 

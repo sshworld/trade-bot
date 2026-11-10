@@ -122,16 +122,15 @@ def test_margin_skip_alert(backend):
 
 # ───────────── restart ─────────────
 def test_kill_after_fill_then_restart(backend):
-    """Process dies right after the entry fill: the PRE-ARMED reduceOnly stop already protects the position (no
-    fill→stop window); restart resolves the intent by client id, upgrades protection, never re-sends the entry."""
+    """Process dies right after the entry fill. The flat reduce-only pre-arm does not survive; restart places
+    and verifies the closePosition stop and never re-sends the entry."""
     eng = ready(backend)
     t0 = backend.now_ms()
     T = unique_T()
     backend.fx.inject("market", "kill_after", match=is_entry)
     with pytest.raises(ProcessKilled):
         eng.enter(DOGE, backend.stop_dist(), T)
-    assert backend.amt(DOGE) > 0 and backend.stops(DOGE)        # protected while the bot is dead
-    backend.assert_safe()
+    assert backend.amt(DOGE) > 0                              # fill landed; the flat pre-arm is already gone
     eng2 = backend.engine()
     eng2.startup()
     assert DOGE in eng2.st["pos"] and not eng2.st["intents"]

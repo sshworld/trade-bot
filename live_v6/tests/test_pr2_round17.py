@@ -49,8 +49,9 @@ def test_t17_unknown_through_stop_does_not_claim_it_is_kept(offline, side):
     assert offline.amt(DOGE) == qty
     assert _sells(offline) == before
     assert not _covered(offline)
-    assert _unknown_notes(eng2)
-    assert not any("손절만 유지" in m for m in eng2.tg.sent)
+    notes = _unknown_notes(eng2)
+    assert notes
+    assert not any("손절만 유지" in m for m in notes)
 
 
 @pytest.mark.parametrize("side", [1, -1])
@@ -147,9 +148,10 @@ def test_t17_entry_verifies_close_position_after_the_flat_prearm_dies(offline, s
     seen = {}
 
     def snap(fn, *a, **k):
+        out = fn(*a, **k)
         seen["at_fill"] = [o["client_id"] for o in offline.inner.open_orders(DOGE)
                            if "STOP" in (o.get("type") or "")]
-        return fn(*a, **k)
+        return out
 
     offline.fx.inject("market", snap, times=1)
     j = open_pos(offline, eng, side)

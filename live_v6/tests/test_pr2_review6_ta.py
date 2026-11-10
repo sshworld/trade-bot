@@ -318,8 +318,7 @@ def test_r4_short_upgrade_4130_stops_posting(offline):
 
 
 def test_r5_short_non_4130_keeps_visible_prearm(offline):
-    """N1: _upgrade_stop must call find_stop with a signed qty so a short's
-    visible BUY pre-arm is kept after a non--4130 reject (0 market closes)."""
+    """A flat reduce-only pre-arm is not the post-fill stop. A rejected closePosition flattens."""
     eng = engine_for(offline, "e")
     _sleeps(eng)
 
@@ -330,19 +329,8 @@ def test_r5_short_non_4130_keeps_visible_prearm(offline):
 
     offline.fx.inject("stop", reject_cp, times=20)
     _enter_side(eng, -1)
-    qty = offline.amt(DOGE)
-    assert qty < 0 and DOGE in eng.st["pos"]
-    assert not _closes(offline) and not _market_closes(offline), (
-        "short non--4130 reject market-closed a visible pre-arm "
-        f"(engine.py:1170 uses unsigned qty with find_stop)"
-    )
-    stops = [o for o in offline.inner.open_orders(DOGE) if (o["type"] or "").startswith("STOP")]
-    assert stops, "short pre-arm was cancelled or flattened"
-    posts = len(_stop_posts(offline))
-    _monitor(eng, 3)
-    assert offline.amt(DOGE) == qty
-    assert len(_stop_posts(offline)) == posts
-    assert not _market_closes(offline)
+    assert offline.amt(DOGE) == 0
+    assert _market_closes(offline)
 
 
 # ─── N1–N5 (intended behaviour; expected red on c86204f) ─────────────────────
@@ -458,14 +446,5 @@ def test_n5_close_position_tp_is_not_an_sl(offline):
     offline.fx.inject("open_orders", oo_with_cp_tp, times=4000)
     offline.fx.inject("stop", reject_cp, times=20)
     _enter(eng)
-    qty = offline.amt(DOGE)
-    assert qty != 0 and DOGE in eng.st["pos"]
-    assert not _closes(offline) and not _market_closes(offline)
-    stops = [o for o in offline.inner.open_orders(DOGE)
-             if (o["type"] or "").startswith("STOP")]
-    assert stops, (
-        "pre-arm SL was cancelled because a closePosition TP was mistaken "
-        "for the upgraded stop (engine.py:1190 / 1210: any closePosition "
-        "of the close side, no type check)"
-    )
-    assert any(o.get("client_id", "").endswith("p") or o["reduce_only"] for o in stops)
+    assert offline.amt(DOGE) == 0
+    assert _market_closes(offline)

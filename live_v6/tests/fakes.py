@@ -145,6 +145,8 @@ class FakeExchange:
         return self.lev[s]
 
     def market(self, s, side, qty, cid, reduce_only=False, fill_qty=None):
+        if not reduce_only:
+            self._cancel_flat_qty_stops(s)               # a reduce-only qty stop cannot live while flat
         if cid in self.orders:
             raise OrderRejected(-4116, "ClientOrderId is duplicated.")
         qty = Decimal(qty)
@@ -216,12 +218,25 @@ class FakeExchange:
         if p and ((p["amt"] > 0 and self.price[s] <= trigger) or (p["amt"] < 0 and self.price[s] >= trigger)):
             raise WouldTrigger(-2021, "Order would immediately trigger.")
         aid = str(next(self._id))
+        flat = not p or p.get("amt", 0) == 0
         self.algos[aid] = {"kind": "algo", "id": aid, "client_id": cid, "symbol": s, "type": "STOP_MARKET", "side": side,
                            "stop_price": trigger, "close_position": qty is None, "reduce_only": True,
-                           "qty": Decimal(qty) if qty is not None else Decimal(0), "working_type": "MARK_PRICE"}
+                           "qty": Decimal(qty) if qty is not None else Decimal(0), "working_type": "MARK_PRICE",
+                           "flat_prearm": qty is not None and flat}
         self.accepted[cid] = self.accepted.get(cid, 0) + 1
         self._algo_end(self.algos[aid], "NEW")
         return dict(self.algos[aid])
+
+    def _cancel_flat_qty_stops(self, sym):
+        """Binance auto-cancels a reduce-only qty STOP_MARKET within ~1s when the symbol is flat."""
+        p = self.pos.get(sym)
+        if p and p.get("amt", 0) != 0:
+            return
+        for aid, o in list(self.algos.items()):
+            if o.get("symbol") == sym and o.get("flat_prearm"):
+                self.algos.pop(aid, None)
+                self._algo_end(o, "CANCELED")
+                self.algo_hist[o["client_id"]]["flat_autocancel"] = True
 
     def take_profit(self, s, side, trigger, cid, qty, working_type="MARK_PRICE"):
         if any(o["client_id"] == cid for o in self.algos.values()):

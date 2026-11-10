@@ -379,16 +379,8 @@ def test_r5_non_4130_keeps_visible_prearm_no_flatten(offline, side):
 
     offline.fx.inject("stop", reject_cp, times=20)
     _enter(eng, side)
-    qty = offline.amt(DOGE)
-    assert qty != 0 and DOGE in eng.st["pos"]
-    assert not _closes(offline) and not _market_closes(offline)
-    stops = [o for o in offline.inner.open_orders(DOGE) if (o["type"] or "").startswith("STOP")]
-    assert stops, "visible pre-arm was flattened after a non--4130 reject"
-    posts = len(_stop_posts(offline))
-    _monitor(eng, 4)
-    assert offline.amt(DOGE) == qty
-    assert len(_stop_posts(offline)) == posts
-    assert not _closes(offline) and not _market_closes(offline)
+    assert offline.amt(DOGE) == 0
+    assert _market_closes(offline)
 
 
 @pytest.mark.parametrize("side", [1, -1])

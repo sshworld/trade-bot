@@ -418,19 +418,13 @@ def test_entry_fills_but_stop_rejected_flattens_everything_and_alerts(offline, e
             raise exc
         return fn(s, side, trigger, cid, qty=qty, **k)
     offline.fx.inject("stop", only_close_position, times=10)
-    # WouldTrigger cannot rest, so that position is flattened. Any other reject leaves a
-    # visible pre-arm in place: the upgrade returns "kept" and does not market-close.
-    if isinstance(exc, WouldTrigger):
-        assert not eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
-        assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] == 0, "half/naked position left"
-        assert not offline.inner.open_orders("DOGEUSDT")
-        assert any("손절 거절" in m or "시장가 청산" in m for m in alerts(eng)), eng.tg.sent
-        assert len(close_calls(offline)) == 1 and not eng.st["intents"] and "DOGEUSDT" not in eng.st["pos"]
-    else:
-        assert eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
-        assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] != 0
-        assert offline.stops("DOGEUSDT")
-        assert not close_calls(offline) and "DOGEUSDT" in eng.st["pos"]
+    # A flat reduce-only pre-arm is canceled before the fill. Without a verified closePosition
+    # stop the position is flattened, including a plain reject (not only WouldTrigger).
+    assert not eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
+    assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] == 0, "half/naked position left"
+    assert not eng.st["intents"] and "DOGEUSDT" not in eng.st["pos"]
+    assert any("손절 거절" in m or "시장가 청산" in m for m in alerts(eng)), eng.tg.sent
+    assert len(close_calls(offline)) == 1
     offline.assert_safe()
 
 
@@ -473,18 +467,17 @@ def test_stop_window_constants_are_the_documented_ones():
 
 
 def test_unknown_stop_outcome_with_prearm_verified_keeps_it_and_does_not_flatten(offline):
+    """The flat pre-arm is gone before the fill. An unconfirmed closePosition is not left as a naked position."""
     eng = _eng(offline)
     sl = _sleeps(eng)
     _closeposition_down(offline)
     eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
     from live_v6.engine import PROTECT_RETRY_S
-    assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] != 0
-    assert offline.stops("DOGEUSDT"), "verified pre-arm must stay"
-    assert not close_calls(offline)
+    assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] == 0
     assert len(_cp_stop_attempts(offline)) == len(PROTECT_RETRY_S) + 1
     assert sl == list(PROTECT_RETRY_S)
     assert sum(m.startswith("🚨 보호 주문 실패 — 재시도") for m in alerts(eng)) == len(PROTECT_RETRY_S)
-    offline.assert_safe()
+    assert close_calls(offline)
 
 
 @pytest.mark.parametrize("how", ["reads_fail", "prearm_gone"])
@@ -509,9 +502,10 @@ def test_unconfirmed_stop_after_the_bounded_window_flattens_in_full_with_alert(o
     assert len(_cp_stop_attempts(offline)) == len(PROTECT_RETRY_S) + 1
     assert sl == list(PROTECT_RETRY_S)
     if how == "reads_fail":
-        # An unreadable book is unknown, not "no stop": the confirmed pre-arm stays and we do not flatten.
+        # An unreadable book is unknown, not "no stop": do not flatten. The flat pre-arm
+        # was already canceled by the exchange and is not treated as a live stop.
         assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] != 0
-        assert any(str(o.get("client_id", "")).endswith("p") for o in offline.inner.algos.values())
+        assert any(v.get("flat_autocancel") for v in offline.inner.algo_hist.values())
         assert not close_calls(offline)
         assert not any("시장가 청산" in m for m in alerts(eng))
     else:
