@@ -93,6 +93,12 @@ class FakeExchange:
     def book(self, s):
         return {"bid": self.price[s], "ask": self.price[s]}
 
+    def last_price(self, s):
+        over = getattr(self, "last", None)
+        if isinstance(over, dict) and s in over:
+            return over[s]
+        return self.price[s]
+
     def klines(self, s, interval, limit):
         return [dict(r) for r in self.kl.get((s, interval), [])[-limit:]]
 

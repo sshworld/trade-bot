@@ -230,7 +230,7 @@ class V6Engine:
         self._cp_book_sig: dict = {}                        # last book we already re-armed against during the hold
         self._tp_unknown: set = set()                       # book unreadable: TP not placed, alerted once until known
         self._book_down_since: dict = {}                    # sym → first unreadable open-order read (60s before the alert)
-        self._tp_fail_alerted: set = set()                  # coins already told that a take-profit was rejected
+        self._tp_fail_alerted: set = set()                  # (symbol, tranche) already told that this order failed
         self._dup_unknown: set = set()                      # (sym, what) already alerted for an unreadable -4116
         self._dup_retry_at: dict = {}                       # (sym, what) → earliest clock() to look at that -4116 again
         self._tp_retry_at: dict = {}                        # (sym, what) → earliest clock() for another rejected-TP cycle
@@ -1154,10 +1154,11 @@ class V6Engine:
                      and o.get("side") == cs), None)
 
     def _tp_fail_once(self, sym, what, err):
-        """One alert for a rejected take-profit. Never a market close."""
-        if sym in self._tp_fail_alerted:
+        """One alert per order. An earlier tranche must not hide a later one. Never a market close."""
+        key = (sym, str(what))
+        if key in self._tp_fail_alerted:
             return
-        self._tp_fail_alerted.add(sym)
+        self._tp_fail_alerted.add(key)
         self.alert(f"보호 점검 보류 — {sym}", f"{what} · 익절 거절 · 손절 유지 · {err}")
 
     def _is_orphan_prearm(self, o) -> bool:
@@ -1530,6 +1531,19 @@ class V6Engine:
                     if renew is not None and state in {"terminal", "filled", "no"}:
                         cur_cid, cur_place = renew()    # spent id: next client id, same attempt budget
                         last = e
+                        if delay is None:               # the only step was this renew: send the new id now
+                            try:
+                                cur_place()
+                                self._clear_dup_unknown(sym, what)
+                                return True
+                            except WouldTrigger:
+                                raise
+                            except (OrderRejected, ExchangeError) as e2:
+                                last = e2
+                            if str(what).startswith("익절"):
+                                self._tp_fail_once(sym, what, last)
+                                return False
+                            return self._give_up_protection(sym, j, what, last)
                     else:
                         self._note_dup_unknown(sym, what)
                         return False
@@ -1649,15 +1663,88 @@ class V6Engine:
             self._tp_retry_at[key] = self.clock() + PROTECT_AUDIT_S
         return ok
 
-    def _on_tp_would_trigger(self, sym, j, which, px, qty, working_type) -> bool:
-        """Price was through this take-profit. Re-read it. Still through → reduceOnly
-        market of this slice only. Back inside → rest the rounded order once.
-        A failed read sends nothing. A rejected close waits a minute."""
+    def _decision_px(self, sym, working_type) -> Decimal:
+        """The price that decides through vs inside. A MARK_PRICE runner uses the mark.
+        Anything else uses the last trade, never the book bid."""
+        if working_type == "MARK_PRICE":
+            return D(self.x("mark_price", sym))
+        return D(self.x("last_price", sym))
+
+    @staticmethod
+    def _executed_qty(order) -> Decimal:
+        if not isinstance(order, dict):
+            return Decimal(0)
+        return D(order.get("executed_qty") or 0)
+
+    def _book_realized_tp(self, j, which, left: Decimal):
+        """A confirmed slice fill. Follow-ups use `left`, not a larger stale snapshot."""
+        j.pop("tp_realize", None)
+        if which == "t1":
+            j["tp1_done"] = True
+            if left > 0:
+                j["qty"] = str(left)
+        elif which == "t2" and not j.get("tp2_done"):
+            j["tp2_done"] = True
+        elif which == "t3" and not j.get("tp3_done"):
+            j["tp3_done"] = True
+        if which == "t3" or left <= 0:
+            if not j.get("exit_fill"):
+                j["exit_fill"] = "take_profit"
+        self.save()
+
+    def _resolve_tp_realize(self, sym, j, pending) -> str:
+        """'filled' is booked. 'absent' means the first market did not fill, so a new one may go.
+        Anything else sends nothing: a lagging snapshot is not proof the first order missed."""
+        which = str(pending.get("which") or "")
+        before = D(pending.get("before") or 0)
         what = f"익절 {which}"
+        try:
+            amt = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+        except ExchangeError:
+            amt = None
+        try:
+            order = self.x("get_order", sym, str(pending.get("cid") or ""))
+        except ExchangeError:
+            order = "unknown"
+        if order == "unknown" or amt is None:
+            self._tp_fail_once(sym, what, "체결 조회 실패 · 추가 주문 없음")
+            return "unknown"
+        executed = self._executed_qty(order)
+        if executed > 0:
+            left = before - executed
+            if left < 0:
+                left = Decimal(0)
+            if abs(amt) < left:
+                left = abs(amt)
+            self._book_realized_tp(j, which, left)
+            return "filled"
+        status = str(order.get("status") or "").upper() if isinstance(order, dict) else ""
+        gone = order is None or status in {"EXPIRED", "CANCELED", "CANCELLED", "REJECTED"}
+        if gone and executed <= 0 and abs(amt) >= before:
+            j.pop("tp_realize", None)
+            self.save()
+            return "absent"
+        self._tp_fail_once(sym, what, "체결 수량 불명 · 추가 주문 없음")
+        return "unknown"
+
+    def _on_tp_would_trigger(self, sym, j, which, px, qty, working_type) -> bool:
+        """Price was through this take-profit. Re-read the working price. Still through →
+        one reduceOnly market of this slice, and only after that order is a confirmed fill.
+        Back inside → rest the rounded order once. Below the minimum notional → one alert,
+        no second take-profit. A failed read or an unconfirmed fill sends nothing."""
+        what = f"익절 {which}"
+        pending = j.get("tp_realize")
+        if isinstance(pending, dict):
+            pending_which = str(pending.get("which") or "")
+            verdict = self._resolve_tp_realize(sym, j, pending)
+            if verdict == "filled" and pending_which == which:
+                return True
+            if verdict != "absent":
+                return False
         rules = self.rules[sym]
         s = int(j.get("side", 1))
         try:
-            last = D(self.x("book", sym)["bid"])
+            last = self._decision_px(sym, working_type)
         except ExchangeError:
             self._tp_fail_once(sym, what, "가격 조회 실패 · 기존 손절 유지")
             return False
@@ -1685,38 +1772,41 @@ class V6Engine:
                 return False
             return True
         if qty * last < rules.min_notional:
-            self._arm_unsplittable(sym, j)                  # too small to split: full-qty path
-            return True
+            self._tp_fail_once(sym, what, "최소 명목 미만 · 추가 주문 없음")
+            return False
         sell = min(D(qty), abs(amt))
         if sell <= 0:
             return False
         seq = int(j.get("exit_seq", 0))
         j["exit_seq"] = seq + 1
+        cid_x = f"{j['cid']}x{seq}"
+        j["tp_realize"] = {"which": which, "cid": cid_x, "before": str(abs(amt))}
         self.save()
         side = "SELL" if amt > 0 else "BUY"                # reduceOnly, capped at the position just read
         try:
-            self.submit_market(sym, side, sell, f"{j['cid']}x{seq}", reduce_only=True)
+            result = self.submit_market(sym, side, sell, cid_x, reduce_only=True)
         except OrderRejected as e:
+            j.pop("tp_realize", None)
+            self.save()
             self._tp_fail_once(sym, what, f"시장가 청산 거절 · {e}")
             return False
         except ExchangeError as e:
             self._tp_fail_once(sym, what, f"시장가 청산 결과 불명 · {e}")
             return False
-        if which == "t1":
-            try:
-                left = self._row_amt(self.x("positions", self.cfg.symbols), sym)
-            except ExchangeError:
-                left = None
-            j["tp1_done"] = True
-            if left not in (None, 0):
-                j["qty"] = str(abs(left))
-            self.save()
-        elif which == "t2" and not j.get("tp2_done"):
-            j["tp2_done"] = True
-            self.save()
-        elif which == "t3" and not j.get("tp3_done"):
-            j["tp3_done"] = True
-            self.save()
+        executed = self._executed_qty(result)
+        if executed <= 0:
+            self._tp_fail_once(sym, what, "시장가 청산 미확인 · 기존 손절 유지")
+            return False
+        try:
+            fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+        except ExchangeError:
+            fresh = None
+        left = abs(amt) - executed
+        if left < 0:
+            left = Decimal(0)
+        if fresh is not None and abs(fresh) < left:
+            left = abs(fresh)
+        self._book_realized_tp(j, which, left)
         return True
 
     def _arm_unsplittable(self, sym, j):
@@ -1794,10 +1884,13 @@ class V6Engine:
                     fresh = None
                 if fresh == 0:
                     return
-                if fresh is not None:
+                booked = abs(D(j.get("qty") or 0))
+                if fresh is not None and (booked <= 0 or abs(fresh) <= booked):
                     amt = fresh
                     j["qty"] = str(abs(fresh))
                     self.save()
+                elif booked > 0:
+                    amt = booked if int(j.get("side", 1)) > 0 else -booked
         if tp.get("tp2") and not self.cfg.tp2_r:                   # adopted pre-E position: TP2 cancelled (E has none)
             o2 = next((o for o in orders if o["client_id"] == self._tp_cid(j, "t2")), None)
             try:
@@ -1912,6 +2005,8 @@ class V6Engine:
         cancelled — never a moment without a stop; at most a short overlap of two (both reduceOnly, only one can fill
         the position). Mark already at/through tgt → reduceOnly market close. Returns 'ok' | 'closed' | 'pending'
         (not confirmed: the old stop stays, one 🚨, retried by reconcile)."""
+        if self.clock() < self._cap_retry_at.get(sym, 0):
+            return "pending"                                 # the close already failed: do not POST another stop
         s, breach = int(j.get("side", 1)), ("be_stop_breach" if why == "be" else "trail_stop_breach")
         if mk is not None and s * (D(mk) - tgt) <= 0:             # SL must not sit past breakeven after TP1
             log.warning("%s mark %s already beyond %s stop %s → close remainder", sym, mk, why, tgt)
@@ -2156,7 +2251,8 @@ class V6Engine:
         self._audit_unknown.discard(sym)
         self._tp_unknown.discard(sym)
         self._book_down_since.pop(sym, None)
-        self._tp_fail_alerted.discard(sym)
+        self._tp_fail_alerted = {k for k in self._tp_fail_alerted
+                                 if (k[0] if isinstance(k, tuple) else k) != sym}
         self._dup_unknown = {k for k in self._dup_unknown if k[0] != sym}
         self._dup_retry_at = {k: v for k, v in self._dup_retry_at.items() if k[0] != sym}
         self._tp_cooled = {k for k in self._tp_cooled if k[0] != sym}

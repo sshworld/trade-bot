@@ -230,6 +230,11 @@ class BinanceREST:
         d = self._req("GET", "/fapi/v1/ticker/bookTicker", {"symbol": symbol}, signed=False)
         return {"bid": Decimal(d["bidPrice"]), "ask": Decimal(d["askPrice"])}
 
+    def last_price(self, symbol) -> Decimal:
+        """Last traded price. bookTicker has no trade price, only the bid and the ask."""
+        d = self._req("GET", "/fapi/v1/ticker/price", {"symbol": symbol}, signed=False)
+        return Decimal(d["price"])
+
     # ── account ──
     def brackets(self, symbol) -> list[dict]:
         rows = self._req("GET", "/fapi/v1/leverageBracket", {"symbol": symbol})

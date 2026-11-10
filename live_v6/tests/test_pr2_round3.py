@@ -447,7 +447,7 @@ def test_tp_would_trigger_unreadable_sends_nothing(offline, side):
     offline.inner.stops_fire = False
     offline.inner.set_price(DOGE, _through(j, side))
     _pop_t1(offline)
-    offline.fx.inject("book", "unavailable", times=20)
+    offline.fx.inject("last_price", "unavailable", times=20)
     before_m, before_tp = len(_markets(offline)), len(_tp_posts(offline))
     eng.tick()
     eng.tick()

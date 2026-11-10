@@ -189,6 +189,9 @@ class SimExchange:
         v = Decimal(repr(self.px[s]))
         return {"bid": v, "ask": v}
 
+    def last_price(self, s):
+        return Decimal(repr(self.px[s]))
+
     def klines(self, s, interval, limit):
         if interval == "1d":
             j = bisect.bisect_right(self.daily_t, self.now - DAY_MS)
