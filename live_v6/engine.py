@@ -224,6 +224,7 @@ class V6Engine:
         self._flat_confirmed: set = set()                  # symbols whose position read in THIS process returned 0.
                                                            # empty after a restart until reconcile confirms again
         self._protect_audit_at = self.clock()              # protection audit is due PROTECT_AUDIT_S after this
+        self._audit_unknown: set = set()                    # coins whose audit confirm is unread; alert once until known
         inner = getattr(ex, "inner", ex)
         if hasattr(inner, "on_rate_limit"):
             inner.on_rate_limit = self._on_rate_limit
@@ -1165,6 +1166,7 @@ class V6Engine:
         amt = D(j["qty"])
         last = "closePosition stop not confirmed"
         rejected = False
+        saw_4130 = False
         for i, delay in enumerate((*PROTECT_RETRY_S, None)):
             seq = int(j.get("stop_seq", 0))
             j["stop_seq"] = seq + 1
@@ -1174,9 +1176,14 @@ class V6Engine:
             except WouldTrigger:
                 return "rejected"
             except OrderRejected as e:
-                rejected = True
-                last = str(e)
-                log.error("%s closePosition stop attempt %d rejected: %s", sym, i + 1, e)
+                if getattr(e, "code", None) == -4130:
+                    saw_4130 = True
+                    last = str(e)                           # closePosition already exists: not a hard reject
+                    log.error("%s closePosition stop attempt %d already present (-4130)", sym, i + 1)
+                else:
+                    rejected = True
+                    last = str(e)
+                    log.error("%s closePosition stop attempt %d rejected: %s", sym, i + 1, e)
             except ExchangeError as e:
                 last = str(e)
                 log.error("%s closePosition stop attempt %d: %s", sym, i + 1, e)
@@ -1195,19 +1202,19 @@ class V6Engine:
                 self.alert("보호 주문 실패 — 재시도",
                            f"{sym} 손절 · {i + 1}회 실패 · {delay:g}초 후 재시도 · {last}")
                 self.sleep(delay)
-        if rejected:
-            return "failed"                                 # definitive reject: caller market-closes, pre-arm included
         try:
             oo = self.x("open_orders", sym)
         except ExchangeError:
-            return "kept"                                  # unknown book: do not flatten a confirmed pre-arm
-        if self.find_stop(amt, oo):
-            log.warning("%s keeps the pre-armed reduceOnly stop %s", sym, pre["stop_price"])
+            return "kept"                                  # unknown book: do not flatten a confirmed pre-arm or a landed -4130
+        if rejected:
+            return "failed"                                 # non--4130 reject, and the book could be read
+        if self.find_stop(amt, oo) or saw_4130:
+            log.warning("%s keeps the protective stop %s", sym, pre["stop_price"])
             j["stop_px"] = str(pre["stop_price"])
             j.update(stop_confirmed_ms=j.get("prearm_ms"), stop_px_entry=j["stop_px"])  # live log only
             self.save()
             self._dirty = True                              # reconcile re-verifies (qty ≥ position) right away
-            return "kept"
+            return "kept"                                   # covering stop, or -4130 said the closePosition exists
         return "failed"                                     # read succeeded and nothing covers the filled qty
 
     # ───────────────────────── take profit / breakeven (qrmtf) ─────────────────────────
@@ -1332,9 +1339,10 @@ class V6Engine:
                     cover = self._stop_covers(sym, j)
                     if cover == "yes":
                         return True
-                    if cover == "unknown":
-                        self.alert(f"보호 주문 실패 — {sym} 청산 보류", f"{what} · 손절 조회 불가 · 유지")
-                        return False
+                    # empty, wrong side, too-small qty, or an unreadable book: the exchange
+                    # already said a closePosition stop exists. Do not retry into a flatten.
+                    self.alert(f"보호 점검 보류 — {sym}", f"{what} · -4130 손절 존재 · 조회와 불일치 · 유지")
+                    return False
                 last = e
                 state = self._cid_state(sym, cid)
                 if state == "yes":
@@ -2638,9 +2646,13 @@ class V6Engine:
         if not self.find_stop(amt, orders) or self._tp_repairs(j, amt, orders):
             try:                                            # bundled book can be empty or partial: confirm this symbol
                 orders = self.x("open_orders", sym)
-            except ExchangeError:
+            except ExchangeError as e:
                 log.error("%s audit order read unknown — SL/TP left untouched", sym)
+                if sym not in self._audit_unknown:
+                    self._audit_unknown.add(sym)
+                    self.alert(f"보호 점검 보류 — {sym}", f"주문 조회 불가 · 손절·익절 유지 · {e}")
                 return
+        self._audit_unknown.discard(sym)
         if not self.find_stop(amt, orders):
             if not self._arm_stop(sym, j, amt) or not self._position_open(sym):
                 return
