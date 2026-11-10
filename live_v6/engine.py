@@ -484,7 +484,17 @@ class V6Engine:
                 self.block(UNKNOWN_ORDER, cid, "주문 상태 확인 불가 — 신규 진입 중단")
                 continue
             if o and o["executed_qty"] > 0 and it["sym"] not in self.st["pos"]:
-                self._journal_entry(it["sym"], it, o)
+                j = self._journal_entry(it["sym"], it, o)
+                u = (self.st.get("unknown") or {}).get(it["sym"])
+                cid_u = u.get("stop_cid") if isinstance(u, dict) else None
+                if cid_u:
+                    j["stop_cid"] = cid_u
+                    if u.get("stop_px"):
+                        j["stop_px"] = str(u["stop_px"])
+                    extra = j.setdefault("fallback_stop_cids", [])
+                    if cid_u not in extra:
+                        extra.append(cid_u)
+                    self.save()
             self.st["intents"].pop(cid, None)
             self.save()
 
@@ -3359,6 +3369,9 @@ class V6Engine:
                 cids.append(str(extra))
         cids += [f"{cid}s{i}" for i in range(int(j.get("stop_seq") or 0))]
         cids += [f"{cid}x{i}" for i in range(int(j.get("exit_seq") or 0))]
+        for extra_cid in [j.get("stop_cid"), *(j.get("fallback_stop_cids") or [])]:
+            if extra_cid and str(extra_cid) not in cids:
+                cids.append(str(extra_cid))
         for c in cids:
             try:
                 st = self.x("algo_order", sym, c)
@@ -3945,7 +3958,11 @@ class V6Engine:
         for sym, amt in bare:
             if sym in self._armed_now:
                 continue
-            oo = [o for o in orders if o.get("symbol") == sym]
+            try:                                            # the bundled read can be empty; confirm this symbol
+                oo = self.x("open_orders", sym)
+            except ExchangeError as e:
+                log.error("%s audit order read unknown — unknown stop left untouched", sym)
+                continue
             if self.find_stop(amt, oo):
                 continue
             self._unknown_position(sym, pos[sym], oo, self.marks.get(sym))
@@ -4106,7 +4123,20 @@ class V6Engine:
                 px = r.price(mark - side * atr, rnd)
                 src = "1×ATR14 from mark (line would trigger)"
                 o = self.x("stop", sym, cs, px, f"{cid}b")
-        except (OrderRejected, WouldTrigger) as e:
+        except OrderRejected as e:
+            if getattr(e, "code", None) == -4130:
+                try:                                        # a closePosition is already there; verify, do not count a reject
+                    oo = self.x("open_orders", sym)
+                except ExchangeError:
+                    return False
+                prot = self.find_stop(amt, oo)
+                if prot:
+                    u.update(stop_px=str(prot["stop_price"]), stop_cid=prot.get("client_id"),
+                             stop_src="exchange (-4130, verified)")
+                    u.pop("unprotected", None)
+                    u.pop("stop_rejects", None)
+                    return True
+                return False
             u["stop_rejects"] = int(u.get("stop_rejects", 0)) + 1
             u["last_reject"] = str(e)[:80]
             self._unknown_unprotected(sym, u, f"손절 거부 {px}: {str(e)[:80]}")
