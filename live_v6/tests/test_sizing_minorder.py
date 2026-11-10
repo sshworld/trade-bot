@@ -421,7 +421,7 @@ def test_entry_fills_but_stop_rejected_flattens_everything_and_alerts(offline, e
     assert not eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
     assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] == 0, "half/naked position left"
     assert not offline.inner.open_orders("DOGEUSDT")
-    assert any("손절 거절" in m for m in alerts(eng)), eng.tg.sent
+    assert any("손절 거절" in m or "시장가 청산" in m for m in alerts(eng)), eng.tg.sent
     assert len(close_calls(offline)) == 1 and not eng.st["intents"] and "DOGEUSDT" not in eng.st["pos"]
     offline.assert_safe()
 
@@ -437,10 +437,10 @@ def test_stop_unknown_outcome_keeps_prearm_so_position_is_never_naked(offline):
     offline.assert_safe()
 
 
-# ── TA (b): bounded confirmation of the protective stop after an unknown placement outcome ──
-# Exact window in the code (engine.Settings): stop_attempts = 3, stop_retry_delay_s = 3.0 s. Round 1 = _upgrade_stop (3 closePosition
-# attempts, sleeps between them) → pre-arm verified via open_orders → round 2 = protect()/ensure_stop (3 attempts, same delay).
-# Still no confirmed stop after that → this position is flattened in full + 🚨. Nothing waits for api_dead_s (300 s, flatten-all).
+# ── TA (b) + protection policy v1: entry-time stop confirmation ──
+# ClosePosition upgrade retries at 1s, 3s, 10s (alert each time). A confirmed pre-arm is kept.
+# A definitive reject, or no live stop after that budget, → one reduceOnly market close + 🚨.
+# ensure_stop() still uses Settings.stop_attempts × stop_retry_delay_s for callers that invoke it directly.
 def _cp_stop_attempts(offline):
     return [c for c in offline.fx.calls if c[0] == "stop" and not str(c[1][3]).endswith("p")]   # pre-arm cid ends in 'p' 
 
@@ -469,11 +469,13 @@ def test_unknown_stop_outcome_with_prearm_verified_keeps_it_and_does_not_flatten
     sl = _sleeps(eng)
     _closeposition_down(offline)
     eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
+    from live_v6.engine import PROTECT_RETRY_S
     assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] != 0
     assert offline.stops("DOGEUSDT"), "verified pre-arm must stay"
-    assert not close_calls(offline) and not alerts(eng)
-    assert len(_cp_stop_attempts(offline)) == eng.cfg.stop_attempts
-    assert sum(sl) <= (eng.cfg.stop_attempts - 1) * eng.cfg.stop_retry_delay_s       # ≤ 6 s of waiting
+    assert not close_calls(offline)
+    assert len(_cp_stop_attempts(offline)) == len(PROTECT_RETRY_S) + 1
+    assert sl == list(PROTECT_RETRY_S)
+    assert sum(m.startswith("🚨 보호 주문 실패 — 재시도") for m in alerts(eng)) == len(PROTECT_RETRY_S)
     offline.assert_safe()
 
 
@@ -495,11 +497,12 @@ def test_unconfirmed_stop_after_the_bounded_window_flattens_in_full_with_alert(o
         return [o for o in fn(sym) if not o["client_id"].endswith("p")]          # pre-arm not visible
     offline.fx.inject("open_orders", oo, times=1000)
     eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
+    from live_v6.engine import PROTECT_RETRY_S
     assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] == 0, "must be flattened, not left unconfirmed"
-    assert any("손절 미확인" in m for m in alerts(eng)), eng.tg.sent
+    assert any("시장가 청산" in m for m in alerts(eng)), eng.tg.sent
     assert len(close_calls(offline)) == 1                                           # one single full exit
-    assert len(_cp_stop_attempts(offline)) <= 2 * eng.cfg.stop_attempts              # bounded: 2 rounds × 3
-    assert sum(sl) <= 2 * (eng.cfg.stop_attempts - 1) * eng.cfg.stop_retry_delay_s   # ≤ 12 s of waiting in total
+    assert len(_cp_stop_attempts(offline)) == len(PROTECT_RETRY_S) + 1
+    assert sl == list(PROTECT_RETRY_S)
 
 
 def test_no_alias_label_strings_in_emitted_skip_reasons(offline, caplog):

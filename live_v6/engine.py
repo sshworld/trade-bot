@@ -23,11 +23,12 @@ Invariants (ported from the verified live_v1 safety layer, spec v1 §8-10 / v2 �
     Resolution is manual (close by hand, or `python -m live_v6.tools.adopt_position`). Only exception (protection
     beats ownership): the exchange keeps REJECTING the stop and none is confirmed within 5 min of detection →
     reduceOnly MARKET close of that position + 🚨.
-  * TA protection policy v1 (2026-11-09): after TP1, a reduceOnly TAKE_PROFIT_MARKET at entry ± 3R
-    (MARK_PRICE) rests on the remainder beside the chandelier stop. A qty that cannot be split gets
-    that +3R TP and the SL on the full size. A failed SL/TP placement is retried at 1s, 3s, 10s
-    (alert each time) and then reduceOnly-market closed. Once a minute the book is checked and a
-    missing SL or TP is restored the same way. A symbol missing from the positions response is
+  * TA protection policy v1 (2026-11-09): scheme E, which had no TP on the remainder, rests a
+    reduceOnly TAKE_PROFIT_MARKET at entry ± 3R (MARK_PRICE) after TP1, beside the chandelier stop.
+    A scheme-E qty that cannot be split gets that +3R TP and the SL on the full size. Legacy keeps
+    its +2R TP2. A failed SL/TP placement, including the entry-time stop, is retried at 1s, 3s, 10s
+    (alert each time) and then reduceOnly-market closed. Once a minute, and again after a restart,
+    a missing SL or TP is restored the same way. A symbol missing from the positions response is
     unknown: that read never cancels SL/TP and never market-closes.
 """
 from __future__ import annotations
@@ -997,34 +998,21 @@ class V6Engine:
         self.save()
         up = self._upgrade_stop(sym, j, pre)                # closePosition at the fill-based stop, THEN cancel pre-arm
         try:                                                 # late fills after a partial: exchange qty is the truth
-            amt = self.x("positions", self.cfg.symbols)[sym]["amt"]
-            if amt != 0 and abs(amt) != D(j["qty"]):
+            pos = self.x("positions", self.cfg.symbols)
+            amt = self._row_amt(pos, sym)
+            if amt not in (None, 0) and abs(amt) != D(j["qty"]):
                 j["qty"] = j["entry_qty"] = str(abs(amt))
                 self.save()
         except ExchangeError:
             pass
-        if up == "rejected":                                # filled, exchange stop rejected → flatten NOW, never hold it
+        if up == "rejected":                                # would-trigger: a stop there cannot rest → flatten now
             self.alert("진입 체결 후 손절 거절 — 전량 청산", f"{sym} {j['qty']} · 손절 {j['stop_px']} 거절/즉시발동 → reduceOnly 전량 청산")
             if not self.close(sym, "stop_rejected_after_fill"):
                 log.error("%s flatten after rejected stop not complete — close() keeps retrying via reconcile", sym)
             return False
-        if up != "ok":                                      # pre-arm kept: it must be CONFIRMED live, else protect/flatten
-            try:
-                shielded = self.find_stop(D(j["qty"]), self.x("open_orders", sym)) is not None
-            except ExchangeError:
-                shielded = False                            # verification unknown → NOT confirmed: bounded round below
-            if not shielded:
-                # BOUNDED: closePosition attempts (stop_attempts × stop_retry_delay_s) → pre-arm verification → ONE more
-                # bounded round (protect/ensure_stop: stop_attempts × stop_retry_delay_s). Still no confirmed stop → flatten
-                # this position in full + 🚨 (never wait for the api_dead_s flatten-all).
-                if not self.protect(sym, D(j["qty"]), D(j["stop_px"]), j["cid"]):
-                    cur = self.st["pos"].get(sym)
-                    if cur is not None and not cur.get("closing"):
-                        self.alert("진입 후 손절 미확인(재시도 한도 초과) — 전량 청산",
-                                   f"{sym} {j['qty']} · 손절 {j['stop_px']} · 시도 {self.cfg.stop_attempts}회×2라운드, "
-                                   f"간격 {self.cfg.stop_retry_delay_s:g}s")
-                        self.close(sym, "stop_unconfirmed")
-                return False
+        if up == "failed":                                  # item 2 budget spent and no live stop (pre-arm included)
+            self._give_up_protection(sym, j, "진입 손절", "재시도 한도 초과")
+            return False
         # partial fill: the unfilled rest is NOT chased; a filled part below min notional is closed at once (no dust)
         if D(j["qty"]) * D(j["entry_px"]) < self.rules[sym].min_notional:
             self.notify(f"⚪ {sym} 부분 체결 {j['qty']} (최소 주문금액 미만) → 즉시 정리")
@@ -1170,23 +1158,28 @@ class V6Engine:
 
     def _upgrade_stop(self, sym, j, pre):
         """After the fill: closePosition stop at the fill-based price; the pre-arm is cancelled only once the new stop
-        is confirmed (new before old). If it cannot be placed the pre-arm (qty ≥ filled) stays as the stop."""
+        is confirmed (new before old). Failures retry at 1s, 3s, 10s with an alert each time. If that budget ends
+        and the pre-arm still protects the qty, it stays. Otherwise the caller market-closes. WouldTrigger (the
+        price is already through the stop) returns 'rejected' so the caller closes at once.
+        Returns 'ok' | 'kept' | 'rejected' | 'failed'."""
         amt = D(j["qty"])
+        last = "closePosition stop not confirmed"
         rejected = False
-        for attempt in range(self.cfg.stop_attempts):
+        for i, delay in enumerate((*PROTECT_RETRY_S, None)):
             seq = int(j.get("stop_seq", 0))
             j["stop_seq"] = seq + 1
             self.save()
             try:
                 self.x("stop", sym, self._cs(j), D(j["stop_px"]), f"{j['cid']}s{seq}")
             except WouldTrigger:
-                rejected = True
-                break
+                return "rejected"
             except OrderRejected as e:
                 rejected = True
-                log.error("%s closePosition stop attempt %d rejected: %s", sym, attempt + 1, e)
+                last = str(e)
+                log.error("%s closePosition stop attempt %d rejected: %s", sym, i + 1, e)
             except ExchangeError as e:
-                log.error("%s closePosition stop attempt %d: %s", sym, attempt + 1, e)
+                last = str(e)
+                log.error("%s closePosition stop attempt %d: %s", sym, i + 1, e)
             try:
                 oo = self.x("open_orders", sym)
                 cp = next((o for o in oo if o["close_position"] and o["side"] == self._cs(j)), None)
@@ -1196,18 +1189,25 @@ class V6Engine:
                     self._cancel_quiet(sym, pre)
                     self.save()
                     return "ok"
-            except ExchangeError:
-                pass
-            if attempt + 1 < self.cfg.stop_attempts:
-                self.sleep(self.cfg.stop_retry_delay_s)
-        if rejected:                                        # exchange stop DEFINITIVELY rejected: caller flattens (🚨)
-            return "rejected"
-        log.warning("%s keeps the pre-armed reduceOnly stop %s", sym, pre["stop_price"])
-        j["stop_px"] = str(pre["stop_price"])
-        j.update(stop_confirmed_ms=j.get("prearm_ms"), stop_px_entry=j["stop_px"])       # live log only
-        self.save()
-        self._dirty = True                                  # reconcile re-verifies (qty ≥ position) right away
-        return "kept"
+            except ExchangeError as e:
+                last = str(e)
+            if delay is not None:
+                self.alert("보호 주문 실패 — 재시도",
+                           f"{sym} 손절 · {i + 1}회 실패 · {delay:g}초 후 재시도 · {last}")
+                self.sleep(delay)
+        if rejected:
+            return "failed"                                 # definitive reject: caller market-closes, pre-arm included
+        try:
+            if self.find_stop(amt, self.x("open_orders", sym)):
+                log.warning("%s keeps the pre-armed reduceOnly stop %s", sym, pre["stop_price"])
+                j["stop_px"] = str(pre["stop_price"])
+                j.update(stop_confirmed_ms=j.get("prearm_ms"), stop_px_entry=j["stop_px"])  # live log only
+                self.save()
+                self._dirty = True                          # reconcile re-verifies (qty ≥ position) right away
+                return "kept"
+        except ExchangeError:
+            pass
+        return "failed"
 
     # ───────────────────────── take profit / breakeven (qrmtf) ─────────────────────────
     def _tp_levels(self, sym, j):
@@ -1218,7 +1218,7 @@ class V6Engine:
         qty = D(j["qty"])
         q1 = rules.floor_qty(qty * D(str(self.cfg.tp1_frac)))
         if q1 < rules.order_min_qty or q1 >= qty or (qty - q1) < rules.order_min_qty:
-            q1 = Decimal(0)                                        # cannot split → +3R TP on the full qty (policy v1)
+            q1 = Decimal(0)                                        # cannot split → legacy TP2 on the full qty; E uses +3R
         return (rules.price(e + s * r * D(str(self.cfg.tp1_r)), rnd), q1,
                 rules.price(e + s * r * D(str(self.cfg.tp2_r)), rnd) if self.cfg.tp2_r else None, qty - q1)
 
@@ -1227,7 +1227,9 @@ class V6Engine:
         return isinstance(j, dict) and not j.get("closing")
 
     def _runner_due(self, j) -> bool:
-        """+3R runner is the TP once TP1 has filled, or on the full qty when a split was impossible."""
+        """Scheme E only (no tp2_r). Legacy keeps its +2R TP2 and never gets this runner."""
+        if self.cfg.tp2_r:
+            return False
         tp = j.get("tp") or {}
         return bool(tp.get("full") or (j.get("tp1_done") and tp.get("tp1")))
 
@@ -1360,7 +1362,14 @@ class V6Engine:
             self._give_up_protection(sym, j, "익절 가격", e)
             return
         if q1 <= 0:
-            self._arm_unsplittable(sym, j)
+            qty = D(j["qty"])
+            if tp2:                                            # legacy: +2R on the whole qty, as before
+                j["tp"] = {"tp1": None, "q1": "0", "tp2": str(tp2), "q2": str(qty)}
+                j["tp1_done"] = True
+                self.save()
+                self._place_tp(sym, j, "t2", tp2, qty)
+                return
+            self._arm_unsplittable(sym, j)                     # scheme E: +3R and the SL on the full qty
             return
         j["tp"] = {"tp1": str(tp1), "q1": str(q1), "tp2": str(tp2) if tp2 else None, "q2": str(q2)}
         j["tp1_done"] = False
@@ -2459,11 +2468,17 @@ class V6Engine:
                 continue
             if not self.find_stop(amt, orders):
                 self.alert("손절 주문 없음 — 재등록 시도", f"{sym} {amt} · 손절 {stp}")
-                if not self.protect(sym, amt, stp, j["cid"]):
+                if not self._arm_stop(sym, j, amt):
+                    left = self.st["pos"].get(sym)
+                    if left is not None and left.get("closing"):
+                        self.emergency_flatten_all(f"unprotected {sym}")
                     if self.meta.get("halted", "") and str(self.meta["halted"]).startswith("emergency"):
                         return
                     continue
-                orders = self.x("open_orders", sym)
+                try:
+                    orders = self.x("open_orders", sym)
+                except ExchangeError:
+                    continue
             elif j.get("unprotected"):
                 j.pop("unprotected", None)
                 self.save()
@@ -2557,27 +2572,24 @@ class V6Engine:
         if not j.get("tp"):
             return
         self._bind_runner(sym, j, amt)
-        cid = self._required_tp_cid(j)
-        if not cid or any(o.get("client_id") == cid for o in orders):
-            return
-        tp = j["tp"]
-        if cid.endswith("t3"):
-            self._place_tp(sym, j, "t3", D(tp["tp3"]), abs(amt), working_type="MARK_PRICE")
-        elif tp.get("tp1"):
-            self._place_tp(sym, j, "t1", D(tp["tp1"]), D(tp["q1"]))
+        for which, px, qty, wt in self._tp_repairs(j, amt, orders):
+            self._place_tp(sym, j, which, px, qty, working_type=wt)
+            if not self._position_open(sym):
+                return
 
-    @staticmethod
-    def _required_tp_cid(j):
-        tp, cid = j.get("tp") or {}, j.get("cid")
-        if not cid or not tp:
-            return None
-        if tp.get("full") or (j.get("tp1_done") and tp.get("tp1")):
-            return f"{cid}t3"
-        if tp.get("tp1") and not j.get("tp1_done"):
-            return f"{cid}t1"
-        if tp.get("tp3"):
-            return f"{cid}t3"
-        return None
+    def _tp_repairs(self, j, amt, orders):
+        """Missing take-profits the audit must put back. Legacy restores t2 (+2R). Scheme E restores the +3R runner."""
+        tp, cid = j.get("tp") or {}, j.get("cid") or ""
+        have = {o.get("client_id") for o in orders}
+        out = []
+        if tp.get("tp1") and not j.get("tp1_done") and f"{cid}t1" not in have:
+            out.append(("t1", D(tp["tp1"]), D(tp["q1"]), "CONTRACT_PRICE"))
+        if tp.get("tp2") and self.cfg.tp2_r and f"{cid}t2" not in have:
+            qty = abs(amt) if j.get("tp1_done") else D(tp.get("q2") or abs(amt))
+            out.append(("t2", D(tp["tp2"]), qty, "CONTRACT_PRICE"))
+        if self._runner_due(j) and tp.get("tp3") and f"{cid}t3" not in have:
+            out.append(("t3", D(tp["tp3"]), abs(amt), "MARK_PRICE"))
+        return out
 
     def _unknown_position(self, sym, p, orders, mark):
         """TA R4: exchange position that is NOT in the state file (opened by hand, or the state file was lost).
