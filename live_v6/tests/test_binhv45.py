@@ -275,7 +275,7 @@ def test_below_min_notional_is_skipped(offline):
 
 
 def test_lock30_alerts_once_and_stays_at_3x(offline):
-    eng = _eng(offline)
+    eng = _eng(offline, restart_gate_mode="lock30")
     eng.meta["trades"] = [{"net": "-1"} for _ in range(30)]
     offline.inner.set_price(DOGE, D("0.151"))
     assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"))
@@ -295,6 +295,35 @@ def test_halt_on_negative_blocks_new_entries(offline):
     assert not eng.st["intents"] and "restart_gate" in eng.blocks
 
 
+def test_live_default_halts_on_negative_net_since_restart(offline):
+    """Default gate. Losses already in the journal at process start do not count.
+    A loss closed after start halts new entries once; the open position keeps its SL and TP."""
+    assert live_settings("binhv45").restart_gate_mode == "halt_on_negative"
+    prior = _eng(offline)
+    prior.meta["trades"] = [{"net": "-50", "fees": "1", "closed_ms": 1}]
+    prior.save()
+    restarted = _eng(offline)
+    offline.inner.set_price(DOGE, D("0.151"))
+    assert restarted.enter(DOGE, D("0.15") * D("0.0075"), restarted.now_ms(), limit_px=D("0.15"))
+    cid = next(iter(restarted.st["intents"]))
+    offline.inner.fill_limit(cid)
+    restarted.reconcile()
+    assert DOGE in restarted.st["pos"]
+    sl = [o["id"] for o in offline.inner.open_orders(DOGE) if o["type"] == "STOP_MARKET"]
+    tp = [o["id"] for o in offline.inner.open_orders(DOGE) if o["type"] == "TAKE_PROFIT_MARKET"]
+    assert sl and tp
+    restarted.meta["trades"] = list(restarted.meta["trades"]) + [{"net": "-0.40", "fees": "0.05", "closed_ms": restarted.now_ms()}]
+    offline.inner.set_price("SOLUSDT", D("150.5"))
+    assert restarted.enter("SOLUSDT", D("150") * D("0.0075"), restarted.now_ms() + 1000, limit_px=D("150")) is False
+    assert "restart_gate" in restarted.blocks and "SOLUSDT" not in restarted.st["intents"]
+    assert [o["id"] for o in offline.inner.open_orders(DOGE) if o["type"] == "STOP_MARKET"] == sl
+    assert [o["id"] for o in offline.inner.open_orders(DOGE) if o["type"] == "TAKE_PROFIT_MARKET"] == tp
+    n = len([m for m in restarted.tg.sent if "재시작 게이트" in m])
+    assert n == 1
+    assert restarted.enter("SOLUSDT", D("150") * D("0.0075"), restarted.now_ms() + 2000, limit_px=D("149")) is False
+    assert len([m for m in restarted.tg.sent if "재시작 게이트" in m]) == n
+
+
 def test_thirty_winners_do_not_raise_leverage(offline):
     eng = _eng(offline)
     eng.meta["trades"] = [{"net": "1"} for _ in range(30)]
@@ -310,7 +339,8 @@ def test_qrmtf_and_both_exit_modes_stay_selectable():
     assert q.exit_mode == "full_tp_pct" and q.tp_pct == 0.002 and q.enable_short and q.sizing.max_leverage == 10
     assert live_settings("qrmtf", exit_mode="r").exit_mode == "r"
     assert h.exit_mode == "full_tp_pct" and h.tp_pct == 0.020 and h.sl_pct == 0.0075
-    assert h.restart_gate_mode == "lock30" and h.restart_gate_n == 30
+    assert h.restart_gate_mode == "halt_on_negative" and h.restart_gate_n == 30
+    assert live_settings("binhv45", restart_gate_mode="lock30").restart_gate_mode == "lock30"
     assert h.enable_short is False and h.sizing.risk_pct == 1.0 and h.sizing.max_leverage == 3
     assert h.startup_leverage == 3 and h.daily_loss_halt == 0.10 and h.max_hold_s == 24 * 3600
     assert h.symbols == ("BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT")

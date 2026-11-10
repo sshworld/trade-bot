@@ -151,8 +151,8 @@ signal bar's close; a fill is taken only from the exchange report; the order is 
 is still open. One position or one resting entry per symbol. On the fill: full-qty `TAKE_PROFIT_MARKET` at
 `entry*1.020` (`CONTRACT_PRICE`) and `STOP_MARKET` at `entry*0.9925` (`MARK_PRICE`), both tick-rounded toward entry.
 Risk 1% of equity at that 0.75% stop (notional ≈ 1.333× equity), leverage fixed at 3x and never raised. `restart_gate_mode`
-`lock30` (default) alerts once if the first 30 completed trades have negative net and stays at 3x; `halt_on_negative`
-blocks new entries as soon as cumulative net is negative. Daily −10% halt and the peak-drawdown latch are unchanged
+`halt_on_negative` (default) blocks new entries once the net after fees of trades closed since this process
+started is negative (one alert; the open position keeps its SL and TP). `lock30` stays selectable: after 30 completed trades, if their cumulative net is negative, one alert and stay at 3x. Daily −10% halt and the peak-drawdown latch are unchanged
 (`clear_peak_halt.py` is still the only clear). Rollback to the previous entry: `LIVE_V6_STRATEGY=qrmtf`.
 
 **Live exit (TA lock, qrmtf `exit_mode="full_tp_pct"`, `tp_pct=0.002`):** one reduce-only TAKE_PROFIT_MARKET for the full

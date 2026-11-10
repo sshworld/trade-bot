@@ -83,7 +83,7 @@ def live_settings(name: str, **kw) -> Settings:
                        max_positions=6, max_same_side=6, enable_short=False, take_profit=True,
                        exit_mode="full_tp_pct", tp_pct=0.020, sl_pct=0.0075,
                        max_hold_s=24 * 3600, limit_ttl_s=24 * 3600, bar_delay_s=3,
-                       restart_gate_mode="lock30", restart_gate_n=30,
+                       restart_gate_mode="halt_on_negative", restart_gate_n=30,
                        peak_dd_guard=0.80, peak_dd_init=132.88,
                        halt_fraction=None, daily_loss_halt=0.10, startup_leverage=3,
                        bar_stale_s=180.0), **kw)

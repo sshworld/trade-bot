@@ -235,6 +235,8 @@ class V6Engine:
         self._r3_alerted: set = set()                      # flat coins whose residual 🚨 is out (cleared by one ✅)
         self._foreign_seen: set = set()                    # (sym, order id) of non-bot orders on a flat coin already 🚨'd
         self._gap_alerted: set = set()                     # (sym, "sl"|"tp") already 🚨'd for this gap; cleared when the order is back
+        # halt_on_negative counts only trades closed after this process started
+        self._gate_i = len(self.meta.get("trades") or [])
         self._flat_confirmed: set = set()                  # symbols whose position read in THIS process returned 0.
                                                            # empty after a restart until reconcile confirms again
         inner = getattr(ex, "inner", ex)
@@ -959,11 +961,15 @@ class V6Engine:
             self._sig, self._sig_side = None, 1
 
     def _restart_gate_block(self) -> bool:
-        """True → this entry must not be sent. lock30 never blocks and never raises leverage; it alerts once."""
+        """True → this entry must not be sent. lock30 never blocks and never raises leverage; it alerts once.
+        halt_on_negative uses only trades closed after this process started. One alert (block() dedupes)."""
         mode = self.cfg.restart_gate_mode or "off"
         if mode == "off":
             return False
-        nets = [D(t.get("net") or 0) for t in (self.meta.get("trades") or [])]
+        trades = list(self.meta.get("trades") or [])
+        if mode == "halt_on_negative":
+            trades = trades[self._gate_i:]
+        nets = [D(t.get("net") or 0) for t in trades]
         n, cum = len(nets), sum(nets, Decimal(0))
         if mode == "halt_on_negative" and n > 0 and cum < 0:
             self.block("restart_gate", f"net {cum} after {n}", "재시작 게이트 — 누적 순손익 음수, 신규 진입 중단")
