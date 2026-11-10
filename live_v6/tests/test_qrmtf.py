@@ -183,7 +183,8 @@ def test_live_settings_qrmtf():
     c = live_settings("qrmtf")
     assert (c.sizing.risk_pct, c.sizing.portfolio_risk_cap, c.sizing.margin_cap, c.sizing.max_leverage) == (4.0, 0.12, 0.25, 10)
     assert c.max_positions == 3 and c.enable_short and c.take_profit and c.max_hold_s == 24 * 3600
-    assert (c.tp1_r, c.tp1_frac, c.tp2_r, c.be_offset, c.be_fee, c.trail_atr_k) == (1.0, 0.5, None, 0.0015, 0.0005, 2.0)   # E
+    assert c.exit_mode == "full_tp_pct" and c.tp_pct == 0.002
+    assert (c.tp1_r, c.tp1_frac, c.tp2_r, c.be_offset, c.be_fee, c.trail_atr_k) == (1.0, 0.5, None, 0.0015, 0.0005, 2.0)   # r-mode only
     assert c.startup_leverage == 10 and c.halt_fraction is None and c.daily_loss_halt == 0.10 and c.daily_halt_s == 24 * 3600   # -25 % total halt removed
     assert c.bar_stale_s == 180.0
 
@@ -222,7 +223,7 @@ def test_long_entry_on_fast_flip_with_big_and_mid(offline):
     assert set(rec["tf"]) == set(Q.SCORED) and rec["tf"]["1h"] == {"s1": 1, "s2": 1, "s3": 1, "s4": 1, "contrib": 14.0, "bars": 150}
     assert "total" in rec and rec["big_tfs"] == "1h+4h+1d" and rec["d1_s1"] == "px_ema50"
     oo = offline.inner.open_orders(DOGE)
-    assert len([o for o in oo if o["type"] == "TAKE_PROFIT_MARKET"]) == 1   # E (TA 2026-11-04): TP1 only, no TP2
+    assert len([o for o in oo if o["type"] == "TAKE_PROFIT_MARKET"]) == 1   # full_tp_pct: one TP for the whole qty
     assert len([o for o in oo if o["type"] == "STOP_MARKET"]) == 1
     lines = [json.loads(x) for x in (offline.store_path.parent / "qrmtf_signals.jsonl").read_text().splitlines()]
     assert lines[-1]["kind"] == "entry" and lines[-1]["sym"] == DOGE
@@ -346,7 +347,7 @@ def test_rest_weight_per_minute_steady_state(offline):
 
 
 # ───────────── exits / sizing (kept from 2de6eca; entry injected directly) ─────────────
-PRE_E = dict(tp2_r=2.0, be_fee=None, trail_atr_k=0.0)   # the pre-E exit config (TP2 +2R, BE entry ± 0.15 %, no trailing)
+PRE_E = dict(exit_mode="r", tp2_r=2.0, be_fee=None, trail_atr_k=0.0)   # pre-E exits (TP2 +2R, BE ± 0.15 %, no trail)
 
 
 def legacy_engine(b, **kw):
@@ -473,7 +474,7 @@ def test_be_stop_not_confirmed_keeps_old_and_alerts(offline):
 def test_tp1_fired_with_stale_position_snapshot_no_double_close(offline, side):
     # testnet 2026-10-30 LINK: TP1 fired between the position read and the open-orders read -> TP1 looked missing
     # with the full qty -> re-place -> -2021 -> reduceOnly market for q1 again -> only 0.01 left. Fresh read must stop it.
-    eng = exit_engine(offline)
+    eng = exit_engine(offline, exit_mode="r")
     j = open_pos(offline, eng, side)
     full = offline.amt(DOGE)
     offline.inner.set_price(DOGE, Decimal(j["tp"]["tp1"]))          # TP1 fires on the exchange
@@ -497,7 +498,7 @@ def _be_flat_clean(b, eng):
 def test_be_price_already_beyond_be_closes_remainder(offline, side):
     # TP1 filled, then price came back through breakeven (still inside the old stop) before the BE move:
     # a BE stop would fire at once → remainder closed at market, old stop + TP2 cancelled, 0 orders left
-    eng = exit_engine(offline)
+    eng = exit_engine(offline, exit_mode="r")
     j = open_pos(offline, eng, side)
     e = Decimal(j["entry_px"])
     offline.inner.set_price(DOGE, Decimal(j["tp"]["tp1"]))
@@ -511,7 +512,7 @@ def test_be_price_already_beyond_be_closes_remainder(offline, side):
 
 def test_be_stop_would_trigger_reject_closes_remainder(offline):
     # engine mark stale (says fine), exchange rejects the BE stop with -2021 → close at market + clean up
-    eng = exit_engine(offline)
+    eng = exit_engine(offline, exit_mode="r")
     j = open_pos(offline, eng)
     offline.inner.set_price(DOGE, Decimal(j["tp"]["tp1"]))
     offline.inner.set_price(DOGE, Decimal(j["entry_px"]) * Decimal("0.9995"))
@@ -524,7 +525,7 @@ def test_be_stop_would_trigger_reject_closes_remainder(offline):
 def test_be_stop_instant_fire_cleans_up(offline):
     # exchange accepts the BE stop and it fires at once: read-back finds no stop and the position is gone →
     # old stop + TP2 cancelled, trade recorded, 0 orders (no false "BE not confirmed" alert)
-    eng = exit_engine(offline)
+    eng = exit_engine(offline, exit_mode="r")
     j = open_pos(offline, eng)
     offline.inner.set_price(DOGE, Decimal(j["tp"]["tp1"]))
     real = offline.inner.stop
@@ -621,7 +622,7 @@ def test_be_stop_fills_between_position_and_order_read(offline, side):
 
 @pytest.mark.parametrize("side", [1, -1])
 def test_tp1_fill_booked_from_order_status_in_the_race(offline, side):
-    eng = exit_engine(offline)
+    eng = exit_engine(offline, exit_mode="r")
     j = open_pos(offline, eng, side)
     calls0 = len(offline.fx.calls)
     _fire_between_reads(offline, Decimal(j["tp"]["tp1"]))

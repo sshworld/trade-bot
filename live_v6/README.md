@@ -145,8 +145,17 @@ optionally rebases the peak to the last recorded wallet (without `--reset-peak` 
 still under the line), and logs who / when / sudo user / old halt / peak before-after in `meta.peak_dd_clears` and
 `/var/lib/live_v6-live/peak_dd_clears.jsonl`.
 
-**E chandelier exits (TA 2026-11-04, replay variant E; qrmtf `trail_atr_k=2.0`, `be_fee=0.0005`, `be_offset=0.0015`,
-`tp2_r=None`):** from entry the exchange SL trails `tighter(SL, best ∓ 2·ATR14)` — ATR14 = Wilder ATR of the last CLOSED 1h
+**Live exit (TA lock, qrmtf `exit_mode="full_tp_pct"`, `tp_pct=0.002`):** one reduce-only TAKE_PROFIT_MARKET for the full
+quantity at entry×(1±0.002), workingType CONTRACT_PRICE. Rounded to the tick toward entry (an exact half-tick goes
+toward entry) and never past the raw 0.2% level. Price already through that level → reduce-only market for the
+remaining qty. No TP1/TP2 split, no breakeven move, no ATR trail in this mode. The initial SL stays MARK_PRICE
+STOP_MARKET. 24 h time exit, the 10x cap and the daily −10 % halt are unchanged. Reconcile: a position missing its SL
+or this TP gets one 🚨 per incident and the order is re-placed from a fresh position read (qty never above the live
+position). Any existing reduce-only TAKE_PROFIT_MARKET on the closing side counts as the TP, so a restart does not
+place a second one. `exit_mode="r"` keeps the previous path (`tp1_r` / `tp2_r` / trail / breakeven).
+
+**E chandelier (`exit_mode="r"`, `trail_atr_k=2.0`, `be_fee=0.0005`, `be_offset=0.0015`, `tp2_r=None`):** from entry the
+exchange SL trails `tighter(SL, best ∓ 2·ATR14)` — ATR14 = Wilder ATR of the last CLOSED 1h
 bar (one 150-bar read per hour, cached in the journal), best = the 1m high (long) / low (short) extreme since entry, read
 once per closed minute (effective from the next candle). Never looser than the current / initial SL. TP1 +1R 50 %
 unchanged; after TP1 SL = tighter(SL, be·(1 ± 0.0015)) with be = fee-inclusive breakeven entry·(1±f)/(1∓f), f = 0.0005

@@ -31,18 +31,31 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import ROUND_HALF_DOWN, ROUND_HALF_UP, Decimal
 
 from . import strategy as S
 from .events import MARKET_EVENTS, AccountUpdate, Kline, Mark, OrderUpdate, StreamStatus, Trade
 from .strategies.base import DataNotReady
 from .exchange import ExchangeError, ExchangeUnavailable, OrderRejected, WouldTrigger, rules_from_info
 from .notify import Notifier
-from .rules import D, SymbolRules, stop_price
+from .rules import D, SymbolRules, ceil_to, floor_to, stop_price
 from .sizing import TAKER_FEE, SizingParams, size_entry
 from .tradelog import kst
 
 log = logging.getLogger("live_v6.engine")
+
+
+def round_full_tp(raw: Decimal, tick: Decimal, side: int) -> Decimal:
+    """Nearest tick to `raw`. An exact half-tick goes toward entry. Never beyond `raw`
+    (long: not above entry*(1+tp_pct); short: not below entry*(1-tp_pct))."""
+    q = raw / tick
+    mode = ROUND_HALF_DOWN if side > 0 else ROUND_HALF_UP
+    nearest = (q.to_integral_value(rounding=mode) * tick).quantize(tick)
+    if side > 0 and nearest > raw:
+        nearest = floor_to(raw, tick)
+    elif side < 0 and nearest < raw:
+        nearest = ceil_to(raw, tick)
+    return nearest
 
 SIX = ("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT")
 # FROZEN (TA review 57b0888 item 1): processing order of simultaneous bar-close entry signals. It is the order the
@@ -129,6 +142,10 @@ class Settings:
     tp1_r: float = 1.0
     tp1_frac: float = 0.5
     tp2_r: float | None = 2.0           # None/0 → no TP2 order (E chandelier, TA 2026-11-04): the trailing SL exits the rest
+    # "r" keeps the TP1/TP2 path above. "full_tp_pct" (live default, TA lock): one reduce-only TAKE_PROFIT_MARKET
+    # for the whole qty at entry*(1±tp_pct), CONTRACT_PRICE. No split, no breakeven, no trail.
+    exit_mode: str = "r"
+    tp_pct: float = 0.002               # 0.002 = 0.2% price. Ignored unless exit_mode == "full_tp_pct"
     be_offset: float = 0.001            # after TP1: SL → be ± be_offset (live 0.15 %, TA 2026-11-03), safe-side tick
     be_fee: float | None = None         # None: be = entry; f: be = fee-inclusive breakeven entry·(1±f)/(1∓f) (E: f = 0.0005)
     # E chandelier (TA 2026-11-04, replay variant E): from entry, SL = tighter(SL, best ∓ trail_atr_k·ATR14) where ATR14 =
@@ -211,6 +228,7 @@ class V6Engine:
         self._r3_fail: dict[str, int] = {}                 # TA R3: flat coin → reconciles in a row with a failed bot cancel
         self._r3_alerted: set = set()                      # flat coins whose residual 🚨 is out (cleared by one ✅)
         self._foreign_seen: set = set()                    # (sym, order id) of non-bot orders on a flat coin already 🚨'd
+        self._gap_alerted: set = set()                     # (sym, "sl"|"tp") already 🚨'd for this gap; cleared when the order is back
         self._flat_confirmed: set = set()                  # symbols whose position read in THIS process returned 0.
                                                            # empty after a restart until reconcile confirms again
         inner = getattr(ex, "inner", ex)
@@ -232,6 +250,14 @@ class V6Engine:
         log.critical("🚨 %s | %s", title, detail)
         self.tg.alert(title, detail, event_ms=event_ms, decision_ms=self.now_ms())
         self._day_count("incidents")
+
+    def _alert_once(self, sym, kind, title, detail=""):
+        """One Telegram alert per (symbol, gap) until that order is back. A later gap alerts again."""
+        key = (sym, kind)
+        if key in self._gap_alerted:
+            return
+        self._gap_alerted.add(key)
+        self.alert(title, detail)
 
     def notify(self, text, kind=None, event_ms=None):
         """Every Telegram message goes through here (event time vs decision time → alerts log, §TA timeliness)."""
@@ -1045,8 +1071,10 @@ class V6Engine:
         if self.cfg.take_profit:
             self._place_tps(sym, j)
         tp = j.get("tp") or {}
-        part += (f"\n익절 TP1 {tp['tp1']} ({tp['q1']})" + (f" · TP2 {tp['tp2']} ({tp['q2']})" if tp.get("tp2") else " · 이후 추적 손절")
-                 if tp.get("tp1") else "")
+        if tp.get("mode") == "full_tp_pct" and tp.get("tp"):
+            part += f"\n익절 {tp['tp']} (전량 {tp['qty']})"
+        elif tp.get("tp1"):
+            part += (f"\n익절 TP1 {tp['tp1']} ({tp['q1']})" + (f" · TP2 {tp['tp2']} ({tp['q2']})" if tp.get("tp2") else " · 이후 추적 손절"))
         self.notify(f"🟢 진입 {sym} {'롱' if side > 0 else '숏'} · 수량 {j['qty']} · 체결가 {j['entry_px']}{part}\n"
                      f"손절 {j['stop_px']} · {sz.lev}x · 위험 {D(j['risk_usdt']):.4f} USDT ({act}%)",
                      kind="entry", event_ms=intent.get("model_id") or intent.get("T"))
@@ -1223,13 +1251,80 @@ class V6Engine:
                 self.submit_market(sym, self._cs(j), qty, f"{j['cid']}x{seq}", reduce_only=True)
             except ExchangeError as e:
                 log.error("%s %s market (TP already through) failed: %s", sym, which, e)
-            self._dirty = True
+                self._dirty = True
+                return False
+            try:
+                left = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+            except ExchangeError:
+                left = None
+            if left == 0:
+                self._after_flat(sym, "take_profit")          # SL / leftover TP must not survive a full fill
+            else:
+                self._dirty = True
             return False
         except ExchangeError as e:
             log.error("%s %s placement failed (reconcile retries): %s", sym, which, e)
             return False
 
+    def _full_tp_px(self, sym, j) -> Decimal:
+        s = int(j.get("side", 1))
+        raw = D(j["entry_px"]) * (1 + s * D(str(self.cfg.tp_pct)))
+        return round_full_tp(raw, self.rules[sym].tick_size, s)
+
+    def _covering_tp(self, j, orders) -> bool:
+        """Any reduce-only TAKE_PROFIT_MARKET on the closing side, including a manual one."""
+        side = self._cs(j)
+        return any(o.get("type") == "TAKE_PROFIT_MARKET" and o.get("reduce_only") and not o.get("close_position")
+                   and o.get("side") == side for o in orders)
+
+    def _arm_full_tp(self, sym, j, qty: Decimal) -> bool:
+        """One reduce-only TAKE_PROFIT_MARKET for `qty` (already capped at the live position)."""
+        rules = self.rules[sym]
+        qty = rules.floor_qty(D(qty))
+        if qty <= 0 or qty < rules.order_min_qty:
+            log.info("%s full TP skipped: qty %s below min qty", sym, qty)
+            return False
+        px = self._full_tp_px(sym, j)
+        if qty * px < rules.min_notional:
+            log.info("%s full TP skipped: notional %s < min %s", sym, qty * px, rules.min_notional)
+            return False
+        tp = dict(j.get("tp") or {}) if isinstance(j.get("tp"), dict) else {}
+        tp.update(mode="full_tp_pct", tp=str(px), qty=str(qty), tp1=None, q1="0", tp2=None, q2="0")
+        j["tp"] = tp
+        self.save()
+        return self._place_tp(sym, j, "tf", px, qty)
+
+    def _ensure_full_tp(self, sym, j, orders) -> bool:
+        """Re-place the full TP when none is on the book. True → position is flat (caller moves on)."""
+        if self._covering_tp(j, orders):
+            self._gap_alerted.discard((sym, "tp"))
+            return False
+        self._alert_once(sym, "tp", "익절 주문 없음 — 재등록 시도",
+                         f"{sym} 전량 · 진입 {j.get('entry_px')} ± {self.cfg.tp_pct}")
+        try:
+            fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+        except ExchangeError:
+            return False
+        if fresh is None or fresh == 0:
+            return fresh == 0
+        if (fresh > 0) != (int(j.get("side", 1)) > 0):
+            return False
+        self._arm_full_tp(sym, j, abs(fresh))          # never more than the fresh position qty
+        try:
+            left = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+            now = self.x("open_orders", sym) if left else []
+        except ExchangeError:
+            return False
+        if left == 0:
+            return True
+        if self._covering_tp(j, now):
+            self._gap_alerted.discard((sym, "tp"))
+        return False
+
     def _place_tps(self, sym, j):
+        if self.cfg.exit_mode == "full_tp_pct":
+            self._arm_full_tp(sym, j, D(j["qty"]))
+            return
         try:
             tp1, q1, tp2, q2 = self._tp_levels(sym, j)
         except Exception as e:  # noqa: BLE001  TPs are profit-taking only; the stop protects
@@ -1290,6 +1385,8 @@ class V6Engine:
                 cand[f"{cid}t1"] = "tp1"
             if j["tp"].get("tp2"):
                 cand[f"{cid}t2"] = "tp2"
+            if j["tp"].get("mode") == "full_tp_pct" or j["tp"].get("tp"):
+                cand[f"{cid}tf"] = "full_tp"
         cand = {c: k for c, k in cand.items() if c not in open_}
         if not cand:
             return None
@@ -1312,7 +1409,7 @@ class V6Engine:
         if amt is None:
             return False                                    # missing row is not a confirmed flat fill
         log.info("%s exit fill from order status: %s → position %s", sym, filled, amt)
-        if "stop" in filled or "tp2" in filled:
+        if "stop" in filled or "tp2" in filled or "full_tp" in filled:
             j["exit_fill"] = ("trail_stop" if j.get("trailed") else "be_stop" if j.get("be_done") else "stop_loss") \
                 if "stop" in filled else "take_profit"
             self.save()
@@ -1919,6 +2016,8 @@ class V6Engine:
             cids.append(f"{cid}t1")
         if tp.get("tp2"):
             cids.append(f"{cid}t2")
+        if tp.get("mode") == "full_tp_pct" or tp.get("tp"):
+            cids.append(f"{cid}tf")
         cids += [f"{cid}s{i}" for i in range(int(j.get("stop_seq") or 0))]
         cids += [f"{cid}x{i}" for i in range(int(j.get("exit_seq") or 0))]
         for c in cids:
@@ -2249,12 +2348,15 @@ class V6Engine:
                         marks.pop(sym, None)
             if amt == 0 and j:
                 # record_close re-reads. A newer nonzero, or a failed read, replaces this snapshot: do not cancel.
-                verdict, fresh = self.record_close(sym, j.get("close_reason") or j.get("exit_fill") or "stop_loss")
+                reason_closed = j.get("close_reason") or j.get("exit_fill") or "stop_loss"
+                verdict, fresh = self.record_close(sym, reason_closed)
                 if verdict == "open":
                     amt = fresh
                 elif verdict != "flat":
                     side = 1 if int(j.get("side", 1)) > 0 else -1
                     amt = D(j.get("qty") or 0) * side or Decimal(side)
+                elif sym not in self.st["pos"]:
+                    self._after_flat(sym, reason_closed)       # journal booked: cancel the SL / leftover TP
             if amt == 0:
                 u = self.st["unknown"].pop(sym, None)
                 if u is not None:                               # TA R4: resolved by hand (or its stop fired)
@@ -2295,8 +2397,9 @@ class V6Engine:
                 self.save()
             if (amt > 0) != (int(j.get("side", 1)) > 0):
                 mismatch.append(f"{sym} 방향 불일치 로컬 {j.get('side', 1)} / 거래소 {amt}")
-            if filled is None and j.get("tp") and not j.get("tp1_done") and abs(amt) < D(j["qty"]) and not any(
-                    o["client_id"] == f"{j['cid']}t1" for o in orders):   # fallback only: order status unreadable
+            if (self.cfg.exit_mode != "full_tp_pct" and filled is None and j.get("tp") and not j.get("tp1_done")
+                    and abs(amt) < D(j["qty"]) and not any(
+                    o["client_id"] == f"{j['cid']}t1" for o in orders)):   # fallback only: order status unreadable
                 j.update(tp1_done=True, qty=str(abs(amt)))  # TP1 filled (partial close) — expected, not a mismatch
                 self.save()
                 self.notify(f"🔵 {sym} TP1 체결 → 남은 수량 {abs(amt)} · 손절을 본절로 이동", kind="exit")
@@ -2319,13 +2422,22 @@ class V6Engine:
                     return
                 continue
             if not self.find_stop(amt, orders):
-                self.alert("손절 주문 없음 — 재등록 시도", f"{sym} {amt} · 손절 {stp}")
-                if not self.protect(sym, amt, stp, j["cid"]):
+                self._alert_once(sym, "sl", "손절 주문 없음 — 재등록 시도", f"{sym} {amt} · 손절 {stp}")
+                use = amt
+                try:                                        # size the replacement from a fresh position, never above it
+                    fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+                except ExchangeError:
+                    fresh = None
+                if fresh is not None and fresh != 0 and (fresh > 0) == (amt > 0):
+                    use = fresh
+                if not self.protect(sym, use, stp, j["cid"]):
                     if self.meta.get("halted", "") and str(self.meta["halted"]).startswith("emergency"):
                         return
                     continue
                 orders = self.x("open_orders", sym)
-            elif j.get("unprotected"):
+            else:
+                self._gap_alerted.discard((sym, "sl"))
+            if j.get("unprotected") and self.find_stop(amt, orders):
                 j.pop("unprotected", None)
                 self.save()
             if j.get("stop_lost") and self.find_stop(amt, orders):
@@ -2346,9 +2458,13 @@ class V6Engine:
                 elif (prot and (prot["close_position"] or prot is mine) and o["reduce_only"] and (o["type"] or "").startswith("STOP")
                       and (not o["close_position"] or prot is mine) and str(o["client_id"]).startswith(self.cfg.cid_prefix)):
                     self._cancel_quiet(sym, o)                   # leftover pre-arm / old stop, the bot's stop is live
-            if prot and j.get("tp") and not j.get("closing"):
+            if prot and self.cfg.exit_mode == "full_tp_pct" and sym in self.st["pos"] and not j.get("closing"):
+                if self._ensure_full_tp(sym, j, orders):
+                    continue                                # already flat (price was through the TP)
+            elif prot and j.get("tp") and not j.get("closing"):
                 self._manage_tps(sym, j, amt, orders, mk)
-            if prot and self.cfg.trail_atr_k and sym in self.st["pos"] and not self.st["pos"][sym].get("closing"):
+            if (prot and self.cfg.exit_mode != "full_tp_pct" and self.cfg.trail_atr_k
+                    and sym in self.st["pos"] and not self.st["pos"][sym].get("closing")):
                 self._trail(sym, self.st["pos"][sym], amt, mk)
         if mismatch:
             self._consistent = 0
