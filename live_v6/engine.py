@@ -231,6 +231,8 @@ class V6Engine:
         self._tp_unknown: set = set()                       # book unreadable: TP not placed, alerted once until known
         self._book_down_since: dict = {}                    # sym → first unreadable open-order read (60s before the alert)
         self._tp_fail_alerted: set = set()                  # coins already told that a take-profit was rejected
+        self._dup_unknown: set = set()                      # (sym, what) already alerted for an unreadable -4116
+        self._dup_retry_at: dict = {}                       # (sym, what) → earliest clock() to look at that -4116 again
         inner = getattr(ex, "inner", ex)
         if hasattr(inner, "on_rate_limit"):
             inner.on_rate_limit = self._on_rate_limit
@@ -1316,16 +1318,127 @@ class V6Engine:
         return "same"
 
     def _cid_state(self, sym, cid) -> str:
-        """'yes' | 'no' | 'unknown'. An unreadable or empty book is not proof the order is absent."""
+        """'yes' the id is on the open book. 'filled' or 'terminal' (cancelled / expired)
+        from the algo status. 'unknown' when that read fails or the book is the empty
+        hold snapshot. 'no' only when a successful read shows neither a live nor a finished order."""
         try:
             oo = self.x("open_orders", sym)
         except ExchangeError:
             return "unknown"
         if any(o.get("client_id") == cid for o in oo):
             return "yes"
-        if not oo and sym in self._cp_hold:
-            return "unknown"                            # the hold's empty snapshot can hide a live order
-        return "no"
+        empty_hold = not oo and sym in self._cp_hold
+        try:
+            st = self.x("algo_order", sym, cid)
+        except ExchangeError:
+            return "unknown"
+        if not isinstance(st, dict):
+            return "no"                                 # this id was never placed, even if the hold book is empty
+        status = str(st.get("status") or "").upper()
+        executed = D(st.get("executed_qty") or 0)
+        if status in {"FILLED", "FINISHED"}:
+            return "filled" if executed > 0 else "terminal"
+        if status in {"CANCELED", "CANCELLED", "EXPIRED", "REJECTED"}:
+            return "terminal"
+        if empty_hold:
+            return "unknown"                            # a record exists; the empty snapshot can hide it
+        return "no"                                     # NEW but not on a real book: the working order is gone
+
+    def _tp_cid(self, j, which) -> str:
+        """Client id of the take-profit we currently mean. A replaced id wins over the original."""
+        stored = (j.get("tp_cids") or {}).get(which)
+        return str(stored or f"{j['cid']}{which}")
+
+    def _tp_fill_cids(self, j, which) -> list:
+        base = f"{j['cid']}{which}"
+        live = self._tp_cid(j, which)
+        return [live] if live == base else [live, base]
+
+    def _dup_paused(self, sym, what) -> bool:
+        return self.clock() < self._dup_retry_at.get((sym, str(what)), 0)
+
+    def _note_dup_unknown(self, sym, what):
+        """-4116 but the book cannot say whether that id is still live. One alert, no close,
+        and the next look is the 1-minute reconcile, not the next 5s tick."""
+        key = (sym, str(what))
+        self._dup_retry_at[key] = self.clock() + PROTECT_AUDIT_S
+        if key in self._dup_unknown:
+            return
+        self._dup_unknown.add(key)
+        self.alert(f"보호 점검 보류 — {sym}", f"{what} · -4116 주문 상태 불명 · 유지")
+
+    def _clear_dup_unknown(self, sym, what):
+        key = (sym, str(what))
+        self._dup_unknown.discard(key)
+        self._dup_retry_at.pop(key, None)
+
+    def _note_filled_tp(self, sym, j, what):
+        """The take-profit client id already filled. Book it; do not send another."""
+        which = str(what).split()[-1]
+        if which == "t1" and not j.get("tp1_done"):
+            try:
+                amt = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+            except ExchangeError:
+                amt = None
+            if amt not in (None, 0):
+                j.update(tp1_done=True, qty=str(abs(amt)))
+            else:
+                j["tp1_done"] = True
+            self.save()
+            return
+        if which == "t2" and not j.get("tp2_done"):
+            j["tp2_done"] = True
+            self.save()
+            return
+        if which == "t3" and not j.get("tp3_done"):
+            j["tp3_done"] = True
+            if not j.get("exit_fill"):
+                j["exit_fill"] = "take_profit"
+            self.save()
+
+    def _spent_is_unbooked_fill(self, sym, j, which) -> bool:
+        """The tranche id is gone and the position is already smaller than that order's size.
+        The journal qty was synced, so the shrink-as-fill checks do not see it."""
+        tp = j.get("tp") or {}
+        try:
+            amt = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+        except ExchangeError:
+            return False
+        if amt in (None, 0):
+            return False
+        amt = abs(amt)
+        if which == "t1" and not j.get("tp1_done"):
+            entry = D(j.get("entry_qty") or 0)
+            return entry > 0 and amt < entry
+        if which == "t2" and not j.get("tp2_done"):
+            covered = D(tp.get("q2") or 0)
+            return covered > 0 and amt < covered
+        if which == "t3" and not j.get("tp3_done"):
+            covered = D(tp.get("q3") or 0)
+            return covered > 0 and amt < covered
+        return False
+
+    def _bump_tp_cid(self, j, which) -> str:
+        """Next take-profit client id. The spent `{cid}t1` / `t2` / `t3` is not sent again."""
+        n = int((j.get("tp_try") or {}).get(which, 0)) + 1
+        j.setdefault("tp_try", {})[which] = n
+        new = f"{j['cid']}{which}x{n}"
+        j.setdefault("tp_cids", {})[which] = new
+        self.save()
+        return new
+
+    def _mint_stop(self, sym, j):
+        """Next stop client id, the same bump every other re-place uses."""
+        seq = int(j.get("stop_seq", 0))
+        j["stop_seq"] = seq + 1
+        cid = f"{j['cid']}s{seq}"
+        j["stop_cid"] = cid
+        self.save()
+
+        def place(cid=cid):
+            self.x("stop", sym, self._cs(j), D(j["stop_px"]), cid)
+
+        return cid, place
 
     def _stop_covers(self, sym, j) -> str:
         """'yes' | 'no' | 'unknown' from a fresh per-symbol open-order read."""
@@ -1355,12 +1468,17 @@ class V6Engine:
         self._protect_close_failed = not bool(self.close(sym, "protection_failed"))
         return False
 
-    def _arm_protection(self, sym, j, what, cid, place) -> bool:
+    def _arm_protection(self, sym, j, what, cid, place, renew=None) -> bool:
         """Place `place()`. On failure alert and retry at 1s, 3s, 10s. Still failing → reduceOnly market close + 🚨.
-        WouldTrigger propagates so the caller can close just the qty that is already through. A live order with
-        `cid` (lost response) is success, not another send. -4130 means a closePosition stop is already there.
-        A position that shrinks or disappears between tries is left for the next reconcile. An unreadable book
-        or position is unknown: stop, and do not flatten."""
+        WouldTrigger propagates so the caller can close just the qty that is already through. -4116 is success only
+        when that client id is still on the open book. A cancelled or expired id is not placed: `renew` mints the
+        next id and the remaining attempts send it. A filled take-profit is booked, not sent again. An unreadable
+        book keeps the position and is re-checked on the next 1-minute pass. -4130 means a closePosition stop is
+        already there. A position that shrinks or disappears between tries is left for the next reconcile.
+        An unreadable position is unknown: stop, and do not flatten. A take-profit is never a reason to close."""
+        if self._dup_paused(sym, what):
+            return False
+        cur_cid, cur_place = cid, place
         self._protect_close_failed = False
         baseline = abs(D(j.get("qty") or 0))
         last = None
@@ -1375,14 +1493,33 @@ class V6Engine:
                     continue
                 return False
             try:
-                place()
+                cur_place()
+                self._clear_dup_unknown(sym, what)
                 return True
             except WouldTrigger:
                 raise
             except OrderRejected as e:
-                if getattr(e, "code", None) == -4116:
-                    return True                             # duplicate client id: this order is already live
-                if getattr(e, "code", None) == -4130:
+                code = getattr(e, "code", None)
+                if code == -4116:
+                    state = self._cid_state(sym, cur_cid)
+                    which = str(what).split()[-1] if str(what).startswith("익절") else ""
+                    if state == "yes":
+                        self._clear_dup_unknown(sym, what)
+                        return True                     # this id is on the book: do not send it again
+                    if state == "unknown":
+                        self._note_dup_unknown(sym, what)   # unreadable: not placed, no close, one alert
+                        return False
+                    if which and self._spent_is_unbooked_fill(sym, j, which):
+                        self._note_filled_tp(sym, j, what)
+                        self._clear_dup_unknown(sym, what)
+                        return True                     # fill already in the position: do not send it again
+                    if renew is not None and state in {"terminal", "filled", "no"}:
+                        cur_cid, cur_place = renew()    # spent id: next client id, same attempt budget
+                        last = e
+                    else:
+                        self._note_dup_unknown(sym, what)
+                        return False
+                elif code == -4130:
                     cover = self._stop_covers(sym, j)
                     if cover == "yes":
                         self._release_cp_hold(sym)          # book shows the stop: a later hold may alert again
@@ -1393,16 +1530,17 @@ class V6Engine:
                         self.alert(f"보호 점검 보류 — {sym}", f"{what} · -4130 손절 존재 · 조회와 불일치 · 유지")
                     self._note_cp_hold(sym)
                     return False
-                last = e
-                state = self._cid_state(sym, cid)
-                if state == "yes":
-                    return True
-                if state == "unknown":
-                    self.alert(f"보호 주문 실패 — {sym} 청산 보류", f"{what} · 주문 조회 불가 · 유지 · {e}")
-                    return False
+                else:
+                    last = e
+                    state = self._cid_state(sym, cur_cid)
+                    if state == "yes":
+                        return True
+                    if state == "unknown":
+                        self.alert(f"보호 주문 실패 — {sym} 청산 보류", f"{what} · 주문 조회 불가 · 유지 · {e}")
+                        return False
             except ExchangeError as e:
                 last = e
-                state = self._cid_state(sym, cid)
+                state = self._cid_state(sym, cur_cid)
                 if state == "yes":
                     return True
                 if state == "unknown":
@@ -1420,42 +1558,67 @@ class V6Engine:
 
     def _arm_stop(self, sym, j, amt) -> bool:
         """One closePosition STOP at the journal stop. False → the position was closed or the read stayed unknown."""
-        seq = int(j.get("stop_seq", 0))
-        j["stop_seq"] = seq + 1
-        self.save()
-        cid = f"{j['cid']}s{seq}"
-        px = D(j["stop_px"])
-
-        def place():
-            self.x("stop", sym, self._cs(j), px, cid)
-
+        if self._dup_paused(sym, "손절"):
+            return False
+        cid, place = self._mint_stop(sym, j)
         try:
-            return self._arm_protection(sym, j, "손절", cid, place)
+            return self._arm_protection(sym, j, "손절", cid, place, renew=lambda: self._mint_stop(sym, j))
         except WouldTrigger:
-            log.error("%s stop %s would trigger — market close", sym, px)
-            self._give_up_protection(sym, j, f"손절 {px} 즉시 발동", "would trigger")
+            log.error("%s stop %s would trigger — market close", sym, D(j["stop_px"]))
+            self._give_up_protection(sym, j, f"손절 {j['stop_px']} 즉시 발동", "would trigger")
             return False
 
     def _place_tp(self, sym, j, which, px, qty, working_type="CONTRACT_PRICE") -> bool:
-        """reduceOnly TAKE_PROFIT_MARKET. Price already beyond it → reduceOnly market for that qty. TP1 and TP2 stay
+        """reduceOnly TAKE_PROFIT_MARKET. Price already beyond it → one alert, no market close. TP1 and TP2 stay
         on CONTRACT_PRICE (TA 2026-11-02). The +3R runner (which='t3') is MARK_PRICE. A failed placement is retried
-        (policy v1), never logged and left missing. A live order with this client id is left as-is."""
-        cid = f"{j['cid']}{which}"
+        (policy v1). A live order with this client id is left as-is. A cancelled id is sent again under the next id."""
+        what = f"익절 {which}"
+        if self._dup_paused(sym, what):
+            return False
+        if (which == "t1" and j.get("tp1_done")) or (which == "t2" and j.get("tp2_done")) \
+                or (which == "t3" and j.get("tp3_done")):
+            return True
         rules = self.rules[sym]
         s = int(j.get("side", 1))
         px = rules.price(D(px), "up" if s > 0 else "down")
         qty = rules.floor_qty(D(qty))
         if qty <= 0:
-            self._tp_fail_once(sym, f"익절 {which}", "수량 0")
+            self._tp_fail_once(sym, what, "수량 0")
             return False
+        cid = self._tp_cid(j, which)
+        state = self._cid_state(sym, cid)
+        if state == "yes":
+            self._clear_dup_unknown(sym, what)
+            return True                                 # already working: the tick does not POST
+        if state == "unknown":
+            try:                                        # a failed read alerts once; a hidden hold order does not
+                self.x("open_orders", sym)
+                self.x("algo_order", sym, cid)
+            except ExchangeError:
+                self._note_dup_unknown(sym, what)       # not placed, no close
+            return False
+        if state in {"terminal", "filled"} and self._spent_is_unbooked_fill(sym, j, which):
+            self._note_filled_tp(sym, j, what)
+            self._clear_dup_unknown(sym, what)
+            return True                                 # booked fill: no second order of this tranche
+        if state in {"terminal", "filled"}:
+            cid = self._bump_tp_cid(j, which)           # cancelled / expired: one POST under a new id
 
-        def place():
+        def place(cid=cid):
             self.x("take_profit", sym, self._cs(j), px, cid, qty, working_type=working_type)
 
+        def renew():
+            new = self._bump_tp_cid(j, which)
+
+            def place_new(cid=new):
+                self.x("take_profit", sym, self._cs(j), px, cid, qty, working_type=working_type)
+
+            return new, place_new
+
         try:
-            return self._arm_protection(sym, j, f"익절 {which}", cid, place)
+            return self._arm_protection(sym, j, what, cid, place, renew=renew)
         except WouldTrigger:
-            self._tp_fail_once(sym, f"익절 {which}", "즉시 발동")
+            self._tp_fail_once(sym, what, "즉시 발동")
             return False
 
     def _arm_unsplittable(self, sym, j):
@@ -1507,7 +1670,7 @@ class V6Engine:
         self._bind_runner(sym, j, amt)
         tp, cids = j["tp"], {o["client_id"] for o in orders}
         for w, k in (("t1", "tp1"), ("t2", "tp2"), ("t3", "tp3")):  # a TP missing from open orders most likely just fired:
-            if (tp.get(k) and f"{j['cid']}{w}" not in cids        # `amt` / `mk` may predate it -> fresh position read
+            if (tp.get(k) and self._tp_cid(j, w) not in cids      # `amt` / `mk` may predate it -> fresh position read
                     and not (w == "t1" and j.get("tp1_done"))):     # first (testnet LINK + PEPE 2026-10-30: re-place ->
                 try:                                                 # -2021 -> a 2nd market TP1 closed the remainder)
                     fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
@@ -1522,12 +1685,12 @@ class V6Engine:
             if j.get("tp1_done") and tp.get("tp1") and not j.get("be_done") and self._position_open(sym):
                 self._move_stop_be(sym, j, amt, orders, mk)
             return
-        if not j.get("tp1_done") and f"{j['cid']}t1" not in cids and tp.get("tp1"):
+        if not j.get("tp1_done") and self._tp_cid(j, "t1") not in cids and tp.get("tp1"):
             self._place_tp(sym, j, "t1", D(tp["tp1"]), D(tp["q1"]))
             if not self._position_open(sym):
                 return
         if tp.get("tp2") and not self.cfg.tp2_r:                   # adopted pre-E position: TP2 cancelled (E has none)
-            o2 = next((o for o in orders if o["client_id"] == f"{j['cid']}t2"), None)
+            o2 = next((o for o in orders if o["client_id"] == self._tp_cid(j, "t2")), None)
             try:
                 if o2 is not None:
                     self.x("cancel", sym, o2)
@@ -1536,11 +1699,13 @@ class V6Engine:
                 log.info("%s TP2 %s (E: no TP2, trailing SL)", sym, "cancelled" if o2 else "dropped (not open)")
             except ExchangeError as e:
                 log.error("%s TP2 cancel failed (retried next reconcile): %s", sym, e)
-        elif tp.get("tp2") and f"{j['cid']}t2" not in cids and self._position_open(sym):
+        elif tp.get("tp2") and not j.get("tp2_done") and self._tp_cid(j, "t2") not in cids and self._position_open(sym):
             self._place_tp(sym, j, "t2", D(tp["tp2"]), abs(amt) if j.get("tp1_done") else D(tp["q2"]))
             if not self._position_open(sym):
                 return
-        if self._runner_due(j) and tp.get("tp3") and f"{j['cid']}t3" not in cids and self._position_open(sym):
+        self._bind_runner(sym, j, amt)                      # TP1 may have been booked earlier in this pass
+        if self._runner_due(j) and not j.get("tp3_done") and tp.get("tp3") and self._tp_cid(j, "t3") not in cids \
+                and self._position_open(sym):
             self._place_tp(sym, j, "t3", D(tp["tp3"]), abs(amt), working_type="MARK_PRICE")
             if not self._position_open(sym):
                 return
@@ -1566,11 +1731,11 @@ class V6Engine:
             cand.update({c: "stop" for c in cids})
         if j.get("tp"):
             if j["tp"].get("tp1") and not j.get("tp1_done"):
-                cand[f"{cid}t1"] = "tp1"
+                cand.update({c: "tp1" for c in self._tp_fill_cids(j, "t1")})
             if j["tp"].get("tp2"):
-                cand[f"{cid}t2"] = "tp2"
+                cand.update({c: "tp2" for c in self._tp_fill_cids(j, "t2")})
             if j["tp"].get("tp3") and self._runner_due(j):
-                cand[f"{cid}t3"] = "tp3"
+                cand.update({c: "tp3" for c in self._tp_fill_cids(j, "t3")})
         cand = {c: k for c, k in cand.items() if c not in open_}
         if not cand:
             return None
@@ -1885,6 +2050,8 @@ class V6Engine:
         self._tp_unknown.discard(sym)
         self._book_down_since.pop(sym, None)
         self._tp_fail_alerted.discard(sym)
+        self._dup_unknown = {k for k in self._dup_unknown if k[0] != sym}
+        self._dup_retry_at = {k: v for k, v in self._dup_retry_at.items() if k[0] != sym}
 
     def _hold_should_rearm(self, sym, orders) -> bool:
         """A failed read never reaches here. A successful book that shows other orders
@@ -2253,6 +2420,9 @@ class V6Engine:
             cids.append(f"{cid}t2")
         if tp.get("tp3"):
             cids.append(f"{cid}t3")
+        for extra in (j.get("tp_cids") or {}).values():
+            if extra and str(extra) not in cids:
+                cids.append(str(extra))
         cids += [f"{cid}s{i}" for i in range(int(j.get("stop_seq") or 0))]
         cids += [f"{cid}x{i}" for i in range(int(j.get("exit_seq") or 0))]
         for c in cids:
@@ -2650,7 +2820,7 @@ class V6Engine:
             if (amt > 0) != (int(j.get("side", 1)) > 0):
                 mismatch.append(f"{sym} 방향 불일치 로컬 {j.get('side', 1)} / 거래소 {amt}")
             if filled is None and j.get("tp") and not j.get("tp1_done") and abs(amt) < D(j["qty"]) and not any(
-                    o["client_id"] == f"{j['cid']}t1" for o in orders):   # fallback only: order status unreadable
+                    o["client_id"] in set(self._tp_fill_cids(j, "t1")) for o in orders):  # fallback: status unreadable
                 j.update(tp1_done=True, qty=str(abs(amt)))  # TP1 filled (partial close) — expected, not a mismatch
                 self.save()
                 self.notify(f"🔵 {sym} TP1 체결 → 남은 수량 {abs(amt)} · 손절을 본절로 이동", kind="exit")
@@ -2834,15 +3004,15 @@ class V6Engine:
 
     def _tp_repairs(self, j, amt, orders):
         """Missing take-profits the audit must put back. Legacy restores t2 (+2R). Scheme E restores the +3R runner."""
-        tp, cid = j.get("tp") or {}, j.get("cid") or ""
+        tp = j.get("tp") or {}
         have = {o.get("client_id") for o in orders}
         out = []
-        if tp.get("tp1") and not j.get("tp1_done") and f"{cid}t1" not in have:
+        if tp.get("tp1") and not j.get("tp1_done") and self._tp_cid(j, "t1") not in have:
             out.append(("t1", D(tp["tp1"]), D(tp["q1"]), "CONTRACT_PRICE"))
-        if tp.get("tp2") and self.cfg.tp2_r and f"{cid}t2" not in have:
+        if tp.get("tp2") and not j.get("tp2_done") and self.cfg.tp2_r and self._tp_cid(j, "t2") not in have:
             qty = abs(amt) if j.get("tp1_done") else D(tp.get("q2") or abs(amt))
             out.append(("t2", D(tp["tp2"]), qty, "CONTRACT_PRICE"))
-        if self._runner_due(j) and tp.get("tp3") and f"{cid}t3" not in have:
+        if self._runner_due(j) and not j.get("tp3_done") and tp.get("tp3") and self._tp_cid(j, "t3") not in have:
             out.append(("t3", D(tp["tp3"]), abs(amt), "MARK_PRICE"))
         return out
 
