@@ -295,20 +295,8 @@ def test_m8_1_filled_short_of_target_can_be_replaced(offline, side):
     assert _covered(offline)
 
 
-KINDS = ("zero", "partial", "full", "reject", "unknown", "restart_mid", "legacy",
-         "legacy_lag", "legacy_partial", "no_entry")
-
-
-def _inv(offline, base, entry, q1, seed, side, tag):
-    if _sold(offline) > entry:
-        return f"seed {seed} side {side} {tag}: sold {_sold(offline)} > entry {entry}"
-    sold = _stage_exec(offline, base, "t1", q1)
-    if sold > q1:
-        return f"seed {seed} side {side} {tag}: t1 sold {sold} > {q1}"
-    if not _covered(offline):
-        return f"seed {seed} side {side} {tag}: stop does not cover {offline.amt(DOGE)}"
-    j = offline  # placeholder replaced below
-    return None
+KINDS = ("zero", "partial", "full", "reject", "unknown", "restart_mid",
+         "old_format", "bare_qty", "orphan_pos", "orphan_order")
 
 
 def _property_script(offline, side, seed):
@@ -318,7 +306,7 @@ def _property_script(offline, side, seed):
     rng = random.Random(seed)
     kind = KINDS[seed % len(KINDS)]
     info = {"kind": kind, "reject_used": 0, "unknown_used": 0, "restart_mid": 0,
-            "ticks": 0, "rest_checked": 0, "live_market_restart": 0}
+            "ticks": 0, "rest_checked": 0, "live_market_restart": 0, "ledger_reread": 0}
     eng = engine_for(offline, "e")
     open_pos(offline, eng, side)
     j = eng.st["pos"][DOGE]
@@ -405,88 +393,124 @@ def _property_script(offline, side, seed):
         eng.clock.off += 1
         err = tick("unknown-2")
         return err, info
-    if kind == "legacy":
-        _end(offline, t1, D(0), "CANCELED")
-        filled = D(8000)
-        _shrink(offline, side, filled)
-        cid = f"{base}x0"
-        offline.inner.orders[cid] = {
-            "id": "leg", "client_id": cid, "status": "PARTIALLY_FILLED", "executed_qty": filled,
-            "orig_qty": q1, "symbol": DOGE, "reduce_only": True,
-        }
-        j["tp_got"] = {"t1": str(filled)}
-        j["tp_market_once"] = {"t1": {"cid": cid, "before": str(entry), "accepted": True}}
-        j.pop("tp_ledger", None)
-        eng.save()
-        eng = e_engine(offline, eng.clock)
-        eng.cfg.trail_atr_k = 0
-        _sleeps(eng)
-        info["restart_mid"] += 1
-        err = check("legacy-reload")
-        if err:
-            return err, info
-        offline.inner.orders[cid]["status"] = "EXPIRED"
-        _at_entry(offline, eng)
-        err = tick("legacy-expire")
-        return err, info
-    if kind in ("legacy_lag", "legacy_partial"):
-        cancelled = D(100) if kind == "legacy_partial" else D(0)
-        cached, filled = (D(8000), D(8000)) if kind == "legacy_partial" else (D(7000), D(8000))
-        _end(offline, t1, cancelled, "CANCELED")
-        _shrink(offline, side, cancelled + filled)
-        cid = f"{base}x0"
-        offline.inner.orders[cid] = {
-            "id": "lag", "client_id": cid, "status": "PARTIALLY_FILLED", "executed_qty": filled,
-            "orig_qty": q1, "symbol": DOGE, "reduce_only": True,
-        }
-        j["tp_got"] = {"t1": str(cached)}
-        j["tp_market_once"] = {"t1": {"cid": cid, "before": str(entry), "accepted": True}}
-        j.pop("tp_ledger", None)
-        eng.save()
-        eng = e_engine(offline, eng.clock)
-        eng.cfg.trail_atr_k = 0
-        _sleeps(eng)
-        info["restart_mid"] += 1
-        err = check("legacy-variant")
-        if err:
-            return err, info
-        offline.inner.orders[cid]["status"] = "EXPIRED"
-        _at_entry(offline, eng)
-        err = tick("legacy-variant-expire")
-        return err, info
-    if kind == "no_entry":
-        j.pop("entry_qty", None)
-        _end(offline, t1, D(0), "CANCELED")
-        _shrink(offline, side, q1)
-        eng.save()
-        _at_entry(offline, eng)
-        err = tick("no-entry")
-        if err:
-            return err, info
-        eng.clock.off += 1
-        err = tick("no-entry-2")
-        return err, info
     if kind == "restart_mid":
         partial = D(100)
         _end(offline, t1, partial, "CANCELED")
-        _shrink(offline, side, partial + D(50))
+        _shrink(offline, side, partial)
+        _at_entry(offline, eng)
+        err = tick("restart-book")
+        if err:
+            return err, info
         cid = f"{base}x0"
         offline.inner.orders[cid] = {
             "id": "rm", "client_id": cid, "status": "PARTIALLY_FILLED", "executed_qty": D(50),
             "orig_qty": q1, "symbol": DOGE, "reduce_only": True,
         }
+        j = eng.st["pos"][DOGE]
+        book = j.setdefault("tp_ledger", {}).setdefault("t1", {"cids": [], "sum": "0"})
+        book["cids"].append({"cid": cid, "executed": "50"})
+        book["sum"] = str(_ledger_sum(j, "t1") + D(50))
         j["tp_market_once"] = {"t1": {"cid": cid, "before": str(entry), "accepted": True}}
+        saved = _ledger_sum(j, "t1")
         eng.save()
         eng = e_engine(offline, eng.clock)
         eng.cfg.trail_atr_k = 0
         _sleeps(eng)
         info["restart_mid"] += 1
         info["live_market_restart"] += 1
+        info["ledger_reread"] += 1
+        if _ledger_sum(eng.st["pos"][DOGE], "t1") != saved:
+            return (f"seed {seed} side {side}: ledger {_ledger_sum(eng.st['pos'][DOGE], 't1')} "
+                    f"was not re-read (saved {saved})"), info
         err = check("restart-live-market")
         if err:
             return err, info
         err = tick("restart-still-live")
         return err, info
+    if kind == "old_format":
+        _end(offline, t1, D(100), "CANCELED")
+        _shrink(offline, side, D(8100))
+        cid = f"{base}x0"
+        offline.inner.orders[cid] = {
+            "id": "old", "client_id": cid, "status": "PARTIALLY_FILLED", "executed_qty": D(8000),
+            "orig_qty": q1, "symbol": DOGE, "reduce_only": True,
+        }
+        j["tp_ledger"] = {"t1": {"cids": [
+            {"cid": base + "t1:legacy", "executed": "8000"},
+            {"cid": base + "t1", "executed": "100"},
+            {"cid": cid, "executed": "8000"},
+        ], "sum": "16100"}}
+        j["tp_got"] = {"t1": "8000"}
+        j["tp_market_once"] = {"t1": {"cid": cid, "before": str(entry), "accepted": True}}
+        j["tp1_done"] = False
+        eng.st.pop("schema", None)
+        eng.save()
+        eng = e_engine(offline, eng.clock)
+        eng.cfg.trail_atr_k = 0
+        _sleeps(eng)
+        info["ticks"] += 1
+        if not eng.meta.get("halted"):
+            return f"seed {seed} side {side}: old doubled ledger was loaded", info
+        if eng.st["pos"][DOGE].get("tp1_done"):
+            return f"seed {seed} side {side}: old ledger booked tp1", info
+        offline.inner.orders[cid]["status"] = "EXPIRED"
+        _at_entry(offline, eng)
+        eng.tick()
+        if offline.amt(DOGE) == 0:
+            return f"seed {seed} side {side}: old ledger flattened the position", info
+        if not _covered(offline):
+            return f"seed {seed} side {side}: stop missing after refuse", info
+        return None, info
+    if kind == "bare_qty":
+        j.pop("entry_qty", None)
+        j["qty"] = str(q1)
+        _end(offline, t1, D(0), "CANCELED")
+        _shrink(offline, side, q1)
+        eng.st.pop("schema", None)
+        eng.save()
+        eng = e_engine(offline, eng.clock)
+        eng.cfg.trail_atr_k = 0
+        _sleeps(eng)
+        info["ticks"] += 1
+        if not eng.meta.get("halted"):
+            return f"seed {seed} side {side}: reduced qty was frozen as the opened size", info
+        if _live_tp(offline, "t1"):
+            return f"seed {seed} side {side}: rested a take-profit on an unproved size", info
+        if offline.amt(DOGE) != (entry - q1) * side:
+            return f"seed {seed} side {side}: position moved", info
+        if not _covered(offline):
+            return f"seed {seed} side {side}: stop missing", info
+        return None, info
+    if kind == "orphan_pos":
+        eng.st["pos"].pop(DOGE, None)
+        eng.st.pop("schema", None)
+        eng.save()
+        eng = e_engine(offline, eng.clock)
+        info["ticks"] += 1
+        if not eng.meta.get("halted"):
+            return f"seed {seed} side {side}: exchange position with no current state was traded", info
+        if not _covered(offline):
+            return f"seed {seed} side {side}: orphan position lost its stop", info
+        if _live_tp(offline, "t1") and eng.st.get("schema") == 2 and DOGE in eng.st["pos"]:
+            return f"seed {seed} side {side}: fresh journal placed a take-profit", info
+        return None, info
+    if kind == "orphan_order":
+        offline.inner.pos.pop(DOGE, None)
+        offline.inner.algos["left"] = {
+            "id": "left", "client_id": base + "left", "symbol": DOGE, "type": "LIMIT",
+            "side": "BUY" if side > 0 else "SELL", "close_position": False, "reduce_only": False,
+            "qty": D(1), "stop_price": D(0), "status": "NEW",
+        }
+        eng.st["pos"].pop(DOGE, None)
+        eng.st.pop("schema", None)
+        eng.save()
+        eng = e_engine(offline, eng.clock)
+        info["ticks"] += 1
+        if not eng.meta.get("halted"):
+            return f"seed {seed} side {side}: an open order was treated as flat", info
+        if eng.st.get("schema") == 2 and not eng.meta.get("halted"):
+            return f"seed {seed} side {side}: fresh ledger started over an open order", info
+        return None, info
     partial = D(rng.choice([10, 100, 500, 8000]))
     status = rng.choice(["CANCELED", "EXPIRED", "FINISHED"])
     _end(offline, t1, partial, status)
@@ -514,6 +538,7 @@ def _run_seeds(tmp_path, side, seeds):
         counts["ticks"] += info["ticks"]
         counts["rest_checked"] += info["rest_checked"]
         counts["live_market_restart"] += info["live_market_restart"]
+        counts["ledger_reread"] += info["ledger_reread"]
         if reason:
             failed.append((seed, reason))
     return failed, counts
@@ -537,6 +562,7 @@ def test_ledger_invariants_1000(tmp_path, side):
     assert counts["unknown_used"] >= 100
     assert counts["restart_mid"] >= 100
     assert counts["live_market_restart"] >= 100
+    assert counts["ledger_reread"] >= 100
     assert counts["rest_checked"] >= 100
     assert counts["ticks"] >= 1000
     assert failed == [], failed[:8]
@@ -551,4 +577,5 @@ def test_ledger_invariants_alt_1000(tmp_path, side):
         assert counts[kind] >= 100, counts
     assert counts["reject_used"] >= 100 and counts["unknown_used"] >= 100
     assert counts["live_market_restart"] >= 100 and counts["rest_checked"] >= 100
+    assert counts["ledger_reread"] >= 100
     assert failed == [], failed[:8]
