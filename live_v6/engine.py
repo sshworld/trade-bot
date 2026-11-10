@@ -742,10 +742,30 @@ class V6Engine:
         self.close(sym, "stop_breach")                      # §8c L1: only THAT position (reduceOnly MARKET)
 
     # ───────────────────────── entry ─────────────────────────
+    def _snapshot_missing(self, pos) -> list[str]:
+        """Requested symbols with no row. An incomplete book is not a book the entry limits can trust."""
+        if not isinstance(pos, dict):
+            return list(self.cfg.symbols)
+        return [s for s in self.cfg.symbols if self._row_amt(pos, s) is None]
+
+    def _entry_reread(self, sym, pos, lev, echoed, *, after_set: bool):
+        """'' when this re-read is a complete book and leverage checks out. A missing row is a skip reason, not a KeyError.
+        `after_set` is the path that just called set_leverage: a missing echo is not a confirmed change."""
+        missing = self._snapshot_missing(pos)
+        if missing:
+            return "snapshot missing " + ",".join(missing)
+        row = pos.get(sym) if isinstance(pos, dict) else None
+        if not isinstance(row, dict):
+            return f"{sym} missing from positions"
+        got = row.get("leverage")
+        if after_set:
+            return self._confirm_leverage(sym, lev, echoed, got)
+        return "" if got == lev else f"read-back {got}x"
+
     def _open_book(self, positions) -> list[dict]:
         out = []
         for s, p in positions.items():
-            if p["amt"] != 0:
+            if isinstance(p, dict) and p.get("amt") not in (None, 0):
                 j = self.st["pos"].get(s) or self.st["unknown"].get(s) or {}   # TA R4: unknown positions count too
                 out.append({"sym": s, "side": 1 if p["amt"] > 0 else -1,
                             "risk_frac": float(j.get("risk_frac", self.cfg.sizing.risk_pct / 100 * 2))})  # not yet seen → 1%
@@ -849,6 +869,10 @@ class V6Engine:
             return False
         try:
             pos = self.x("positions", self.cfg.symbols)
+            missing = self._snapshot_missing(pos)
+            if missing:                                     # any hole: refuse every new entry this tick
+                self.skip(sym, "positions_incomplete", f"snapshot missing {','.join(missing)}")
+                return False
             amt0 = self._row_amt(pos, sym)
             if amt0 is None or amt0 != 0 or sym in self.st["pos"]:
                 log.warning("entry %s refused: position %s (no averaging)", sym, "unknown" if amt0 is None else amt0)
@@ -860,7 +884,8 @@ class V6Engine:
             for o in oo:                                    # our own leftover stops must never touch a new position
                 if str(o["client_id"]).startswith(self.cfg.cid_prefix):
                     self.x("cancel", sym, o)
-            if pos[sym]["margin_type"] != "ISOLATED" and not self.ensure_isolated(sym):
+            row0 = pos.get(sym) or {}
+            if row0.get("margin_type") != "ISOLATED" and not self.ensure_isolated(sym):
                 self.skip(sym, "margin_mode", "ISOLATED read-back failed")
                 return False
         except ExchangeError as e:
@@ -879,26 +904,33 @@ class V6Engine:
         # leverage set + read-back; the same fresh positions read is the FINAL gate right before the order:
         # no averaging, ISOLATED, max positions, total open risk ≤ 2.5% (TA: enforced at order placement)
         try:
-            if pos[sym]["leverage"] != sz.lev:              # skip the call when already set (entry latency)
+            row = pos.get(sym) if isinstance(pos, dict) else None
+            lev_now = row.get("leverage") if isinstance(row, dict) else None
+            if lev_now is None:
+                err, pos = f"{sym} missing from positions", None
+            elif lev_now != sz.lev:                         # skip the call when already set (entry latency)
                 echoed = self.x("set_leverage", sym, sz.lev)
                 pos = self.x("positions", self.cfg.symbols)
-                err = self._confirm_leverage(sym, sz.lev, echoed, pos[sym]["leverage"])
+                err = self._entry_reread(sym, pos, sz.lev, echoed, after_set=True)
             else:
                 pos = self.x("positions", self.cfg.symbols)
-                err = "" if pos[sym]["leverage"] == sz.lev else f"read-back {pos[sym]['leverage']}x"
+                err = self._entry_reread(sym, pos, sz.lev, None, after_set=False)
         except ExchangeError as e:
             err, pos = str(e)[:80], None
         if err:
-            self.skip(sym, "leverage", f"set {sz.lev}x failed: {err}")
-            self.alert(f"레버리지 {sz.lev}x 설정 실패 — 진입 건너뜀", f"{sym} {err}")
+            reason = "positions_incomplete" if str(err).startswith("snapshot missing") else "leverage"
+            self.skip(sym, reason, f"set {sz.lev}x failed: {err}" if reason == "leverage" else err)
+            if reason == "leverage":
+                self.alert(f"레버리지 {sz.lev}x 설정 실패 — 진입 건너뜀", f"{sym} {err}")
             return False
         book = self._open_book(pos) if pos else []
         placed = self._row_amt(pos, sym) if pos else None
-        if pos is None or placed is None or placed != 0:
+        row = pos.get(sym) if isinstance(pos, dict) else None
+        if pos is None or placed is None or placed != 0 or not isinstance(row, dict):
             log.warning("entry %s refused at placement: position %s", sym, "unknown" if placed is None else placed)
             return False
-        if pos[sym]["margin_type"] != "ISOLATED":
-            self.skip(sym, "margin_mode", f"read-back {pos[sym]['margin_type']}")
+        if row.get("margin_type") != "ISOLATED":
+            self.skip(sym, "margin_mode", f"read-back {row.get('margin_type')}")
             return False
         if len(book) >= self.cfg.max_positions:
             self.skip(sym, "max_positions", f"{len(book)} open")
