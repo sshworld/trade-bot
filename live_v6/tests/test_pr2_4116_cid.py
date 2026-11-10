@@ -1,26 +1,58 @@
-"""-4116 is success only when that client id is still on the open-order book.
+"""-4116 on a spent take-profit id. Offline fakes only. Long and short, t1/t2/t3.
 
-Offline fakes only. Long and short. A cancelled id must be replaced with a
-fresh one. A filled take-profit is a fill, not a second order. An unreadable
-book alerts once and does not close.
+A cancelled id is not sent again: the next tick posts one new client id and
+five ticks leave exactly one live order of that tranche. A fill the journal
+missed is booked once (t1 then moves the stop to breakeven and arms t3).
+An unreadable id is not a success and does not close; one alert.
 """
 import pytest
 from decimal import Decimal as D
 
 from live_v6.exchange import OrderRejected
-from live_v6.tests.test_protection_policy_v1 import _alerts, _closes, _sleeps, engine_for
+from live_v6.tests.test_protection_policy_v1 import _alerts, _closes, engine_for
 from live_v6.tests.test_qrmtf import DOGE, open_pos
-
-
-def _stops(b):
-    return [o for o in b.inner.open_orders(DOGE) if (o["type"] or "").startswith("STOP")]
 
 
 def _tps(b):
     return [o for o in b.inner.open_orders(DOGE) if o["type"] == "TAKE_PROFIT_MARKET"]
 
 
-def _dup(cid):
+def _stops(b):
+    return [o for o in b.inner.open_orders(DOGE) if (o["type"] or "").startswith("STOP")]
+
+
+def _posts(b, name, start):
+    return [c for c in b.fx.calls[start:] if c[0] == name]
+
+
+def _cid(call):
+    return call[1][3]
+
+
+def _ticks(eng, n=5):
+    for _ in range(n):
+        eng.tick()
+
+
+def _park(offline, eng, j, side):
+    """Mark on the profitable side of breakeven so a BE stop can rest."""
+    offline.inner.stops_fire = False
+    offline.inner.set_price(DOGE, eng._be_target(DOGE, j) + side * D("0.002"))
+    offline.inner.stops_fire = True
+
+
+def _sync_qty(offline, j, qty, side):
+    offline.inner.pos[DOGE]["amt"] = qty if side > 0 else -qty
+    j["qty"] = str(qty)
+
+
+def _spend(offline, order, executed=D(0), status="CANCELED"):
+    offline.inner.algos.pop(order["id"], None)
+    offline.inner.algo_hist[order["client_id"]] = {
+        "status": status, "executed_qty": executed, "avg_price": order["stop_price"], "order_id": "spent"}
+
+
+def _reject_cid(cid):
     def reject(fn, s, side, trigger, c, qty=None, **k):
         if c == cid:
             raise OrderRejected(-4116, "ClientOrderId is duplicated.")
@@ -29,118 +61,127 @@ def _dup(cid):
     return reject
 
 
-def _dup_any(fn, s, side, trigger, c, qty=None, **k):
-    raise OrderRejected(-4116, "ClientOrderId is duplicated.")
-
-
-@pytest.mark.parametrize("side", [1, -1])
-def test_4116_live_cid_does_not_repost(offline, side):
-    eng = engine_for(offline, "e")
-    open_pos(offline, eng, side)
+def _arm_runner(offline, eng, side):
+    """Scheme E: book TP1 by hand and let one tick place the +3R runner."""
     j = eng.st["pos"][DOGE]
-    live = next(o for o in _tps(offline) if str(o["client_id"]).endswith("t1"))
-    before = {o["id"] for o in offline.inner.algos.values() if o["symbol"] == DOGE}
-    _sleeps(eng)
-    offline.fx.inject("take_profit", _dup(live["client_id"]), times=5)
-    eng._place_tp(DOGE, j, "t1", D(j["tp"]["tp1"]), D(j["tp"]["q1"]))
-    now = {o["id"] for o in offline.inner.algos.values() if o["symbol"] == DOGE}
-    assert now == before, "a live client id was placed again"
-    assert not _closes(offline)
-
-
-@pytest.mark.parametrize("side", [1, -1])
-def test_4116_cancelled_stop_posts_a_fresh_cid(offline, side):
-    eng = engine_for(offline, "e")
-    open_pos(offline, eng, side)
-    j = eng.st["pos"][DOGE]
-    old = next(o for o in _stops(offline))
-    offline.inner.cancel(DOGE, old)
-    assert old["client_id"] not in {o["client_id"] for o in _stops(offline)}
-    # Next _arm_stop reuses this consumed id, then must bump.
-    suffix = old["client_id"][len(j["cid"]):]
-    assert suffix.startswith("s")
-    j["stop_seq"] = int(suffix[1:])
+    t1 = next(o for o in _tps(offline) if str(o["client_id"]).endswith("t1"))
+    left = D(j["tp"]["q2"])
+    _spend(offline, t1)
+    _sync_qty(offline, j, left, side)
+    j["tp1_done"] = True
     eng.save()
-    _sleeps(eng)
-    offline.fx.inject("stop", _dup(old["client_id"]), times=5)
-    eng._arm_stop(DOGE, j, offline.amt(DOGE))
-    fresh = [o for o in _stops(offline) if o["client_id"] != old["client_id"]]
-    assert fresh, "cancelled id was treated as live; no new stop"
-    assert fresh[0]["client_id"] != old["client_id"]
-    assert not _closes(offline)
-
-
-@pytest.mark.parametrize("side", [1, -1])
-def test_4116_cancelled_tp_posts_a_fresh_cid(offline, side):
-    eng = engine_for(offline, "e")
-    open_pos(offline, eng, side)
+    _park(offline, eng, j, side)
+    eng.tick()
     j = eng.st["pos"][DOGE]
-    old = next(o for o in _tps(offline) if str(o["client_id"]).endswith("t1"))
-    offline.inner.cancel(DOGE, old)
-    assert old["client_id"] not in {o["client_id"] for o in _tps(offline)}
-    _sleeps(eng)
-    offline.fx.inject("take_profit", _dup(old["client_id"]), times=5)
-    eng._place_tp(DOGE, j, "t1", D(j["tp"]["tp1"]), D(j["tp"]["q1"]))
-    fresh = [o for o in _tps(offline) if o["client_id"] != old["client_id"]]
-    assert fresh, "cancelled take-profit id was treated as live"
-    assert not _closes(offline)
+    t3 = next(o for o in _tps(offline) if "t3" in str(o["client_id"]))
+    return j, t3
 
 
 @pytest.mark.parametrize("side", [1, -1])
-def test_4116_filled_tp_is_a_fill_not_a_duplicate(offline, side):
+@pytest.mark.parametrize("which", ["t1", "t2", "t3"])
+def test_4116_cancelled_posts_one_new_cid(offline, side, which):
+    scheme = "legacy" if which == "t2" else "e"
+    eng = engine_for(offline, scheme)
+    open_pos(offline, eng, side)
+    if which == "t3":
+        j, old = _arm_runner(offline, eng, side)
+    else:
+        j = eng.st["pos"][DOGE]
+        old = next(o for o in _tps(offline) if str(o["client_id"]).endswith(which))
+    _spend(offline, old)
+    qty = offline.amt(DOGE)
+    offline.fx.inject("take_profit", _reject_cid(old["client_id"]), times=20)
+    start = len(offline.fx.calls)
+    _ticks(eng)
+    posts = _posts(offline, "take_profit", start)
+    assert [_cid(c) for c in posts].count(old["client_id"]) == 0
+    assert len(posts) == 1 and _cid(posts[0]) != old["client_id"]
+    live = [o for o in _tps(offline) if o["client_id"] == _cid(posts[0])]
+    assert len(live) == 1
+    assert not _closes(offline) and offline.amt(DOGE) == qty
+    assert _stops(offline)
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_4116_unbooked_t1_arms_be_and_t3_once(offline, side):
     eng = engine_for(offline, "e")
     open_pos(offline, eng, side)
     j = eng.st["pos"][DOGE]
     t1 = next(o for o in _tps(offline) if str(o["client_id"]).endswith("t1"))
-    q1 = D(j["tp"]["q1"])
-    offline.inner.algos.pop(t1["id"], None)
-    offline.inner.algo_hist[t1["client_id"]] = {
-        "status": "FINISHED", "executed_qty": q1, "avg_price": D(j["tp"]["tp1"]), "order_id": "fill-1"}
-    qty = offline.amt(DOGE)
-    _sleeps(eng)
-    offline.fx.inject("take_profit", _dup(t1["client_id"]), times=5)
-    eng._place_tp(DOGE, j, "t1", D(j["tp"]["tp1"]), q1)
-    assert not _tps(offline), "filled take-profit was placed again"
-    assert eng.st["pos"][DOGE].get("tp1_done")
-    assert offline.amt(DOGE) == qty and not _closes(offline)
+    _spend(offline, t1)
+    _sync_qty(offline, j, D(j["tp"]["q2"]), side)
+    eng.save()
+    _park(offline, eng, j, side)
+    assert not j.get("tp1_done")
+    offline.fx.inject("take_profit", _reject_cid(t1["client_id"]), times=20)
+    start = len(offline.fx.calls)
+    _ticks(eng)
+    j = eng.st["pos"][DOGE]
+    posts = _posts(offline, "take_profit", start)
+    stops = _posts(offline, "stop", start)
+    assert j.get("tp1_done") is True
+    assert [_cid(c) for c in posts].count(t1["client_id"]) == 0
+    assert len(posts) == 1 and "t3" in str(_cid(posts[0]))
+    assert len(stops) == 1
+    assert len(_tps(offline)) == 1 and _tps(offline)[0]["client_id"] == _cid(posts[0])
+    assert not _closes(offline)
+    assert _stops(offline)
 
 
 @pytest.mark.parametrize("side", [1, -1])
-def test_4116_unknown_book_alerts_once_and_does_not_close(offline, side):
-    eng = engine_for(offline, "e")
+@pytest.mark.parametrize("which", ["t2", "t3"])
+def test_4116_unbooked_later_tp_is_booked_once(offline, side, which):
+    scheme = "legacy" if which == "t2" else "e"
+    eng = engine_for(offline, scheme)
     open_pos(offline, eng, side)
+    if which == "t3":
+        j, old = _arm_runner(offline, eng, side)
+        covered = D(j["tp"]["q3"])
+    else:
+        j = eng.st["pos"][DOGE]
+        old = next(o for o in _tps(offline) if str(o["client_id"]).endswith("t2"))
+        covered = D(j["tp"]["q2"])
+        j["tp1_done"] = True
+        j["be_done"] = True
+    left = covered - D(1)
+    _spend(offline, old)
+    _sync_qty(offline, j, left, side)
+    eng.save()
+    offline.fx.inject("take_profit", _reject_cid(old["client_id"]), times=20)
+    start = len(offline.fx.calls)
+    _ticks(eng)
     j = eng.st["pos"][DOGE]
-    qty = offline.amt(DOGE)
-    t1 = next(o for o in _tps(offline) if str(o["client_id"]).endswith("t1"))
-    _sleeps(eng)
-    offline.fx.inject("take_profit", _dup(t1["client_id"]), times=10)
-    offline.fx.inject("open_orders", "unavailable", times=20)
-    eng._place_tp(DOGE, j, "t1", D(j["tp"]["tp1"]), D(j["tp"]["q1"]))
-    n = len([c for c in offline.fx.calls if c[0] == "take_profit"])
-    holds = [m for m in _alerts(eng) if "보류" in m and "-4116" in m and DOGE in m]
-    assert len(holds) == 1, holds
-    assert not _closes(offline) and offline.amt(DOGE) == qty
-    eng._place_tp(DOGE, j, "t1", D(j["tp"]["tp1"]), D(j["tp"]["q1"]))
-    assert len([c for c in offline.fx.calls if c[0] == "take_profit"]) == n
-    assert len([m for m in _alerts(eng) if "보류" in m and "-4116" in m and DOGE in m]) == 1
-    assert not _closes(offline)
+    posts = _posts(offline, "take_profit", start)
+    assert posts == []
+    assert j.get("tp2_done") is True if which == "t2" else j.get("tp3_done") is True
+    if which == "t3":
+        assert j.get("exit_fill") == "take_profit"
+    assert not _closes(offline) and offline.amt(DOGE) != 0
+    assert _stops(offline)
 
 
 @pytest.mark.parametrize("side", [1, -1])
-def test_4116_unknown_stop_alerts_once_and_does_not_close(offline, side):
-    eng = engine_for(offline, "e")
+@pytest.mark.parametrize("which", ["t1", "t2", "t3"])
+def test_4116_unknown_is_not_success_and_alerts_once(offline, side, which):
+    scheme = "legacy" if which == "t2" else "e"
+    eng = engine_for(offline, scheme)
     open_pos(offline, eng, side)
-    j = eng.st["pos"][DOGE]
+    if which == "t3":
+        j, old = _arm_runner(offline, eng, side)
+    else:
+        j = eng.st["pos"][DOGE]
+        old = next(o for o in _tps(offline) if str(o["client_id"]).endswith(which))
+    offline.inner.algos.pop(old["id"], None)
     qty = offline.amt(DOGE)
-    _sleeps(eng)
-    offline.fx.inject("stop", _dup_any, times=10)
-    offline.fx.inject("open_orders", "unavailable", times=20)
-    eng._arm_stop(DOGE, j, qty)
-    n = len([c for c in offline.fx.calls if c[0] == "stop"])
-    holds = [m for m in _alerts(eng) if "보류" in m and "-4116" in m and DOGE in m]
-    assert len(holds) == 1, holds
+    before = {o["id"] for o in offline.inner.algos.values()}
+    offline.fx.inject("algo_order", "unavailable", times=30)
+    offline.fx.inject("take_profit", _reject_cid(old["client_id"]), times=20)
+    start = len(offline.fx.calls)
+    alerts0 = len(_alerts(eng))
+    _ticks(eng)
+    assert _posts(offline, "take_profit", start) == []
+    assert {o["id"] for o in offline.inner.algos.values()} == before
+    holds = [m for m in _alerts(eng)[alerts0:] if "보류" in m and "-4116" in m and DOGE in m]
+    assert len(holds) == 1
     assert not _closes(offline) and offline.amt(DOGE) == qty
-    eng._arm_stop(DOGE, j, qty)
-    assert len([c for c in offline.fx.calls if c[0] == "stop"]) == n
-    assert len([m for m in _alerts(eng) if "보류" in m and "-4116" in m and DOGE in m]) == 1
-    assert not _closes(offline)
+    assert _stops(offline)
