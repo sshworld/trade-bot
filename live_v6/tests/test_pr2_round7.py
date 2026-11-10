@@ -249,6 +249,7 @@ def test_t2_5_partial_shrink_does_not_book_the_whole_stage(offline, side):
     eng.tick()
     assert eng.st["pos"][DOGE].get("tp1_done") is not True
     assert eng.st["pos"][DOGE].get("be_done") is not True
+    offline.inner.stops_fire = True
     offline.inner.set_price(DOGE, _through(j, side))
     eng.clock.off += PROTECT_AUDIT_S + 1
     eng.tick()

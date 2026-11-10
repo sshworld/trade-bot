@@ -246,7 +246,7 @@ def test_n6_dust_hold_does_not_move_be_on_a_flat_coin(offline, side):
     offline.fx.inject("open_orders", _empty_book, times=40)
     stops0 = len(_stop_posts(offline))
     eng.tick()
-    assert offline.amt(DOGE) == 0
+    assert offline.amt(DOGE) == (one if side > 0 else -one)
     assert len(_stop_posts(offline)) == stops0
 
 

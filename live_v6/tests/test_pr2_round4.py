@@ -103,16 +103,14 @@ def test_p2_below_min_notional_does_not_recurse(offline, side):
         sys.setrecursionlimit(old)
     assert len(_tp_posts(offline)) - before_tp <= 1
     assert not [o for o in offline.inner.open_orders(DOGE) if "TAKE_PROFIT" in (o["type"] or "")]
-    fills = _fills(offline)
-    assert len(_markets(offline)) == before_m + 1
-    assert len(fills) == 1 and fills[0]["reduce_only"] is True and fills[0]["orig_qty"] == D(1)
-    assert fills[0]["side"] == ("SELL" if side > 0 else "BUY")
+    assert len(_markets(offline)) == before_m
+    assert offline.amt(DOGE) == signed
     assert len(_stop_posts(offline)) == stops0
 
 
 @pytest.mark.parametrize("side", [1, -1])
 def test_p2_dust_slice_markets_the_whole_remainder(offline, side):
-    """A slice under min notional does not split and does not rest another TP."""
+    """A slice under min notional is not sold, and it does not flatten the position."""
     eng = engine_for(offline, "e")
     open_pos(offline, eng, side)
     j, _qty = _prime(offline, eng, side)
@@ -130,10 +128,8 @@ def test_p2_dust_slice_markets_the_whole_remainder(offline, side):
     eng.tick()
     assert len(_tp_posts(offline)) - before_tp <= 1
     assert not [o for o in offline.inner.open_orders(DOGE) if "TAKE_PROFIT" in (o["type"] or "")]
-    fills = _fills(offline)
-    assert len(_markets(offline)) == before_m + 1
-    assert len(fills) == 1 and fills[0]["orig_qty"] == whole and fills[0]["reduce_only"] is True
-    assert offline.amt(DOGE) == 0
+    assert len(_markets(offline)) == before_m
+    assert offline.amt(DOGE) == (whole if side > 0 else -whole)
     assert len(_stop_posts(offline)) == stops0
 
 
