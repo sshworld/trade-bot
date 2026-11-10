@@ -226,6 +226,8 @@ class V6Engine:
         self._protect_audit_at = self.clock()              # protection audit is due PROTECT_AUDIT_S after this
         self._audit_unknown: set = set()                    # coins whose audit confirm is unread; alert once until known
         self._cp_hold: set = set()                          # -4130 hold already alerted; cleared when a read shows the stop
+        self._cp_retry_at: dict = {}                        # sym → earliest clock() for another empty-book re-arm
+        self._cp_book_sig: dict = {}                        # last book we already re-armed against during the hold
         self._tp_unknown: set = set()                       # book unreadable: TP not placed, alerted once until known
         inner = getattr(ex, "inner", ex)
         if hasattr(inner, "on_rate_limit"):
@@ -1180,14 +1182,14 @@ class V6Engine:
             except OrderRejected as e:
                 if getattr(e, "code", None) == -4130:
                     saw_4130 = True
-                    self._cp_hold.add(sym)                  # same hold as a missing-stop -4130: stop POSTing
+                    self._note_cp_hold(sym)                 # same hold as a missing-stop -4130: stop POSTing
                     last = str(e)
                     log.error("%s closePosition stop attempt %d already present (-4130)", sym, i + 1)
                     try:
                         oo = self.x("open_orders", sym)
                         cp = next((o for o in oo if o["close_position"] and o["side"] == self._cs(j)), None)
                         if cp:
-                            self._cp_hold.discard(sym)
+                            self._release_cp_hold(sym)
                             j["stop_px"] = str(cp["stop_price"])
                             j.update(stop_confirmed_ms=self.now_ms(), stop_px_entry=j["stop_px"])
                             self._cancel_quiet(sym, pre)
@@ -1227,7 +1229,7 @@ class V6Engine:
             return "kept"                                  # unknown book: do not flatten a confirmed pre-arm or a landed -4130
         if self.find_stop(amt, oo) or saw_4130:
             if self.find_stop(amt, oo):
-                self._cp_hold.discard(sym)                  # a covering stop is visible: the hold may alert again
+                self._release_cp_hold(sym)                  # a covering stop is visible: the hold may alert again
             log.warning("%s keeps the protective stop %s", sym, pre["stop_price"])
             j["stop_px"] = str(pre["stop_price"])
             j.update(stop_confirmed_ms=j.get("prearm_ms"), stop_px_entry=j["stop_px"])  # live log only
@@ -1359,13 +1361,13 @@ class V6Engine:
                 if getattr(e, "code", None) == -4130:
                     cover = self._stop_covers(sym, j)
                     if cover == "yes":
-                        self._cp_hold.discard(sym)          # book shows the stop: a later hold may alert again
+                        self._release_cp_hold(sym)          # book shows the stop: a later hold may alert again
                         return True
                     # empty, wrong side, too-small qty, or an unreadable book: the exchange
                     # already said a closePosition stop exists. Do not retry into a flatten.
                     if sym not in self._cp_hold:
-                        self._cp_hold.add(sym)
                         self.alert(f"보호 점검 보류 — {sym}", f"{what} · -4130 손절 존재 · 조회와 불일치 · 유지")
+                    self._note_cp_hold(sym)
                     return False
                 last = e
                 state = self._cid_state(sym, cid)
@@ -1834,6 +1836,37 @@ class V6Engine:
             self.alert(f"청산 미완료 — 계속 재시도 ({sym})", f"사유 {reason} · 거래소 손절 유지 · {n}회째")
         return False
 
+    def _note_cp_hold(self, sym):
+        """Remember a -4130 hold. The next empty-book retry waits a minute so a live
+        closePosition is not re-POSTed every reconcile."""
+        self._cp_hold.add(sym)
+        self._cp_retry_at[sym] = self.clock() + PROTECT_AUDIT_S
+
+    def _release_cp_hold(self, sym):
+        self._cp_hold.discard(sym)
+        self._cp_retry_at.pop(sym, None)
+        self._cp_book_sig.pop(sym, None)
+
+    def _clear_symbol_holds(self, sym):
+        self._release_cp_hold(sym)
+        self._audit_unknown.discard(sym)
+        self._tp_unknown.discard(sym)
+
+    def _hold_should_rearm(self, sym, orders) -> bool:
+        """A failed read never reaches here. A successful book that shows other orders
+        and no covering stop means the stop is absent: re-arm now. A successful empty
+        list retries once a minute, not every reconcile."""
+        if sym not in self._cp_hold:
+            return False
+        sig = tuple(sorted(str(o.get("client_id") or o.get("id") or "") for o in orders))
+        due = self.clock() >= self._cp_retry_at.get(sym, 0)
+        changed = bool(orders) and sig != self._cp_book_sig.get(sym)
+        if not (changed or (not orders and due)):
+            return False
+        self._cp_book_sig[sym] = sig
+        self._cp_retry_at[sym] = self.clock() + PROTECT_AUDIT_S
+        return True
+
     def _after_flat(self, sym, reason):
         """Cancel protective orders only after the freshest position read is still 0."""
         j = self.st["pos"].get(sym)
@@ -1841,9 +1874,7 @@ class V6Engine:
             verdict, _fresh = self.record_close(sym, reason)
             if verdict != "flat":
                 return
-        self._cp_hold.discard(sym)                          # a later position on this coin must alert again
-        self._audit_unknown.discard(sym)
-        self._tp_unknown.discard(sym)
+        self._clear_symbol_holds(sym)                       # a later position on this coin must alert again
         try:
             for o in self.x("open_orders", sym):
                 if (o["close_position"] or o["reduce_only"]) and str(o["client_id"]).startswith(self.cfg.cid_prefix):
@@ -2532,9 +2563,11 @@ class V6Engine:
             if amt == 0 and j:
                 # record_close re-reads. A newer nonzero, or a failed read, replaces this snapshot: do not cancel.
                 verdict, fresh = self.record_close(sym, j.get("close_reason") or j.get("exit_fill") or "stop_loss")
-                if verdict == "open":
+                if verdict == "flat":
+                    self._clear_symbol_holds(sym)           # exchange flat does not go through _after_flat
+                elif verdict == "open":
                     amt = fresh
-                elif verdict != "flat":
+                else:
                     side = 1 if int(j.get("side", 1)) > 0 else -1
                     amt = D(j.get("qty") or 0) * side or Decimal(side)
             if amt == 0:
@@ -2601,8 +2634,12 @@ class V6Engine:
                     return
                 continue
             if not self.find_stop(amt, orders):
-                if sym not in self._cp_hold:
-                    self.alert("손절 주문 없음 — 재등록 시도", f"{sym} {amt} · 손절 {stp}")
+                rearm = sym not in self._cp_hold or self._hold_should_rearm(sym, orders)
+                if not rearm:
+                    pass                                    # hold stands: empty book is not retried every 5s
+                else:
+                    if sym not in self._cp_hold:
+                        self.alert("손절 주문 없음 — 재등록 시도", f"{sym} {amt} · 손절 {stp}")
                     if not self._arm_stop(sym, j, amt):
                         if sym not in self._cp_hold:
                             left = self.st["pos"].get(sym)
@@ -2623,7 +2660,7 @@ class V6Engine:
                         except ExchangeError:
                             continue
             else:
-                self._cp_hold.discard(sym)                  # covering stop is visible again
+                self._release_cp_hold(sym)                  # covering stop is visible again
             if self.find_stop(amt, orders) and j.get("unprotected"):
                 j.pop("unprotected", None)
                 self.save()
@@ -2732,7 +2769,11 @@ class V6Engine:
         self._audit_unknown.discard(sym)
         seen = self.find_stop(amt, orders)
         if seen:
-            self._cp_hold.discard(sym)                      # covering stop is visible: the -4130 hold may alert again
+            self._release_cp_hold(sym)                      # covering stop is visible: the -4130 hold may alert again
+        elif sym in self._cp_hold and self._hold_should_rearm(sym, orders):
+            if not self._arm_stop(sym, j, amt) or not self._position_open(sym):
+                if not self._position_open(sym) or sym not in self._cp_hold:
+                    return
         elif sym not in self._cp_hold:
             if not self._arm_stop(sym, j, amt) or not self._position_open(sym):
                 if not self._position_open(sym) or sym not in self._cp_hold:
