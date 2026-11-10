@@ -164,7 +164,7 @@ def test_xrp_alert_R_equals_record_R(offline, tmp_path):
 
 
 def test_new_journal_keeps_entry_qty_after_tp1(offline):
-    eng = exit_engine(offline)
+    eng = exit_engine(offline, exit_mode="r")
     px = D(offline.inner.price[DOGE])
     assert eng.enter(DOGE, px * Decimal("0.008"), unique_T())
     j = eng.st["pos"][DOGE]

@@ -50,24 +50,43 @@ def telegram_check(n: Notifier) -> int:
 
 
 def check_frozen(cfg: Settings) -> None:
-    """Live refuses any simultaneous-signal tie order other than the frozen README list (TA review item 1)."""
-    if tuple(cfg.entry_order) != ENTRY_ORDER:
-        raise SystemExit(f"entry_order {cfg.entry_order} != frozen ENTRY_ORDER {ENTRY_ORDER}")
+    """Live refuses any simultaneous-signal tie order other than the two TA-approved lists."""
+    from .engine import BINHV45_ENTRY_ORDER
+    if tuple(cfg.entry_order) not in (ENTRY_ORDER, BINHV45_ENTRY_ORDER):
+        raise SystemExit(f"entry_order {cfg.entry_order} is not an approved tie order")
 
 
 def live_settings(name: str, **kw) -> Settings:
-    """Live Settings per strategy. qrmtf (PM final 2026-10-30): 4 % risk, 12 % open-risk Σ, max 3 positions, margin ≤ 25 % of
-    wallet per position, 10x max, longs + shorts, TP1 +1R 50 % → SL entry ± 0.15 %, TP2 +2R, 24 h time exit."""
+    """Live Settings per strategy. qrmtf: 4 % risk, 12 % open-risk Σ, max 3 positions, margin ≤ 25 % of wallet per
+    position, 10x max, longs + shorts, one full-qty TP at entry ± 0.2 %, 24 h time exit. `exit_mode="r"` keeps the
+    older TP1/TP2 + chandelier path."""
     if name == "qrmtf":
         from .sizing import SizingParams
         sizing = SizingParams(risk_pct=4.0, max_risk_pct=5.0, portfolio_risk_cap=0.12, total_risk_cap=0.12, margin_cap=0.25,
                               max_leverage=10, size_on_stop_dist=True)   # max_risk_pct 5 % = 4 % + round-trip fee headroom
-        kw = dict(dict(sizing=sizing, max_positions=3, max_same_side=2, enable_short=True, take_profit=True, tp1_r=1.0, tp1_frac=0.5,
-                       tp2_r=None, be_offset=0.0015, be_fee=0.0005, trail_atr_k=2.0,   # TA 2026-11-04: E chandelier, no TP2
+        kw = dict(dict(sizing=sizing, max_positions=3, max_same_side=2, enable_short=True, take_profit=True,
+                       exit_mode="full_tp_pct", tp_pct=0.002,   # TA lock: one full-qty TP at entry ± 0.2%
+                       tp1_r=1.0, tp1_frac=0.5,
+                       tp2_r=None, be_offset=0.0015, be_fee=0.0005, trail_atr_k=2.0,   # used only when exit_mode="r"
                        max_hold_s=24 * 3600, bar_delay_s=3,
                        peak_dd_guard=0.80, peak_dd_init=132.88,   # TA 2026-11-03: BE entry ± 0.15 %, peak-DD entry guard
                        halt_fraction=None, daily_loss_halt=0.10, startup_leverage=10,   # user 2026-10-30: -25 % total halt removed → daily -10 %, 24 h
                        bar_stale_s=180.0), **kw)   # bar_stale 180 s: 1m cadence, 3 missed minutes → block new entries
+    elif name == "binhv45":
+        from .engine import BINHV45_ENTRY_ORDER
+        from .sizing import SizingParams
+        # ES-SZ-v1: 1% of equity at the 0.75% stop → notional ≈ equity/0.0075*0.01 = equity*1.333, leverage fixed at 3x.
+        # min_order_loss_cap 0: a size below the exchange minimum is skipped, not lifted to min qty.
+        sizing = SizingParams(risk_pct=1.0, max_risk_pct=2.0, portfolio_risk_cap=0.12, total_risk_cap=0.12,
+                              margin_cap=1.0, max_leverage=3, size_on_stop_dist=True, min_order_loss_cap=0.0)
+        kw = dict(dict(sizing=sizing, symbols=BINHV45_ENTRY_ORDER, entry_order=BINHV45_ENTRY_ORDER,
+                       max_positions=6, max_same_side=6, enable_short=False, take_profit=True,
+                       exit_mode="full_tp_pct", tp_pct=0.020, sl_pct=0.0075,
+                       max_hold_s=24 * 3600, limit_ttl_s=24 * 3600, bar_delay_s=3,
+                       restart_gate_mode="halt_on_negative", restart_gate_n=30,
+                       peak_dd_guard=0.80, peak_dd_init=132.88,
+                       halt_fraction=None, daily_loss_halt=0.10, startup_leverage=3,
+                       bar_stale_s=180.0), **kw)
     return Settings(**kw)
 
 
@@ -78,12 +97,14 @@ def build(network: str | None = None):
     else:
         url, key, sec = TESTNET_URL, os.environ["BINANCE_TESTNET_API_KEY"], os.environ["BINANCE_TESTNET_API_SECRET"]
     rest = BinanceREST(url, key, sec)          # guard_url refuses mainnet unless explicitly acknowledged
-    name = os.getenv("LIVE_V6_STRATEGY", "qrmtf")        # qrmtf (2026-10-30); "h7t" = previous live; "v6_h7" = bar-close
+    name = os.getenv("LIVE_V6_STRATEGY", "binhv45")      # binhv45 (TA PASS 2026-11-10); "qrmtf" = rollback
     cfg = live_settings(name, use_streams=True)
     check_frozen(cfg)
     state = os.getenv("LIVE_V6_STATE", f"/var/lib/live_v6/{network}.json")
     if name == "qrmtf":
         from .strategies.qrmtf import QRMTF as Strat
+    elif name == "binhv45":
+        from .strategies.binhv45 import BinHV45 as Strat
     elif name == "h7t":
         from .strategies.h7t import H7T as Strat
     elif name == "v6_h7":

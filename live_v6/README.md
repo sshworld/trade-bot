@@ -145,8 +145,41 @@ optionally rebases the peak to the last recorded wallet (without `--reset-peak` 
 still under the line), and logs who / when / sudo user / old halt / peak before-after in `meta.peak_dd_clears` and
 `/var/lib/live_v6-live/peak_dd_clears.jsonl`.
 
-**E chandelier exits (TA 2026-11-04, replay variant E; qrmtf `trail_atr_k=2.0`, `be_fee=0.0005`, `be_offset=0.0015`,
-`tp2_r=None`):** from entry the exchange SL trails `tighter(SL, best ∓ 2·ATR14)` — ATR14 = Wilder ATR of the last CLOSED 1h
+**BinHV45 (TA PASS 2026-11-10, `LIVE_V6_STRATEGY=binhv45`, the process default):** long only, closed 1m,
+Bollinger(40, 2, ddof=1), `buy_bbdelta=7`, `buy_closedelta=17`, `buy_tail=25`. Post-only (GTX) limit buy at the
+signal bar's close; a fill is taken only from the exchange report; the order is cancelled 24h after the signal if it
+is still open. One position or one resting entry per symbol. While that limit rests and the symbol is flat, the
+engine keeps a Binance countdown cancel (`POST /fapi/v1/countdownCancelAll`, 120s, refreshed about every 30s) so a
+dead process cannot leave the limit up. A reduce-only qty stop is not rested under the limit: the exchange cancels
+those within about a second when there is no position. On a fill the countdown is stopped. That call does not cancel a resting take-profit or a closePosition
+stop. If the fill lands while the order lookup is down, there is no journal yet and the pending
+intent does not skip protection: reconcile audits the exchange position and places a closePosition SL and a
+covering TP anyway. A foreign closePosition stop is
+cancelled (one alert) and replaced with this entry's `{cid}sN` stop. `-4130` is a second closePosition stop,
+not a closePosition take-profit: the engine cancels the other stop and retries, and does not market-close
+while any closePosition stop is still on the symbol. The intent stays until the lookup succeeds. A partial fill keeps the remainder of the limit working, places a closePosition SL, and resizes
+the reduce-only TP to the live position (`journal["tp"]` stays set while the position exists). On the fill:
+full-qty `TAKE_PROFIT_MARKET` at
+`entry*1.020` (`CONTRACT_PRICE`) and `STOP_MARKET` at `entry*0.9925` (`MARK_PRICE`), both tick-rounded toward entry.
+Risk 1% of equity at that 0.75% stop (notional ≈ 1.333× equity), leverage fixed at 3x and never raised. `restart_gate_mode`
+`halt_on_negative` (default) blocks new entries once the net after fees of binhv45 trades closed since
+`meta.restart_gate_anchor` (set on the first binhv45 start, kept across restarts) is negative. One alert.
+The halt stays, including after a restart, until `live_v6/tools/clear_restart_gate.py` moves the anchor forward.
+The open position keeps its SL and TP. qrmtf trades, and anything closed before the anchor, are not counted.
+`lock30` stays selectable: after 30 binhv45 trades since the anchor, if their net is negative, one alert and stay at 3x. Daily −10% halt and the peak-drawdown latch are unchanged
+(`clear_peak_halt.py` is still the only clear). Rollback to the previous entry: `LIVE_V6_STRATEGY=qrmtf`.
+
+**Live exit (TA lock, qrmtf `exit_mode="full_tp_pct"`, `tp_pct=0.002`):** one reduce-only TAKE_PROFIT_MARKET for the full
+quantity at entry×(1±0.002), workingType CONTRACT_PRICE. Rounded to the tick toward entry (an exact half-tick goes
+toward entry) and never past the raw 0.2% level. Price already through that level → reduce-only market for the
+remaining qty. No TP1/TP2 split, no breakeven move, no ATR trail in this mode. The initial SL stays MARK_PRICE
+STOP_MARKET. 24 h time exit, the 10x cap and the daily −10 % halt are unchanged. Reconcile: a position missing its SL
+or this TP gets one 🚨 per incident and the order is re-placed from a fresh position read (qty never above the live
+position). Any existing reduce-only TAKE_PROFIT_MARKET on the closing side counts as the TP, so a restart does not
+place a second one. `exit_mode="r"` keeps the previous path (`tp1_r` / `tp2_r` / trail / breakeven).
+
+**E chandelier (`exit_mode="r"`, `trail_atr_k=2.0`, `be_fee=0.0005`, `be_offset=0.0015`, `tp2_r=None`):** from entry the
+exchange SL trails `tighter(SL, best ∓ 2·ATR14)` — ATR14 = Wilder ATR of the last CLOSED 1h
 bar (one 150-bar read per hour, cached in the journal), best = the 1m high (long) / low (short) extreme since entry, read
 once per closed minute (effective from the next candle). Never looser than the current / initial SL. TP1 +1R 50 %
 unchanged; after TP1 SL = tighter(SL, be·(1 ± 0.0015)) with be = fee-inclusive breakeven entry·(1±f)/(1∓f), f = 0.0005
