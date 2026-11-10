@@ -1139,6 +1139,9 @@ class V6Engine:
         existing = self.x("get_order", sym, cid)
         if existing is not None:
             return existing
+        if reduce_only and self._schema_lock:
+            log.warning("%s reduceOnly market %s not sent: schema lock", sym, cid)
+            return None
         try:
             return self.x("market", sym, side, qty, cid, reduce_only)
         except ExchangeUnavailable:
@@ -2711,6 +2714,9 @@ class V6Engine:
     def close(self, sym, reason) -> bool:
         """Close the WHOLE position with reduceOnly MARKET orders until the exchange shows flat. The protective stop stays
         until flat is confirmed. A remainder (partial fill) is always closed in ONE order (no dust chunks)."""
+        if self._schema_lock:
+            log.warning("%s close (%s) refused: schema lock — exchange stop stays, no market", sym, reason)
+            return False
         j = self.st["pos"].get(sym)
         if j is None:                                       # TA R4: never market-close a position the state file
             log.critical("close(%s, %s) refused: not in the state file (unknown positions are never closed by the bot)",
@@ -2796,6 +2802,8 @@ class V6Engine:
         """One reduceOnly MARKET for the qty just read. A failed read sends nothing.
         A rejected close keeps the old stop and is reconsidered in a minute.
         Returns 'closed' | 'pending'."""
+        if self._schema_lock:
+            return "pending"
         if self.clock() < self._cap_retry_at.get(sym, 0):
             return "pending"
         try:
@@ -3517,7 +3525,7 @@ class V6Engine:
         self._fresh_blocks = set()
         self._armed_now = set()
         self._in_reconcile = True
-        if self.st["intents"]:
+        if self.st["intents"] and not self._schema_lock:
             self.resolve_intents()                              # unknown entry outcomes first (by client id)
         acct = self.x("account")
         try:
@@ -3631,10 +3639,10 @@ class V6Engine:
                 mismatch.append(f"{sym} 수량 불일치 로컬 {j['qty']} / 거래소 {amt}")
                 j["qty"] = str(abs(amt))                       # exchange wins
                 self.save()
-            if j.get("closing"):
+            if not self._schema_lock and j.get("closing"):
                 self.close(sym, j.get("close_reason", "retry"))
                 continue
-            if (self.cfg.max_hold_s and not j.get("closing")
+            if (not self._schema_lock and self.cfg.max_hold_s and not j.get("closing")
                     and self.now_ms() - int(j.get("opened_ms", self.now_ms())) >= self.cfg.max_hold_s * 1000):
                 self.close(sym, "time_exit")                    # 24 h time exit (reduceOnly market)
                 continue
@@ -3933,6 +3941,9 @@ class V6Engine:
     def _unknown_last_resort(self, sym, u, amt):
         """TA R4 last resort (only after 5 min of REJECTED stops): reduceOnly MARKET for the whole position, retried
         every reconcile until the exchange shows flat; then the unknown entry is cleared (reconcile flat branch)."""
+        if self._schema_lock:
+            log.warning("%s unknown last-resort close refused: schema lock", sym)
+            return
         seq = int(u.get("exit_seq", 0))
         u["exit_seq"] = seq + 1
         self.save()
@@ -4063,6 +4074,8 @@ class V6Engine:
             self.save()
             return
         if self.meta.get("halted") or self.meta.get("daily_halt"):
+            # A schema halt already occupies `halted`. This −10% flatten is unchanged and
+            # sends only after the operator clears that lock. It is not removed.
             return
         adj, line = self._daily_equity()
         if adj is None or adj > line:
@@ -4132,8 +4145,13 @@ class V6Engine:
             self.check_ledger()                             # booked must not look like a loss
             hit, adj, thr = self.drawdown_breached()
         if hit and not self.meta.get("halted"):
-            self.emergency_flatten_all(f"자산 {adj:.2f} ≤ {thr:.2f} (시작 자본 {self.capital0():.2f} × "
-                                       f"{self.cfg.halt_fraction}, 입출금 제외)")   # §8c L3(a) / §8e-2
+            # Same deferral as the daily −10% rule: a schema lock already halted the bot,
+            # so this drawdown flatten does not send. The call itself stays.
+            if self._schema_lock:
+                log.warning("drawdown flatten deferred: schema lock — exchange stops stay")
+            else:
+                self.emergency_flatten_all(f"자산 {adj:.2f} ≤ {thr:.2f} (시작 자본 {self.capital0():.2f} × "
+                                           f"{self.cfg.halt_fraction}, 입출금 제외)")   # §8c L3(a) / §8e-2
         nets = [D(t["net"]) for t in self.meta.get("trades", []) if int(t["closed_ms"]) >= int(self.meta.get("start_ms", 0))]
         if len(nets) >= self.cfg.pf_review_after and not self.meta.get("pf_review"):
             g, l_ = sum(x for x in nets if x > 0), -sum(x for x in nets if x < 0)

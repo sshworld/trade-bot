@@ -349,7 +349,11 @@ def test_state_lost_mid_window_restarts_window(offline):
     assert offline.amt(DOGE) == 1000 and not close_calls(offline)   # new window from t1
     clk2.ms = t1 + 300_000
     eng2.reconcile()
-    assert offline.amt(DOGE) == 0
+    # The file is gone, so the schema lock is on. The 5-minute last-resort market stays in the
+    # code and does not send until an operator clears that lock. The position and its missing
+    # stop are unchanged.
+    assert eng2._schema_lock is True
+    assert offline.amt(DOGE) == 1000 and not close_calls(offline)
 
 
 # ───────── ops tool: adopt_position (dry-run by default) ─────────
