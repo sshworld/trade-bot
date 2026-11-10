@@ -336,6 +336,13 @@ class BinanceREST:
         except (TypeError, ValueError):
             return None                      # unparseable echo = not confirmed (engine skips the entry)
 
+    def countdown_cancel_all(self, symbol, countdown_ms) -> dict:
+        """POST /fapi/v1/countdownCancelAll. ``countdown_ms`` 0 stops the timer; otherwise every open order on the
+        symbol is cancelled if the timer is not refreshed before it lapses."""
+        r = self._req("POST", "/fapi/v1/countdownCancelAll",
+                      {"symbol": symbol, "countdownTime": int(countdown_ms)}, critical=True)
+        return r if isinstance(r, dict) else {"symbol": symbol, "countdownTime": int(countdown_ms)}
+
     def limit(self, symbol, side, qty, price, client_id, tif="GTX") -> dict:
         """Post-only limit when tif is GTX. The exchange rejects it if it would take liquidity."""
         p = {"symbol": symbol, "side": side, "type": "LIMIT", "timeInForce": tif, "quantity": fmt(qty),

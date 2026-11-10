@@ -165,7 +165,7 @@ def test_full_fill_after_flat_cancels_sl(offline, side):
     eng = exit_engine(offline)
     j = open_pos(offline, eng, side)
     close = "SELL" if side > 0 else "BUY"
-    hold = offline.inner.stop(DOGE, close, D(j["stop_px"]), j["cid"] + "sHold", qty=abs(offline.amt(DOGE)))
+    hold = offline.inner.stop(DOGE, close, D(j["stop_px"]), j["cid"] + "s9", qty=abs(offline.amt(DOGE)))
     seen = {}
     real = eng._after_flat
 

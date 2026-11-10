@@ -148,7 +148,13 @@ still under the line), and logs who / when / sudo user / old halt / peak before-
 **BinHV45 (TA PASS 2026-11-10, `LIVE_V6_STRATEGY=binhv45`, the process default):** long only, closed 1m,
 Bollinger(40, 2, ddof=1), `buy_bbdelta=7`, `buy_closedelta=17`, `buy_tail=25`. Post-only (GTX) limit buy at the
 signal bar's close; a fill is taken only from the exchange report; the order is cancelled 24h after the signal if it
-is still open. One position or one resting entry per symbol. On the fill: full-qty `TAKE_PROFIT_MARKET` at
+is still open. One position or one resting entry per symbol. While that limit rests and the symbol is flat, the
+engine keeps a Binance countdown cancel (`POST /fapi/v1/countdownCancelAll`, 120s, refreshed about every 30s) so a
+dead process cannot leave the limit up. A reduce-only qty stop is not rested under the limit: the exchange cancels
+those within about a second when there is no position. On any fill the countdown is set to 0 after the SL and TP
+are on the book. A partial fill keeps the remainder of the limit working, places a closePosition SL, and resizes
+the reduce-only TP to the live position (`journal["tp"]` stays set while the position exists). On the fill:
+full-qty `TAKE_PROFIT_MARKET` at
 `entry*1.020` (`CONTRACT_PRICE`) and `STOP_MARKET` at `entry*0.9925` (`MARK_PRICE`), both tick-rounded toward entry.
 Risk 1% of equity at that 0.75% stop (notional ≈ 1.333× equity), leverage fixed at 3x and never raised. `restart_gate_mode`
 `halt_on_negative` (default) blocks new entries once the net after fees of binhv45 trades closed since

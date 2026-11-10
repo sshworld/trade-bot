@@ -139,31 +139,31 @@ def _tps(b, sym=DOGE):
     return [o for o in b.inner.open_orders(sym) if o["type"] == "TAKE_PROFIT_MARKET"]
 
 
-def test_resting_limit_prearms_stop_at_limit_times_09925(offline):
+def test_resting_limit_sets_countdown_and_does_not_prearm_a_stop(offline):
+    """Binance cancels a reduce-only qty STOP while the symbol is flat, so a resting limit must not place one.
+    The dead-man is countdownCancelAll, refreshed while the limit rests."""
     eng = _eng(offline)
     offline.inner.set_price(DOGE, D("0.151"))
     assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"), signal_px="0.15")
-    assert offline.amt(DOGE) == 0
-    want = round_full_tp(D("0.15") * D("0.9925"), eng.rules[DOGE].tick_size, -1)
-    st = _stops(offline)
-    assert len(st) == 1 and st[0]["client_id"].endswith("p")
-    assert st[0]["working_type"] == "MARK_PRICE" and st[0]["reduce_only"]
-    assert st[0]["stop_price"] == want and st[0]["side"] == "SELL"
+    assert offline.amt(DOGE) == 0 and _stops(offline) == []
+    assert [c for c in offline.fx.calls if c[0] == "stop"] == []
+    assert offline.inner.countdown[DOGE]["ms"] == 120_000
 
 
-def test_fill_while_down_restart_keeps_prearm_and_places_one_tp(offline):
+def test_fill_while_down_restart_places_close_position_sl_and_one_tp(offline):
     eng = _eng(offline)
     offline.inner.set_price(DOGE, D("0.151"))
     assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"), signal_px="0.15")
-    pre = _stops(offline)[0]
     cid = next(iter(eng.st["intents"]))
     offline.inner.fill_limit(cid)                              # filled while this process is down: no reconcile
     eng2 = _eng(offline)
     assert DOGE in eng2.st["pos"]
     st, tp = _stops(offline), _tps(offline)
-    assert len(st) == 1 and st[0]["id"] == pre["id"]           # the pre-arm is already the stop
+    assert len(st) == 1 and st[0]["close_position"] and not st[0]["client_id"].endswith("p")
     assert len(tp) == 1 and tp[0]["working_type"] == "CONTRACT_PRICE" and tp[0]["reduce_only"]
     assert tp[0]["qty"] == abs(offline.amt(DOGE))
+    assert eng2.st["pos"][DOGE]["tp"]["tp"]
+    assert DOGE not in offline.inner.countdown                 # timer cleared once SL and TP are on the book
     eng2.reconcile()
     assert len(_stops(offline)) == 1 and len(_tps(offline)) == 1
 
@@ -183,16 +183,17 @@ def test_different_fill_rearms_stop_from_the_fill(offline):
     assert D(eng.st["pos"][DOGE]["stop_px"]) == want
 
 
-def test_ttl_cancel_removes_the_prearm(offline):
+def test_ttl_cancel_clears_the_countdown(offline):
     eng = _eng(offline)
     offline.inner.set_price(DOGE, D("0.151"))
     eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"))
-    assert _stops(offline)
+    assert offline.inner.countdown[DOGE]["ms"] == 120_000 and not _stops(offline)
     cid, it = next(iter(eng.st["intents"].items()))
     it["signal_ms"] = eng.now_ms() - 24 * 3600_000 - 1000
     eng.reconcile()
     assert offline.amt(DOGE) == 0 and not _stops(offline)
     assert eng.st["intents"] == {} and offline.inner.get_order(DOGE, cid)["status"] == "CANCELED"
+    assert DOGE not in offline.inner.countdown
 
 
 def test_gtx_limit_rests_until_exchange_reports_a_fill(offline):
@@ -481,7 +482,134 @@ def test_qrmtf_and_both_exit_modes_stay_selectable():
     assert h.peak_dd_guard == 0.80
 
 
+def test_flat_reduce_only_stop_is_autocancelled_on_the_next_read(offline):
+    """The fake models the testnet fact: a reduce-only qty STOP with no position does not survive ~1s."""
+    o = offline.inner.stop(DOGE, "SELL", D("0.14"), "v6DOGE1700000000p", qty=D("100"))
+    assert o["id"] in offline.inner.algos
+    assert _stops(offline)                       # still inside the ~0.2s window
+    offline.inner.algos[o["id"]]["placed_at"] -= 1
+    assert _stops(offline) == []
+
+
+def test_countdown_refreshes_while_the_limit_rests_and_expires(offline):
+    clk = _Clock()
+    eng = _eng(offline, clock=clk)
+    offline.inner.set_price(DOGE, D("0.151"))
+    eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"))
+    cid = next(iter(eng.st["intents"]))
+    n = _cd_calls(offline)
+    clk.t += 10
+    eng.reconcile()
+    assert _cd_calls(offline) == n               # inside the 30s refresh
+    clk.t += 31
+    eng.reconcile()
+    assert _cd_calls(offline) > n
+    assert offline.inner.countdown[DOGE]["ms"] == 120_000
+    offline.inner.countdown[DOGE]["set_at"] -= 121
+    eng.reconcile()
+    assert offline.inner.get_order(DOGE, cid)["status"] == "CANCELED"
+    assert cid not in eng.st["intents"] and DOGE not in offline.inner.countdown
+
+
+def test_partial_fill_keeps_the_limit_and_resizes_the_tp(offline):
+    eng = _eng(offline)
+    offline.inner.set_price(DOGE, D("0.151"))
+    eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"))
+    cid = next(iter(eng.st["intents"]))
+    offline.inner.fill_limit(cid, D("100"))
+    eng.reconcile()
+    j = eng.st["pos"][DOGE]
+    assert j["tp"]["tp"] and D(j["qty"]) == 100 and D(j["entry_qty"]) == 100
+    assert _stops(offline)[0]["close_position"]
+    assert len(_tps(offline)) == 1 and _tps(offline)[0]["qty"] == 100
+    assert offline.inner.get_order(DOGE, cid)["status"] == "PARTIALLY_FILLED"
+    assert cid in eng.st["intents"] and DOGE not in offline.inner.countdown
+    offline.inner.fill_limit(cid, D("50"))
+    eng.reconcile()
+    j = eng.st["pos"][DOGE]
+    assert offline.amt(DOGE) == 150 and D(j["qty"]) == 150 and j["tp"]["tp"]
+    tps = _tps(offline)
+    assert len(tps) == 1 and tps[0]["qty"] == 150
+    assert len(_stops(offline)) == 1 and _stops(offline)[0]["close_position"]
+    assert offline.inner.get_order(DOGE, cid)["status"] == "PARTIALLY_FILLED"
+
+
+def test_overfill_hold_does_not_strip_tp_from_a_live_position(offline):
+    """Journal opened 5, exit fills 16, then the position is still there: the hold must not cancel the TP."""
+    eng = _eng(offline)
+    offline.inner.set_price(DOGE, D("0.151"))
+    eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"))
+    cid = next(iter(eng.st["intents"]))
+    offline.inner.fill_limit(cid, D("100"))
+    eng.reconcile()
+    j = eng.st["pos"][DOGE]
+    tp_id = _tps(offline)[0]["id"]
+    j["entry_qty"] = "5"
+    j["qty"] = "5"
+    offline.inner.orders[cid]["executed_qty"] = D("5")
+    j["exit_orders"] = [{"id": "9001", "client_id": j["cid"] + "s0"}]
+    offline.inner.fills.append({"symbol": DOGE, "order_id": "9001", "trade_id": "77", "side": "SELL",
+                                "price": D("0.14"), "qty": D("150"), "commission": D("0.01"),
+                                "realized_pnl": D("-1"), "time": eng.now_ms()})
+    offline.inner.pos.pop(DOGE)
+    eng.reconcile()
+    assert DOGE in eng.st["pos"]
+    assert any("체결" in m and "5" in m for m in eng.tg.sent)
+    assert any(o["id"] == tp_id for o in _tps(offline))
+    offline.inner.pos[DOGE] = {"amt": D("150"), "entry": D("0.15"), "margin": D("1")}
+    eng.reconcile()
+    assert eng.st["pos"][DOGE]["tp"]["tp"]
+    assert _tps(offline)[0]["qty"] == D("150")
+
+
+def test_upgrade_stop_does_not_adopt_a_foreign_close_position(offline):
+    eng, j = _filled(offline)
+    want = D(j["stop_px"])
+    for o in _stops(offline):
+        offline.inner.cancel(DOGE, o)
+    stale = round_full_tp(D(j["entry_px"]) * D("0.97"), eng.rules[DOGE].tick_size, -1)
+    offline.inner.stop(DOGE, "SELL", stale, "v6ETHa1794310340s0")
+    eng.reconcile()
+    st = _stops(offline)
+    assert len(st) == 1 and st[0]["client_id"].startswith(j["cid"]) and st[0]["stop_price"] == want
+    assert D(eng.st["pos"][DOGE]["stop_px"]) == want
+    assert all(o["client_id"] != "v6ETHa1794310340s0" for o in offline.inner.open_orders(DOGE))
+
+
+def test_prefix_v6_does_not_own_v6t_orders(offline):
+    eng = _eng(offline)
+    assert eng.cfg.cid_prefix == "v6"
+    assert eng._owns("v6DOGE1700000000p", DOGE)
+    assert eng._owns("v6DOGE1700000000s3", DOGE)
+    assert eng._owns("v6DOGE1700000000tf", DOGE)
+    assert eng._owns("v6DOGE1700000000t1", DOGE)
+    assert eng._owns("v6DOGE1700000000x2", DOGE)
+    assert eng._owns("v6DOGEu1700000000s0", DOGE)
+    assert eng._owns("v6DOGEa1700000000", DOGE)
+    assert not eng._owns("v6tDOGE1700000000p", DOGE)
+    assert not eng._owns("v6tETH1794310340s0", "ETHUSDT")
+    assert not eng._owns("v6tprobe1794311225p", DOGE)
+    offline.inner.algos["x"] = {"kind": "algo", "id": "x", "client_id": "v6tDOGE1700000000s0", "symbol": DOGE,
+                                "type": "STOP_MARKET", "side": "SELL", "stop_price": D("0.1"),
+                                "close_position": True, "reduce_only": True, "qty": D(0),
+                                "working_type": "MARK_PRICE"}
+    eng.reconcile()
+    assert any(o["client_id"] == "v6tDOGE1700000000s0" for o in offline.inner.open_orders(DOGE))
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
+class _Clock:
+    def __init__(self, t=1_700_000_000.0):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+
+def _cd_calls(b):
+    return sum(1 for c in b.fx.calls if c[0] == "countdown_cancel_all")
+
+
 def _eng(b, **kw):
     cfg = live_settings("binhv45").__dict__.copy()
     cfg.pop("symbols")

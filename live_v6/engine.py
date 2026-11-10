@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -150,6 +151,8 @@ class Settings:
     tp_pct: float = 0.002               # 0.002 = 0.2% price. Ignored unless exit_mode == "full_tp_pct"
     sl_pct: float | None = None         # set: SL = fill*(1 ∓ sl_pct), tick-round toward entry (BinHV45 0.0075). None: stop_dist
     limit_ttl_s: float = 24 * 3600.0    # unfilled post-only entry is cancelled this long after the signal
+    countdown_ms: int = 120_000         # countdownCancelAll while a post-only limit rests and the symbol is flat
+    countdown_refresh_s: float = 30.0   # engine loop refreshes the timer; the exchange cancels open orders if it lapses
     restart_gate_mode: str = "off"      # off | lock30 (stay 3x, alert if net<0 after N) | halt_on_negative
     restart_gate_n: int = 30
     be_offset: float = 0.001            # after TP1: SL → be ± be_offset (live 0.15 %, TA 2026-11-03), safe-side tick
@@ -235,6 +238,7 @@ class V6Engine:
         self._r3_alerted: set = set()                      # flat coins whose residual 🚨 is out (cleared by one ✅)
         self._foreign_seen: set = set()                    # (sym, order id) of non-bot orders on a flat coin already 🚨'd
         self._gap_alerted: set = set()                     # (sym, "sl"|"tp") already 🚨'd for this gap; cleared when the order is back
+        self._countdown_at: dict[str, float] = {}          # sym → clock() when countdownCancelAll was last armed
         self._flat_confirmed: set = set()                  # symbols whose position read in THIS process returned 0.
                                                            # empty after a restart until reconcile confirms again
         inner = getattr(ex, "inner", ex)
@@ -373,6 +377,32 @@ class V6Engine:
     def cid(self, sym, t_ms) -> str:
         return f"{self.cfg.cid_prefix}{sym.removesuffix('USDT')}{t_ms // 1000}"
 
+    # {prefix}{SYMBOL}{digits}[p|sN|t1|t2|tf|xN], plus the unknown-position (u…) and adopt (a…) ids.
+    # The character after the prefix must be the symbol, so prefix "v6" does not own "v6t…".
+    _OURS_TAIL = re.compile(r"(?:\d+(?:p|s\d+|t1|t2|tf|x\d+)?|u\d+s\d+b?|u\d+x\d+|a\d+)\Z")
+
+    def _owns(self, client_id, sym=None) -> bool:
+        cid = str(client_id or "")
+        prefix = str(self.cfg.cid_prefix or "")
+        if not prefix or len(cid) <= len(prefix) or not cid.startswith(prefix):
+            return False
+        rest = cid[len(prefix):]
+        if not rest[:1].isupper():
+            return False
+        if sym is not None:
+            base = sym.removesuffix("USDT")
+            if not base or not rest.startswith(base):
+                return False
+            if rest[len(base):len(base) + 1].isupper():
+                return False
+            tail = rest[len(base):]
+        else:
+            i = 0
+            while i < len(rest) and rest[i].isupper():
+                i += 1
+            tail = rest[i:]
+        return self._OURS_TAIL.fullmatch(tail) is not None
+
     # ───────────────────────── startup ─────────────────────────
     def startup(self):
         self.blocks[STARTUP] = "startup"
@@ -465,16 +495,14 @@ class V6Engine:
         except ExchangeUnavailable:
             self.block(UNKNOWN_ORDER, cid, "주문 상태 확인 불가 — 신규 진입 중단")
             return
+        if o and o["executed_qty"] > 0:
+            self._finish_fill(sym, it, o)                 # any qty: arm SL/TP and keep the remainder working
+            return
         if sym in self.st["pos"]:
             if o and o.get("status") not in ("FILLED", "CANCELED", "EXPIRED", "REJECTED") and o["executed_qty"] == 0:
                 self._cancel_quiet(sym, o)
             self.st["intents"].pop(cid, None)
             self.save()
-            return
-        if o and o["executed_qty"] > 0:
-            self._finish_fill(sym, it, o)
-            if o.get("status") not in ("FILLED", "CANCELED", "EXPIRED"):
-                self._cancel_quiet(sym, o)               # a partial must not add later
             return
         age = self.now_ms() - int(it.get("signal_ms") or it.get("T") or 0)
         dead = o is None or str(o.get("status")) in ("CANCELED", "EXPIRED", "REJECTED")
@@ -483,8 +511,9 @@ class V6Engine:
                 self._cancel_quiet(sym, o)
             self.st["intents"].pop(cid, None)
             self.save()
+            self._countdown(sym, 0)
             if sym not in self.st["pos"]:
-                self._after_flat(sym, "limit_cancel")       # pre-arm and any other bot reduce-only leftover
+                self._after_flat(sym, "limit_cancel")
             return
 
     def _stop_at(self, sym, px, side: int, stop_dist: Decimal) -> Decimal:
@@ -495,21 +524,16 @@ class V6Engine:
         return stop_price(self.rules[sym], D(px), side, D(stop_dist))
 
     def _rest_limit(self, sym, stop_dist, T, model_id, signal_px, side, sz, acct, ref) -> bool:
-        """Post-only limit at `ref`. A reduceOnly STOP_MARKET (MARK_PRICE) is live at limit×(1∓sl_pct) before the
-        limit can fill, the same pre-arm market entries use (closePosition cannot be placed with no position: -4509)."""
+        """Post-only limit at `ref`. No reduce-only stop is rested under it: Binance cancels that order within
+        about a second while the symbol is flat. A countdown cancel (refreshed by the engine loop) is the dead-man
+        for a fill while this process is down — the exchange cancels the limit if the timer is not refreshed."""
         cid = self.cid(sym, T)
         px = self.rules[sym].price(D(ref), "down" if side > 0 else "up")
-        stop_px = self._stop_at(sym, px, side, D(stop_dist))
-        pre = self._prearm(sym, stop_px, sz.qty, cid, side)
-        if pre is None:
-            self.skip(sym, "stop_prearm", f"protective stop {stop_px} not confirmed → entry not sent")
-            return False
         intent = {"sym": sym, "cid": cid, "T": T, "side": side, "model_id": model_id if model_id is not None else T,
                   "signal_px": str(signal_px) if signal_px is not None else str(px), "stop_dist": str(stop_dist),
                   "ref": str(px), "qty": str(sz.qty), "lev": sz.lev, "mmr": sz.mmr, "risk_frac": sz.risk_frac,
                   "risk_pct_used": sz.risk_pct_used, "wallet": str(acct["wallet"]), "path": sz.path, "q0": str(sz.q0),
-                  "loss_frac": sz.loss_frac, "order": "limit", "signal_ms": int(T), "limit_px": str(px),
-                  "prearm": pre["id"], "prearm_ms": self.now_ms()}
+                  "loss_frac": sz.loss_frac, "order": "limit", "signal_ms": int(T), "limit_px": str(px)}
         self.st["intents"][cid] = intent
         self.save()
         try:
@@ -517,42 +541,92 @@ class V6Engine:
         except OrderRejected as e:
             self.st["intents"].pop(cid, None)
             self.save()
-            self._cancel_quiet(sym, pre)
             self.skip(sym, "post_only_reject", f"{sz.qty} @ {px}: {str(e)[:120]}")
             return False
         except ExchangeError as e:
-            self.alert("지정가 진입 결과 불명", f"{cid} {sz.qty} {sym}: {str(e)[:100]} · 선행 손절 유지 · 대조 루프가 확인")
+            self._countdown(sym, self.cfg.countdown_ms)
+            self.alert("지정가 진입 결과 불명", f"{cid} {sz.qty} {sym}: {str(e)[:100]} · 카운트다운 유지 · 대조 루프가 확인")
             return False
+        self._countdown(sym, self.cfg.countdown_ms)
         return True
 
+    def _limit_done(self, order) -> bool:
+        if not order:
+            return True
+        status = str(order.get("status") or "")
+        if status in ("FILLED", "CANCELED", "EXPIRED", "REJECTED"):
+            return True
+        orig = D(order.get("orig_qty") or 0)
+        return orig > 0 and D(order["executed_qty"]) >= orig
+
     def _finish_fill(self, sym, intent, order):
-        """Exchange reported a fill. Keep the pre-arm when it already matches the fill; otherwise re-arm. Then the TP."""
-        j = self._journal_entry(sym, intent, order)
-        self.st["intents"].pop(intent["cid"], None)
+        """Any filled qty of a resting limit. closePosition SL + a TP for the live position; the limit stays
+        so a later fill can resize the TP. Countdown is cleared only after those orders are placed."""
+        if sym not in self.st["pos"]:
+            j = self._journal_entry(sym, intent, order)
+        else:
+            j = self.st["pos"][sym]
+        try:
+            live = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+        except ExchangeError:
+            live = None
+        if live == 0 and sym in self.st["pos"]:
+            if self._limit_done(order):
+                self.st["intents"].pop(intent["cid"], None)
+                self.save()
+            return                                          # flat: the close path owns the journal; do not drop SL/TP here
+        qty = abs(live) if live not in (None, 0) else D(order["executed_qty"])
+        if qty <= 0:
+            return
+        fill = order["avg_price"] if order.get("avg_price") and order["avg_price"] > 0 else D(j["entry_px"])
+        if not j.get("stop_confirmed_ms"):
+            j["entry_px"] = str(fill)
+            j["stop_px"] = str(self._stop_at(sym, fill, int(j.get("side", 1)), D(j["stop_dist"])))
+        j["qty"] = str(qty)
+        if D(j.get("entry_qty") or 0) < qty:
+            j["entry_qty"] = str(qty)
+        if self.cfg.exit_mode == "full_tp_pct":
+            self._stamp_full_tp(sym, j, qty)
         self.save()
-        if D(j["qty"]) * D(j["entry_px"]) < self.rules[sym].min_notional:
+        done = self._limit_done(order)
+        if done and qty * D(j["entry_px"]) < self.rules[sym].min_notional:
+            self.st["intents"].pop(intent["cid"], None)
+            self.save()
+            self._countdown(sym, 0)
             self.close(sym, "dust_entry")
             return
-        amt = D(j["qty"]) * int(j.get("side", 1))
-        want = D(j["stop_px"])
-        try:
-            oo = self.x("open_orders", sym)
-        except ExchangeError:
-            oo = []
-        pre = next((o for o in oo if o.get("client_id") == f"{j['cid']}p"), None)
-        if pre is not None and D(pre["stop_price"]) == want and self.find_stop(amt, [pre]):
-            pass                                         # fill at the limit: the pre-arm is already the stop
-        elif pre is not None:
-            if self._upgrade_stop(sym, j, pre) == "rejected":
+        amt = qty * int(j.get("side", 1))
+        if not self._our_stop_live(sym, j):
+            up = self._upgrade_stop(sym, j, None)
+            if up == "rejected":
                 self.alert("진입 체결 후 손절 거절 — 전량 청산", f"{sym} {j['qty']} · 손절 {j['stop_px']}")
+                self.st["intents"].pop(intent["cid"], None)
+                self.save()
+                self._countdown(sym, 0)
                 self.close(sym, "stop_rejected_after_fill")
                 return
-        elif not self.protect(sym, amt, want, j["cid"]):
-            return                                      # would-trigger / rejected → protect already market-closes
+            if up != "ok" and not self.protect(sym, amt, D(j["stop_px"]), j["cid"]):
+                self.st["intents"].pop(intent["cid"], None)
+                self.save()
+                self._countdown(sym, 0)
+                return
         if sym not in self.st["pos"] or self.st["pos"][sym].get("closing"):
+            self.st["intents"].pop(intent["cid"], None)
+            self.save()
+            self._countdown(sym, 0)
             return
-        if self.cfg.take_profit:
+        j = self.st["pos"][sym]
+        if self.cfg.take_profit and self.cfg.exit_mode == "full_tp_pct":
+            self._resize_full_tp(sym, j)
+        elif self.cfg.take_profit and not isinstance(j.get("tp"), dict):
             self._place_tps(sym, j)
+        elif self.cfg.exit_mode == "full_tp_pct":
+            self._stamp_full_tp(sym, j, D(j["qty"]))
+            self.save()
+        self._countdown(sym, 0)                            # SL and TP journalled: the dead-man must not cancel them
+        if done:
+            self.st["intents"].pop(intent["cid"], None)
+            self.save()
 
     def ensure_isolated(self, sym) -> bool:
         err = ""
@@ -1085,7 +1159,7 @@ class V6Engine:
                 self.block(MISMATCH, f"{sym} open entry order before entry", "대조 불일치 — 신규 진입 중단")
                 return False
             for o in oo:                                    # our own leftover stops must never touch a new position
-                if str(o["client_id"]).startswith(self.cfg.cid_prefix):
+                if self._owns(o.get("client_id"), sym):
                     self.x("cancel", sym, o)
             row0 = pos.get(sym) or {}
             if row0.get("margin_type") != "ISOLATED" and not self.ensure_isolated(sym):
@@ -1158,9 +1232,12 @@ class V6Engine:
                   "signal_px": str(signal_px) if signal_px is not None else None, "stop_dist": str(stop_dist), "ref": str(ref), "qty": str(sz.qty),
                   "lev": sz.lev, "mmr": sz.mmr, "risk_frac": sz.risk_frac, "risk_pct_used": sz.risk_pct_used,
                   "wallet": str(acct["wallet"]), "path": sz.path, "q0": str(sz.q0), "loss_frac": sz.loss_frac}
-        # PRE-ARM: a reduceOnly STOP_MARKET for the planned qty is live on the exchange BEFORE the entry is sent, so
-        # there is no instant between fill and stop without exchange-side protection (closePosition stops cannot be
-        # placed without a position: -4509). Not confirmed → no entry.
+        # PRE-ARM (market entries only): a reduceOnly STOP_MARKET for the planned qty is sent in this same call,
+        # before the market order. Binance cancels that order within ~0.2–1.2s if the symbol is still flat, so it is
+        # only a bridge across the market round-trip. Protection after the fill is the closePosition stop
+        # (_upgrade_stop / protect), which does not require the pre-arm to still be live. Resting limits do not
+        # use this: Binance would cancel it while the limit sits, and countdownCancelAll is the dead-man instead.
+        # Not confirmed → no entry.
         pre = self._prearm(sym, sz.stop_px, sz.qty, cid, side)
         if pre is None:
             self.skip(sym, "stop_prearm", f"protective stop {sz.stop_px} not confirmed → entry not sent")
@@ -1340,7 +1417,7 @@ class V6Engine:
     def _is_orphan_prearm(self, o) -> bool:
         """Bot pre-arm reduceOnly stop (`<cid>p`) whose entry intent no longer exists (rejected / resolved) and that is not a journaled position's stop."""
         cid = str(o.get("client_id") or "")
-        return (cid.startswith(self.cfg.cid_prefix) and cid.endswith("p") and bool(o.get("reduce_only"))
+        return (self._owns(cid) and cid.endswith("p") and bool(o.get("reduce_only"))
                 and not o.get("close_position") and cid[:-1] not in self.st["intents"])
 
     def _cancel_quiet(self, sym, o):
@@ -1362,16 +1439,18 @@ class V6Engine:
             return None                                     # unknown: no entry; reconcile cancels it when flat
 
     def _upgrade_stop(self, sym, j, pre):
-        """After the fill: closePosition stop at the fill-based price; the pre-arm is cancelled only once the new stop
-        is confirmed (new before old). If it cannot be placed the pre-arm (qty ≥ filled) stays as the stop."""
-        amt = D(j["qty"])
+        """After the fill: closePosition stop at the fill-based price. Only the client id just placed counts —
+        an older closePosition on the symbol (a leftover ~3% fallback, for example) is not the journal stop.
+        The pre-arm, when this is a market entry, is cancelled only once the new stop is confirmed."""
         rejected = False
+        placed_id = None
         for attempt in range(self.cfg.stop_attempts):
             seq = int(j.get("stop_seq", 0))
             j["stop_seq"] = seq + 1
             self.save()
+            placed_id = f"{j['cid']}s{seq}"
             try:
-                self.x("stop", sym, self._cs(j), D(j["stop_px"]), f"{j['cid']}s{seq}")
+                self._place_close_stop(sym, j, placed_id)
             except WouldTrigger:
                 rejected = True
                 break
@@ -1382,25 +1461,101 @@ class V6Engine:
                 log.error("%s closePosition stop attempt %d: %s", sym, attempt + 1, e)
             try:
                 oo = self.x("open_orders", sym)
-                cp = next((o for o in oo if o["close_position"] and o["side"] == self._cs(j)), None)
-                if cp:
-                    j["stop_px"] = str(cp["stop_price"])
-                    j.update(stop_confirmed_ms=self.now_ms(), stop_px_entry=j["stop_px"])   # live log only
-                    self._cancel_quiet(sym, pre)
-                    self.save()
-                    return "ok"
             except ExchangeError:
-                pass
+                oo = None
+            cp = next((o for o in oo or [] if o.get("client_id") == placed_id), None)
+            if cp:
+                j["stop_px"] = str(cp["stop_price"])
+                j["stop_cid"] = placed_id
+                j.update(stop_confirmed_ms=self.now_ms(), stop_px_entry=j["stop_px"])   # live log only
+                self._cancel_stops_except(sym, placed_id, oo)
+                if pre is not None:
+                    self._cancel_quiet(sym, pre)
+                self.save()
+                return "ok"
             if attempt + 1 < self.cfg.stop_attempts:
                 self.sleep(self.cfg.stop_retry_delay_s)
         if rejected:                                        # exchange stop DEFINITIVELY rejected: caller flattens (🚨)
             return "rejected"
+        if pre is None:
+            return "unavailable"
         log.warning("%s keeps the pre-armed reduceOnly stop %s", sym, pre["stop_price"])
         j["stop_px"] = str(pre["stop_price"])
         j.update(stop_confirmed_ms=j.get("prearm_ms"), stop_px_entry=j["stop_px"])       # live log only
         self.save()
         self._dirty = True                                  # reconcile re-verifies (qty ≥ position) right away
         return "kept"
+
+    def _place_close_stop(self, sym, j, client_id):
+        """closePosition stop. A stale closePosition on the symbol (-4130) is cancelled and this id is retried once."""
+        try:
+            self.x("stop", sym, self._cs(j), D(j["stop_px"]), client_id)
+        except OrderRejected as e:
+            if e.code != -4130:
+                raise
+            self._cancel_stops_except(sym, client_id)
+            self.x("stop", sym, self._cs(j), D(j["stop_px"]), client_id)
+
+    def _cancel_stops_except(self, sym, keep, orders=None):
+        """Cancel our other stops, and a closePosition stop we do not own (it would fire instead of the 0.75% stop).
+        A hand-placed reduce-only qty stop is left alone."""
+        if orders is None:
+            try:
+                orders = self.x("open_orders", sym)
+            except ExchangeError:
+                return
+        for o in orders:
+            if o.get("client_id") == keep:
+                continue
+            if not (o.get("type") or "").startswith("STOP"):
+                continue
+            if self._owns(o.get("client_id"), sym) or o.get("close_position"):
+                self._cancel_quiet(sym, o)
+
+    def _our_stop_live(self, sym, j) -> bool:
+        """True when a stop we own, at the journal price, already protects the position."""
+        try:
+            oo = self.x("open_orders", sym)
+        except ExchangeError:
+            return False
+        amt = D(j["qty"]) * int(j.get("side", 1))
+        want = D(j["stop_px"])
+        cid = j.get("stop_cid")
+        for o in oo:
+            if not self._owns(o.get("client_id"), sym) or not self.find_stop(amt, [o]):
+                continue
+            if cid and o.get("client_id") != cid:
+                continue
+            if D(o["stop_price"]) == want:
+                j.setdefault("stop_cid", o["client_id"])
+                j.setdefault("stop_confirmed_ms", self.now_ms())
+                return True
+        return False
+
+    def _countdown(self, sym, ms):
+        """POST /fapi/v1/countdownCancelAll. 0 stops the timer (call only after SL and TP are placed)."""
+        try:
+            self.x("countdown_cancel_all", sym, int(ms))
+        except ExchangeError as e:
+            log.error("%s countdownCancelAll %s failed: %s", sym, ms, e)
+            return
+        if int(ms) <= 0:
+            self._countdown_at.pop(sym, None)
+        else:
+            self._countdown_at[sym] = self.clock()
+
+    def _refresh_countdowns(self):
+        """While a limit rests on a flat symbol, keep countdownCancelAll from lapsing (default 120s, every 30s)."""
+        now = self.clock()
+        every = float(self.cfg.countdown_refresh_s)
+        for it in self.st["intents"].values():
+            if it.get("order") != "limit" or it["sym"] in self.st["pos"]:
+                continue
+            sym = it["sym"]
+            last = self._countdown_at.get(sym)
+            if last is not None and now - last < every:
+                continue
+            self._countdown(sym, self.cfg.countdown_ms)
 
     # ───────────────────────── take profit / breakeven (qrmtf) ─────────────────────────
     def _tp_levels(self, sym, j):
@@ -1457,30 +1612,69 @@ class V6Engine:
         return any(o.get("type") == "TAKE_PROFIT_MARKET" and o.get("reduce_only") and not o.get("close_position")
                    and o.get("side") == side for o in orders)
 
+    def _stamp_full_tp(self, sym, j, qty: Decimal):
+        """Journal the full-qty TP price. Never left unset while the position exists, even if the order is still going out."""
+        px = self._full_tp_px(sym, j)
+        tp = dict(j.get("tp") or {}) if isinstance(j.get("tp"), dict) else {}
+        tp.update(mode="full_tp_pct", tp=str(px), qty=str(qty), tp1=None, q1="0", tp2=None, q2="0")
+        j["tp"] = tp
+
     def _arm_full_tp(self, sym, j, qty: Decimal) -> bool:
         """One reduce-only TAKE_PROFIT_MARKET for `qty` (already capped at the live position)."""
         rules = self.rules[sym]
         qty = rules.floor_qty(D(qty))
+        self._stamp_full_tp(sym, j, qty)
+        self.save()
         if qty <= 0 or qty < rules.order_min_qty:
             log.info("%s full TP skipped: qty %s below min qty", sym, qty)
             return False
-        px = self._full_tp_px(sym, j)
+        px = D(j["tp"]["tp"])
         if qty * px < rules.min_notional:
             log.info("%s full TP skipped: notional %s < min %s", sym, qty * px, rules.min_notional)
             return False
-        tp = dict(j.get("tp") or {}) if isinstance(j.get("tp"), dict) else {}
-        tp.update(mode="full_tp_pct", tp=str(px), qty=str(qty), tp1=None, q1="0", tp2=None, q2="0")
-        j["tp"] = tp
-        self.save()
         return self._place_tp(sym, j, "tf", px, qty)
 
+    def _resize_full_tp(self, sym, j) -> bool:
+        """The reduce-only TP qty tracks the live position. A partial that grows the position replaces `{cid}tf`."""
+        qty = D(j["qty"])
+        self._stamp_full_tp(sym, j, qty)
+        self.save()
+        try:
+            orders = self.x("open_orders", sym)
+        except ExchangeError:
+            orders = []
+        ours = [o for o in orders if o.get("client_id") == f"{j['cid']}tf"]
+        if len(ours) == 1 and D(ours[0].get("qty") or 0) == qty:
+            self._gap_alerted.discard((sym, "tp"))
+            return True
+        for o in ours:
+            self._cancel_quiet(sym, o)
+        return self._arm_full_tp(sym, j, qty)
+
     def _ensure_full_tp(self, sym, j, orders) -> bool:
-        """Re-place the full TP when none is on the book. True → position is flat (caller moves on)."""
-        if self._covering_tp(j, orders):
+        """Re-place or resize the full TP so it covers the journal qty. True → position is flat (caller moves on)."""
+        qty = D(j["qty"])
+        side = self._cs(j)
+        tps = [o for o in orders if o.get("type") == "TAKE_PROFIT_MARKET" and o.get("reduce_only")
+               and not o.get("close_position") and o.get("side") == side]
+        ours = [o for o in tps if o.get("client_id") == f"{j['cid']}tf"]
+        foreign = [o for o in tps if o not in ours]
+        self._stamp_full_tp(sym, j, qty)
+        self.save()
+        if len(ours) == 1 and D(ours[0].get("qty") or 0) == qty:
             self._gap_alerted.discard((sym, "tp"))
             return False
-        self._alert_once(sym, "tp", "익절 주문 없음 — 재등록 시도",
-                         f"{sym} 전량 · 진입 {j.get('entry_px')} ± {self.cfg.tp_pct}")
+        if not ours and any(D(o.get("qty") or 0) >= qty for o in foreign):
+            self._gap_alerted.discard((sym, "tp"))
+            return False
+        for o in ours:
+            self._cancel_quiet(sym, o)
+        if any(D(o.get("qty") or 0) >= qty for o in foreign):
+            self._gap_alerted.discard((sym, "tp"))
+            return False
+        if not tps:
+            self._alert_once(sym, "tp", "익절 주문 없음 — 재등록 시도",
+                             f"{sym} 전량 · 진입 {j.get('entry_px')} ± {self.cfg.tp_pct}")
         try:
             fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
         except ExchangeError:
@@ -1668,7 +1862,7 @@ class V6Engine:
         self.save()
         for o in oo:                                              # THEN cancel the old stop(s) of ours (fresh read-back)
             if (o["client_id"] != cid and (o["type"] or "").startswith("STOP")
-                    and str(o["client_id"]).startswith(self.cfg.cid_prefix)):
+                    and self._owns(o.get("client_id"), sym)):
                 self._cancel_quiet(sym, o)
         return "ok"
 
@@ -1739,10 +1933,18 @@ class V6Engine:
         side = "SELL" if amt > 0 else "BUY"
         try:
             oo = self.x("open_orders", sym)
-            if self.find_stop(amt, oo):
-                return "ok"
         except ExchangeError:
             oo = None
+        if oo is not None:
+            owned = [o for o in oo if self._owns(o.get("client_id"), sym)]
+            prot = self.find_stop(amt, owned)
+            if prot:
+                self._cancel_stops_except(sym, prot.get("client_id"), oo)
+                return "ok"
+            for o in list(oo):
+                if o.get("close_position") and o.get("side") == side and not self._owns(o.get("client_id"), sym):
+                    self._cancel_quiet(sym, o)
+                    oo.remove(o)
         j = self.st["pos"].get(sym)
         status = "unavailable"
         for attempt in range(self.cfg.stop_attempts):
@@ -1763,12 +1965,12 @@ class V6Engine:
                 log.error("%s stop placement unknown (%s) → read-back", sym, e)
             try:
                 oo = self.x("open_orders", sym)
-                prot = self.find_stop(amt, oo)
+                placed_id = f"{cid_base}s{seq}"
+                prot = next((o for o in oo if o.get("client_id") == placed_id), None)
+                if prot is None:
+                    prot = self.find_stop(amt, [o for o in oo if self._owns(o.get("client_id"), sym)])
                 if prot:
-                    for o in oo:                              # now (and only now) drop our insufficient old stops
-                        if (o["id"] != prot["id"] and str(o["client_id"]).startswith(self.cfg.cid_prefix)
-                                and o["reduce_only"] and not o["close_position"]):
-                            self._cancel_quiet(sym, o)
+                    self._cancel_stops_except(sym, prot.get("client_id"), oo)
                     return "ok"
             except ExchangeError:
                 oo = None
@@ -1854,9 +2056,10 @@ class V6Engine:
             verdict, _fresh = self.record_close(sym, reason)
             if verdict != "flat":
                 return
+        self._countdown(sym, 0)
         try:
             for o in self.x("open_orders", sym):
-                if (o["close_position"] or o["reduce_only"]) and str(o["client_id"]).startswith(self.cfg.cid_prefix):
+                if (o["close_position"] or o["reduce_only"]) and self._owns(o.get("client_id"), sym):
                     self.x("cancel", sym, o)
         except ExchangeError as e:
             log.error("%s stale stop cancel failed (reconcile retries): %s", sym, e)
@@ -2397,9 +2600,28 @@ class V6Engine:
             return "flat", Decimal(0)
         closed_qty = sum((f["qty"] for f in exit_fills), Decimal(0))
         if closed_qty > want:
-            self._mark_pending(sym, j, reason,
-                               f"이 거래 주문 체결 {closed_qty.normalize():f} > 열린 {want.normalize():f} · 손익 기록 안 함")
-            return "flat", Decimal(0)
+            # A partial limit journals the first fill; the entry order may have filled more before this close.
+            try:
+                ent = self.x("get_order", sym, j["cid"])
+            except ExchangeError:
+                ent = None
+            if isinstance(ent, dict) and D(ent.get("executed_qty") or 0) > want:
+                j["entry_qty"] = str(ent["executed_qty"])
+                self.save()
+                want = D(j["entry_qty"])
+            fresh, ok2 = self._position_amt(sym)
+            if not ok2:
+                return "unknown", None
+            if fresh not in (None, 0):
+                j["qty"] = str(abs(fresh))
+                if D(j.get("entry_qty") or 0) < abs(fresh):
+                    j["entry_qty"] = str(abs(fresh))
+                self.save()
+                return "open", fresh
+            if closed_qty > want:
+                self._mark_pending(sym, j, reason,
+                                   f"이 거래 주문 체결 {closed_qty.normalize():f} > 열린 {want.normalize():f} · 손익 기록 안 함")
+                return "held", Decimal(0)          # journal stays; caller must not cancel SL/TP
         if closed_qty < want:
             self._hold_close(sym, j, want, closed_qty, reason)   # stays open; the bound only re-alerts
             return "flat", Decimal(0)
@@ -2534,6 +2756,8 @@ class V6Engine:
                 verdict, fresh = self.record_close(sym, reason_closed)
                 if verdict == "open":
                     amt = fresh
+                elif verdict == "held":
+                    continue                                    # qty mismatch, journal open: do not strip SL/TP
                 elif verdict != "flat":
                     side = 1 if int(j.get("side", 1)) > 0 else -1
                     amt = D(j.get("qty") or 0) * side or Decimal(side)
@@ -2547,15 +2771,15 @@ class V6Engine:
                 pending = tuple(f"{c}p" for c in self.st["intents"])        # pre-arm of an unresolved entry stays
                 failed, foreign = [], []
                 for o in orders:
-                    if (str(o["client_id"]).startswith(self.cfg.cid_prefix) and (o["close_position"] or o["reduce_only"])
+                    if (self._owns(o.get("client_id"), sym) and (o["close_position"] or o["reduce_only"])
                             and str(o["client_id"]) not in pending):
                         try:
                             self.x("cancel", sym, o)                 # our own stale stop, position flat
                         except ExchangeError as e:
                             failed.append((str(o["client_id"]), e))  # retried next reconcile; R3 alert below
-                    elif not (o["close_position"] or o["reduce_only"]) and str(o["client_id"]).startswith(self.cfg.cid_prefix):
+                    elif not (o["close_position"] or o["reduce_only"]) and self._owns(o.get("client_id"), sym):
                         mismatch.append(f"{sym} 예상 밖 진입 주문 {o['client_id']}")
-                    elif not str(o["client_id"]).startswith(self.cfg.cid_prefix) and (o["close_position"] or o["reduce_only"]):
+                    elif not self._owns(o.get("client_id"), sym) and (o["close_position"] or o["reduce_only"]):
                         foreign.append(o)                            # TA R3/R4: alert only for reducing (SL/TP) orders; never cancelled
                 self._residual_watch(sym, failed, foreign)
                 if f"{MARGIN}:{sym}" in self.blocks:
@@ -2587,6 +2811,8 @@ class V6Engine:
                 self.notify(f"🔵 {sym} TP1 체결 → 남은 수량 {abs(amt)} · 손절을 본절로 이동", kind="exit")
             if D(j["qty"]) != abs(amt):
                 mismatch.append(f"{sym} 수량 불일치 로컬 {j['qty']} / 거래소 {amt}")
+                if abs(amt) > D(j.get("entry_qty") or 0):
+                    j["entry_qty"] = str(abs(amt))             # a later partial is still this trade
                 j["qty"] = str(abs(amt))                       # exchange wins
                 self.save()
             if j.get("closing"):
@@ -2603,7 +2829,15 @@ class V6Engine:
                 if (self.meta.get("halted") or "").startswith("emergency"):
                     return
                 continue
-            if not self.find_stop(amt, orders):
+            owned_orders = [o for o in orders if self._owns(o.get("client_id"), sym)]
+            prot = self.find_stop(amt, owned_orders)
+            mine = next((o for o in orders if j.get("stop_cid") and o["client_id"] == j["stop_cid"]), None)
+            if mine and self.find_stop(amt, [mine]):
+                prot = mine                                     # the moved (BE) stop is the bot's stop, not an old one
+            if not prot:
+                for o in orders:                            # a stale closePosition (not ours) must not block or replace 0.75%
+                    if (o.get("type") or "").startswith("STOP") and not self._owns(o.get("client_id"), sym):
+                        self._cancel_quiet(sym, o)
                 self._alert_once(sym, "sl", "손절 주문 없음 — 재등록 시도", f"{sym} {amt} · 손절 {stp}")
                 use = amt
                 try:                                        # size the replacement from a fresh position, never above it
@@ -2617,29 +2851,26 @@ class V6Engine:
                         return
                     continue
                 orders = self.x("open_orders", sym)
+                prot = self.find_stop(amt, [o for o in orders if self._owns(o.get("client_id"), sym)])
             else:
                 self._gap_alerted.discard((sym, "sl"))
-            if j.get("unprotected") and self.find_stop(amt, orders):
+            if j.get("unprotected") and prot:
                 j.pop("unprotected", None)
                 self.save()
-            if j.get("stop_lost") and self.find_stop(amt, orders):
+            if j.get("stop_lost") and prot:
                 j.pop("stop_lost", None)                    # REST confirms a protective stop again
                 self.save()
-            prot = self.find_stop(amt, orders)
-            mine = next((o for o in orders if j.get("stop_cid") and o["client_id"] == j["stop_cid"]), None)
-            if mine and self.find_stop(amt, [mine]):
-                prot = mine                                     # the moved (BE) stop is the bot's stop, not an old one
-            if prot and prot["stop_price"] > 0 and D(prot["stop_price"]) != stp:
-                j["stop_px"] = str(prot["stop_price"])          # §8c L2: the live exchange stop is the truth
+            if prot and self._owns(prot.get("client_id"), sym) and prot["stop_price"] > 0 and D(prot["stop_price"]) != stp:
+                j["stop_px"] = str(prot["stop_price"])          # §8c L2: our live exchange stop is the truth
                 self.save()
             for o in orders:
                 if prot and o["id"] == prot["id"]:
                     continue
                 if not (o["close_position"] or o["reduce_only"]):
                     mismatch.append(f"{sym} 예상 밖 주문 {o['type']} {o['client_id']}")
-                elif (prot and (prot["close_position"] or prot is mine) and o["reduce_only"] and (o["type"] or "").startswith("STOP")
-                      and (not o["close_position"] or prot is mine) and str(o["client_id"]).startswith(self.cfg.cid_prefix)):
-                    self._cancel_quiet(sym, o)                   # leftover pre-arm / old stop, the bot's stop is live
+                elif prot and (o.get("type") or "").startswith("STOP") and (
+                        self._owns(o.get("client_id"), sym) or o.get("close_position")):
+                    self._cancel_quiet(sym, o)                   # our leftover, or a stale closePosition stop
             if prot and self.cfg.exit_mode == "full_tp_pct" and sym in self.st["pos"] and not j.get("closing"):
                 if self._ensure_full_tp(sym, j, orders):
                     continue                                # already flat (price was through the TP)
@@ -2657,6 +2888,7 @@ class V6Engine:
                 for r in (MISMATCH, UNKNOWN_ORDER):
                     if r in self.blocks:
                         self.unblock(r)
+        self._refresh_countdowns()
         self.save()
         self.check_ledger()
         self.check_halts()

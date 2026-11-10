@@ -53,6 +53,7 @@ class FakeExchange:
         self.incomes = []
         self.accepted = {}     # client id -> times accepted (duplicate detector)
         self.stops_fire = True # False: exchange stop "does not fire" (breach test)
+        self.countdown = {}    # sym -> {"ms", "set_at"}  (POST /fapi/v1/countdownCancelAll)
         self._id = itertools.count(1)
         self.kl = {}           # (sym, interval) -> kline rows (tests set them; forming bar = close_time in the future)
 
@@ -100,9 +101,11 @@ class FakeExchange:
         return []
 
     def open_orders(self, s):
+        self._housekeep(s)
         return [dict(o) for o in self.algos.values() if o["symbol"] == s]
 
     def get_order(self, s, cid):
+        self._housekeep(s)
         return dict(self.orders[cid]) if cid in self.orders else None
 
     def algo_order(self, s, cid):
@@ -165,7 +168,7 @@ class FakeExchange:
                             "orig_qty": qty, "update_time": 0, "symbol": s, "side": side, "reduce_only": reduce_only}
         return dict(self.orders[cid])
 
-    def _fill(self, s, signed, px, oid="?"):
+    def _fill(self, s, signed, px, oid="?", add=False):
         p = self.pos.get(s)
         now = int(time.time() * 1000)
         fee = abs(signed) * px * Decimal("0.0005")
@@ -175,7 +178,19 @@ class FakeExchange:
             self.pos[s] = {"amt": signed, "entry": px, "margin": abs(signed) * px / self.lev[s]}
         else:
             if (p["amt"] > 0) == (signed > 0):
-                raise AssertionError("averaging / adding to a position")
+                if not add:
+                    raise AssertionError("averaging / adding to a position")
+                new_amt = p["amt"] + signed
+                p["entry"] = (abs(p["amt"]) * p["entry"] + abs(signed) * px) / abs(new_amt)
+                p["amt"] = new_amt
+                p["margin"] = abs(p["amt"]) * p["entry"] / self.lev[s]
+                self.pos[s] = p
+                self.fills.append({"symbol": s, "order_id": oid, "trade_id": str(next(self._id)),
+                                   "side": "BUY" if signed > 0 else "SELL", "price": px,
+                                   "qty": abs(signed), "commission": fee, "realized_pnl": Decimal(0), "time": now})
+                self.incomes.append({"type": "COMMISSION", "amount": -fee, "time": now, "symbol": s,
+                                     "tran_id": str(next(self._id))})
+                return
             rpnl = (px - p["entry"]) * min(abs(signed), abs(p["amt"])) * (1 if p["amt"] > 0 else -1)
             self.wallet += rpnl
             p["amt"] += signed
@@ -206,7 +221,11 @@ class FakeExchange:
         aid = str(next(self._id))
         self.algos[aid] = {"kind": "algo", "id": aid, "client_id": cid, "symbol": s, "type": "STOP_MARKET", "side": side,
                            "stop_price": trigger, "close_position": qty is None, "reduce_only": True,
-                           "qty": Decimal(qty) if qty is not None else Decimal(0), "working_type": "MARK_PRICE"}
+                           "qty": Decimal(qty) if qty is not None else Decimal(0), "working_type": "MARK_PRICE",
+                           "placed_at": time.time()}
+        # Binance cancels a reduce-only qty STOP_MARKET within ~0.2–1.2s when the symbol is still flat.
+        if qty is not None and not p:
+            self.algos[aid]["flat_cancel_after"] = 0.2
         self.accepted[cid] = self.accepted.get(cid, 0) + 1
         self._algo_end(self.algos[aid], "NEW")
         return dict(self.algos[aid])
@@ -238,22 +257,63 @@ class FakeExchange:
         self.accepted[cid] = self.accepted.get(cid, 0) + 1
         return dict(self.orders[cid])
 
-    def fill_limit(self, cid):
-        """Test helper: the exchange reports the resting limit filled. Does nothing if it is not still NEW."""
+    def fill_limit(self, cid, qty=None):
+        """Test helper: the exchange reports a fill of the resting limit. `qty` fills only that much (partial)."""
         o = self.orders.get(cid)
-        if not o or o["status"] != "NEW":
+        if not o or o["status"] not in ("NEW", "PARTIALLY_FILLED"):
             return None
-        signed = o["orig_qty"] if o["side"] == "BUY" else -o["orig_qty"]
-        self._fill(o["symbol"], signed, o["price"], o["id"])
-        o.update(status="FILLED", executed_qty=o["orig_qty"], avg_price=o["price"])
+        left = o["orig_qty"] - o["executed_qty"]
+        q = left if qty is None else min(Decimal(qty), left)
+        if q <= 0:
+            return None
+        signed = q if o["side"] == "BUY" else -q
+        self._fill(o["symbol"], signed, o["price"], o["id"], add=o["executed_qty"] > 0)
+        done = o["executed_qty"] + q
+        o.update(executed_qty=done, avg_price=o["price"],
+                 status="FILLED" if done >= o["orig_qty"] else "PARTIALLY_FILLED")
         return dict(o)
+
+    def countdown_cancel_all(self, symbol, countdown_ms):
+        """POST /fapi/v1/countdownCancelAll. 0 stops the timer. Otherwise open orders die when it lapses."""
+        ms = int(countdown_ms)
+        if ms <= 0:
+            self.countdown.pop(symbol, None)
+            return {"symbol": symbol, "countdownTime": 0}
+        self.countdown[symbol] = {"ms": ms, "set_at": time.time()}
+        return {"symbol": symbol, "countdownTime": ms}
+
+    def _housekeep(self, symbol):
+        """Exchange-side maintenance observed on testnet: a flat reduce-only qty stop dies within ~1s,
+        and a countdown timer cancels every open order on the symbol when it reaches 0."""
+        now = time.time()
+        for aid, o in list(self.algos.items()):
+            if o["symbol"] != symbol or o["symbol"] in self.pos:
+                continue
+            delay = o.get("flat_cancel_after")
+            if delay is None or now - o.get("placed_at", now) < delay:
+                continue
+            self.algos.pop(aid, None)
+            self._algo_end(o, "CANCELED")
+        c = self.countdown.get(symbol)
+        if c and (now - c["set_at"]) * 1000 >= c["ms"]:
+            self.countdown.pop(symbol, None)
+            self._cancel_symbol_orders(symbol)
+
+    def _cancel_symbol_orders(self, symbol):
+        for o in list(self.orders.values()):
+            if o["symbol"] == symbol and o.get("status") in ("NEW", "PARTIALLY_FILLED"):
+                o["status"] = "CANCELED"
+        for aid, o in list(self.algos.items()):
+            if o["symbol"] == symbol:
+                self.algos.pop(aid, None)
+                self._algo_end(o, "CANCELED")
 
     def cancel(self, s, o):
         if self.algos.pop(o["id"], None) is not None:
             self._algo_end(o, "CANCELED")
             return
         cid = o.get("client_id")
-        if cid in self.orders and self.orders[cid].get("status") == "NEW":
+        if cid in self.orders and self.orders[cid].get("status") in ("NEW", "PARTIALLY_FILLED"):
             self.orders[cid]["status"] = "CANCELED"
 
     # test helpers
