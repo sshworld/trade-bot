@@ -23,7 +23,7 @@ def _holds(eng):
 def _hold_once(offline, eng):
     """Empty bundled book, then a readable empty per-symbol book: place hits -4130."""
     offline.fx.inject("open_orders_all", lambda fn: [], times=1)
-    offline.fx.inject("open_orders", lambda fn, sym: [], times=2)
+    offline.fx.inject("open_orders", lambda fn, sym: [], times=8)
     eng.audit_protection()
 
 

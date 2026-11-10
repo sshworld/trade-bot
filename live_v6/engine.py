@@ -233,6 +233,9 @@ class V6Engine:
         self._tp_fail_alerted: set = set()                  # coins already told that a take-profit was rejected
         self._dup_unknown: set = set()                      # (sym, what) already alerted for an unreadable -4116
         self._dup_retry_at: dict = {}                       # (sym, what) → earliest clock() to look at that -4116 again
+        self._tp_retry_at: dict = {}                        # (sym, what) → earliest clock() for another rejected-TP cycle
+        self._tp_cooled: set = set()                        # rejected TPs whose next try is a single POST, not 1s+3s+10s
+        self._armed_now: set = set()                        # symbols already stop-armed in this reconcile
         inner = getattr(ex, "inner", ex)
         if hasattr(inner, "on_rate_limit"):
             inner.on_rate_limit = self._on_rate_limit
@@ -1193,30 +1196,36 @@ class V6Engine:
             seq = int(j.get("stop_seq", 0))
             j["stop_seq"] = seq + 1
             self.save()
+            cid_s = f"{j['cid']}s{seq}"
             try:
-                self.x("stop", sym, self._cs(j), D(j["stop_px"]), f"{j['cid']}s{seq}")
+                self.x("stop", sym, self._cs(j), D(j["stop_px"]), cid_s)
+                j["stop_cid"] = cid_s                       # accepted: later fills can find this id after seq grows
+                self.save()
             except WouldTrigger:
                 return "rejected"
             except OrderRejected as e:
                 if getattr(e, "code", None) == -4130:
                     saw_4130 = True
+                    last = str(e)
+                    log.error("%s closePosition stop attempt %d already present (-4130)", sym, i + 1)
+                    self._stop_covers(sym, j)                # confirm before any alert
+                    try:
+                        oo = self.x("open_orders", sym)
+                    except ExchangeError as ex:
+                        last = str(ex)
+                        oo = None
+                    cp = self._close_position_stop(j, oo) if oo is not None else None
+                    if cp:
+                        self._release_cp_hold(sym)
+                        j["stop_px"] = str(cp["stop_price"])
+                        j["stop_cid"] = cp.get("client_id")
+                        j.update(stop_confirmed_ms=self.now_ms(), stop_px_entry=j.get("stop_px_entry") or j["stop_px"])
+                        self._cancel_quiet(sym, pre)
+                        self.save()
+                        return "ok"
                     if sym not in self._cp_hold:
                         self.alert(f"보호 점검 보류 — {sym}", "진입 손절 · -4130 손절 존재 · 조회와 불일치 · 유지")
                     self._note_cp_hold(sym)                 # same hold as a missing-stop -4130: stop POSTing
-                    last = str(e)
-                    log.error("%s closePosition stop attempt %d already present (-4130)", sym, i + 1)
-                    try:
-                        oo = self.x("open_orders", sym)
-                        cp = self._close_position_stop(j, oo)
-                        if cp:
-                            self._release_cp_hold(sym)
-                            j["stop_px"] = str(cp["stop_price"])
-                            j.update(stop_confirmed_ms=self.now_ms(), stop_px_entry=j["stop_px"])
-                            self._cancel_quiet(sym, pre)
-                            self.save()
-                            return "ok"
-                    except ExchangeError as ex:
-                        last = str(ex)
                     break                                   # one -4130 is enough; do not POST s{n} again
                 else:
                     rejected = True
@@ -1230,6 +1239,7 @@ class V6Engine:
                 cp = self._close_position_stop(j, oo)
                 if cp:
                     j["stop_px"] = str(cp["stop_price"])
+                    j["stop_cid"] = cp.get("client_id")
                     j.update(stop_confirmed_ms=self.now_ms(), stop_px_entry=j["stop_px"])   # live log only
                     self._cancel_quiet(sym, pre)
                     self.save()
@@ -1432,11 +1442,12 @@ class V6Engine:
         seq = int(j.get("stop_seq", 0))
         j["stop_seq"] = seq + 1
         cid = f"{j['cid']}s{seq}"
-        j["stop_cid"] = cid
         self.save()
 
         def place(cid=cid):
             self.x("stop", sym, self._cs(j), D(j["stop_px"]), cid)
+            j["stop_cid"] = cid                         # only a stop the exchange accepted
+            self.save()
 
         return cid, place
 
@@ -1468,7 +1479,7 @@ class V6Engine:
         self._protect_close_failed = not bool(self.close(sym, "protection_failed"))
         return False
 
-    def _arm_protection(self, sym, j, what, cid, place, renew=None) -> bool:
+    def _arm_protection(self, sym, j, what, cid, place, renew=None, once=False) -> bool:
         """Place `place()`. On failure alert and retry at 1s, 3s, 10s. Still failing → reduceOnly market close + 🚨.
         WouldTrigger propagates so the caller can close just the qty that is already through. -4116 is success only
         when that client id is still on the open book. A cancelled or expired id is not placed: `renew` mints the
@@ -1482,7 +1493,8 @@ class V6Engine:
         self._protect_close_failed = False
         baseline = abs(D(j.get("qty") or 0))
         last = None
-        for i, delay in enumerate((*PROTECT_RETRY_S, None)):
+        steps = (None,) if once else (*PROTECT_RETRY_S, None)
+        for i, delay in enumerate(steps):
             seen = self._qty_vs(sym, baseline) if baseline > 0 else "same"
             if seen == "unknown":
                 self.alert(f"보호 주문 실패 — {sym} 청산 보류", f"{what} · 포지션 조회 불가 · 손절·익절 유지")
@@ -1536,7 +1548,10 @@ class V6Engine:
                     if state == "yes":
                         return True
                     if state == "unknown":
-                        self.alert(f"보호 주문 실패 — {sym} 청산 보류", f"{what} · 주문 조회 불가 · 유지 · {e}")
+                        if str(what).startswith("익절"):
+                            self._tp_fail_once(sym, what, e)
+                        else:
+                            self.alert(f"보호 주문 실패 — {sym} 청산 보류", f"{what} · 주문 조회 불가 · 유지 · {e}")
                         return False
             except ExchangeError as e:
                 last = e
@@ -1544,7 +1559,10 @@ class V6Engine:
                 if state == "yes":
                     return True
                 if state == "unknown":
-                    self.alert(f"보호 주문 실패 — {sym} 청산 보류", f"{what} · 주문 조회 불가 · 유지 · {e}")
+                    if str(what).startswith("익절"):
+                        self._tp_fail_once(sym, what, e)
+                    else:
+                        self.alert(f"보호 주문 실패 — {sym} 청산 보류", f"{what} · 주문 조회 불가 · 유지 · {e}")
                     return False
             if delay is not None:
                 if not str(what).startswith("익절"):
@@ -1558,6 +1576,7 @@ class V6Engine:
 
     def _arm_stop(self, sym, j, amt) -> bool:
         """One closePosition STOP at the journal stop. False → the position was closed or the read stayed unknown."""
+        self._armed_now.add(sym)
         if self._dup_paused(sym, "손절"):
             return False
         cid, place = self._mint_stop(sym, j)
@@ -1573,7 +1592,8 @@ class V6Engine:
         on CONTRACT_PRICE (TA 2026-11-02). The +3R runner (which='t3') is MARK_PRICE. A failed placement is retried
         (policy v1). A live order with this client id is left as-is. A cancelled id is sent again under the next id."""
         what = f"익절 {which}"
-        if self._dup_paused(sym, what):
+        key = (sym, what)
+        if self._dup_paused(sym, what) or self.clock() < self._tp_retry_at.get(key, 0):
             return False
         if (which == "t1" and j.get("tp1_done")) or (which == "t2" and j.get("tp2_done")) \
                 or (which == "t3" and j.get("tp3_done")):
@@ -1616,10 +1636,17 @@ class V6Engine:
             return new, place_new
 
         try:
-            return self._arm_protection(sym, j, what, cid, place, renew=renew)
+            ok = self._arm_protection(sym, j, what, cid, place, renew=renew, once=key in self._tp_cooled)
         except WouldTrigger:
             self._tp_fail_once(sym, what, "즉시 발동")
-            return False
+            ok = False
+        if ok:
+            self._tp_cooled.discard(key)
+            self._tp_retry_at.pop(key, None)
+        else:
+            self._tp_cooled.add(key)
+            self._tp_retry_at[key] = self.clock() + PROTECT_AUDIT_S
+        return ok
 
     def _arm_unsplittable(self, sym, j):
         """Cannot split off TP1: +3R reduceOnly TP and the SL, both on the full qty. No TP is not allowed."""
@@ -1643,9 +1670,9 @@ class V6Engine:
     def _place_tps(self, sym, j):
         try:
             tp1, q1, tp2, q2 = self._tp_levels(sym, j)
-        except Exception as e:  # noqa: BLE001  cannot price a TP → do not leave the position without one
+        except Exception as e:  # noqa: BLE001  cannot price a TP → keep the stop, never flatten
             log.error("%s TP levels failed: %r", sym, e)
-            self._give_up_protection(sym, j, "익절 가격", e)
+            self._tp_fail_once(sym, "익절 가격", e)
             return
         if q1 <= 0:
             qty = D(j["qty"])
@@ -1805,6 +1832,8 @@ class V6Engine:
         (not confirmed: the old stop stays, one 🚨, retried by reconcile)."""
         s, breach = int(j.get("side", 1)), ("be_stop_breach" if why == "be" else "trail_stop_breach")
         if mk is not None and s * (D(mk) - tgt) <= 0:             # a stop there would fire at once → close now
+            if self._hold_keeps_stop(sym, j, why):
+                return "pending"                              # a hold is not a reason to flatten
             log.warning("%s mark %s already beyond %s stop %s → close remainder", sym, mk, why, tgt)
             self.close(sym, breach)                               # (old stop stays until flat; _after_flat cleans up)
             return "closed"
@@ -1817,6 +1846,8 @@ class V6Engine:
             self.x("stop", sym, self._cs(j), tgt, cid, qty=abs(amt))
             sent = True
         except WouldTrigger:                                      # price already back through the level → close now
+            if self._hold_keeps_stop(sym, j, why):
+                return "pending"
             self.close(sym, breach)
             return "closed"
         except ExchangeError as e:
@@ -2052,17 +2083,34 @@ class V6Engine:
         self._tp_fail_alerted.discard(sym)
         self._dup_unknown = {k for k in self._dup_unknown if k[0] != sym}
         self._dup_retry_at = {k: v for k, v in self._dup_retry_at.items() if k[0] != sym}
+        self._tp_cooled = {k for k in self._tp_cooled if k[0] != sym}
+        self._tp_retry_at = {k: v for k, v in self._tp_retry_at.items() if k[0] != sym}
 
-    def _hold_should_rearm(self, sym, orders) -> bool:
-        """A failed read never reaches here. A successful book that shows other orders
-        and no covering stop means the stop is absent: re-arm now. A successful empty
-        list retries once a minute, not every reconcile."""
+    @staticmethod
+    def _book_sig(orders):
+        return tuple(sorted(str(o.get("client_id") or o.get("id") or "") for o in orders))
+
+    def _hold_keeps_stop(self, sym, j, why) -> bool:
+        """During a -4130 hold a breakeven/trail that would fire now keeps the old stop."""
         if sym not in self._cp_hold:
             return False
-        sig = tuple(sorted(str(o.get("client_id") or o.get("id") or "") for o in orders))
+        if not j.get(f"{why}_hold_alerted"):
+            j[f"{why}_hold_alerted"] = True
+            self.alert(f"보호 점검 보류 — {sym}",
+                       f"{'본절' if why == 'be' else '추적'} 이동 · 보류 중 시장가 청산 안 함 · 기존 손절 유지")
+            self.save()
+        return True
+
+    def _hold_should_rearm(self, sym, orders) -> bool:
+        """A failed read never reaches here. A book whose order set changed (a TP
+        appeared, or the empty book gained orders) re-arms now. An unchanged book,
+        empty or not, retries once per 60s."""
+        if sym not in self._cp_hold:
+            return False
+        sig = self._book_sig(orders)
         due = self.clock() >= self._cp_retry_at.get(sym, 0)
         changed = bool(orders) and sig != self._cp_book_sig.get(sym)
-        if not (changed or (not orders and due)):
+        if not (changed or due):
             return False
         self._cp_book_sig[sym] = sig
         self._cp_retry_at[sym] = self.clock() + PROTECT_AUDIT_S
@@ -2710,6 +2758,8 @@ class V6Engine:
 
     # ───────────────────────── reconcile (exchange → local) ─────────────────────────
     def reconcile(self):
+        self._armed_now = set()
+        self._in_reconcile = True
         if self.st["intents"]:
             self.resolve_intents()                              # unknown entry outcomes first (by client id)
         acct = self.x("account")
@@ -2738,6 +2788,7 @@ class V6Engine:
         for sym in self.cfg.symbols:
             amt = self._row_amt(pos, sym)
             if amt is None:
+                book_unread = True                       # a missing row is not a clean pass
                 continue                                 # unknown: keep the journal in risk, do not cancel SL/TP
             j = self.st["pos"].get(sym)
             try:
@@ -2840,6 +2891,7 @@ class V6Engine:
             if mk is not None and ((amt > 0 and mk <= stp) or (amt < 0 and mk >= stp)):
                 self.breach_check(sym, mk, "5s reconcile")
                 if (self.meta.get("halted") or "").startswith("emergency"):
+                    self._in_reconcile = False
                     return
                 continue
             if not self.find_stop(amt, orders):
@@ -2861,6 +2913,7 @@ class V6Engine:
                                 if fresh not in (None, 0):
                                     self.emergency_flatten_all(f"unprotected {sym}")
                             if self.meta.get("halted", "") and str(self.meta["halted"]).startswith("emergency"):
+                                self._in_reconcile = False
                                 return
                             continue
                     else:
@@ -2868,6 +2921,8 @@ class V6Engine:
                             orders = self.x("open_orders", sym)
                         except ExchangeError:
                             continue
+                if sym in self._cp_hold and sym not in self._cp_book_sig:
+                    self._cp_book_sig[sym] = self._book_sig(orders)
             else:
                 self._release_cp_hold(sym)                  # covering stop is visible again
             if self.find_stop(amt, orders) and j.get("unprotected"):
@@ -2903,11 +2958,11 @@ class V6Engine:
                     self._manage_tps(sym, j, amt, orders, mk, hold=True)
             if prot and self.cfg.trail_atr_k and sym in self.st["pos"] and not self.st["pos"][sym].get("closing"):
                 self._trail(sym, self.st["pos"][sym], amt, mk)
-        if book_unread:
-            pass                                            # an unread coin must not advance or clear the block
-        elif mismatch:
+        if mismatch:
             self._consistent = 0
             self.block(MISMATCH, "; ".join(mismatch), "대조 불일치 — 신규 진입 중단")
+        elif book_unread:
+            pass                                            # unread only blocks a clean pass from advancing or clearing
         else:
             self._consistent += 1
             if self._consistent >= 2:
@@ -2916,6 +2971,8 @@ class V6Engine:
                         self.unblock(r)
         self.save()
         self._audit_protection_if_due()
+        self._in_reconcile = False
+        self._armed_now = set()
         self.check_ledger()
         self.check_halts()
 
@@ -2937,6 +2994,8 @@ class V6Engine:
     def audit_protection(self):
         """Once a minute: each known nonzero position has its SL and its stage TP. Missing → retry, then market
         close. A symbol absent from the positions response is unknown: this pass does not cancel or close it."""
+        if not getattr(self, "_in_reconcile", False):
+            self._armed_now = set()                 # a direct audit is not the reconcile that just armed
         if not self.st.get("pos"):
             return
         try:
@@ -2973,19 +3032,25 @@ class V6Engine:
                 orders = self.x("open_orders", sym)
             except ExchangeError as e:
                 log.error("%s audit order read unknown — SL/TP left untouched", sym)
-                if sym not in self._audit_unknown:
+                since = self._book_down_since.get(sym)
+                now = self.clock()
+                if since is None:
+                    self._book_down_since[sym] = now        # same 60s rule as a reconcile read failure
+                elif now - since >= self.cfg.transient_alert_s and sym not in self._audit_unknown:
                     self._audit_unknown.add(sym)
                     self.alert(f"보호 점검 보류 — {sym}", f"주문 조회 불가 · 손절·익절 유지 · {e}")
                 return
         self._audit_unknown.discard(sym)
+        self._book_down_since.pop(sym, None)            # a successful confirm ends the outage window
         seen = self.find_stop(amt, orders)
+        already = sym in self._armed_now
         if seen:
             self._release_cp_hold(sym)                      # covering stop is visible: the -4130 hold may alert again
-        elif sym in self._cp_hold and self._hold_should_rearm(sym, orders):
+        elif not already and sym in self._cp_hold and self._hold_should_rearm(sym, orders):
             if not self._arm_stop(sym, j, amt) or not self._position_open(sym):
                 if not self._position_open(sym) or sym not in self._cp_hold:
                     return
-        elif sym not in self._cp_hold:
+        elif not already and sym not in self._cp_hold:
             if not self._arm_stop(sym, j, amt) or not self._position_open(sym):
                 if not self._position_open(sym) or sym not in self._cp_hold:
                     return

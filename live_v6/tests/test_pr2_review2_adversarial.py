@@ -117,6 +117,12 @@ def test_audit_unknown_confirm_alerts_and_does_not_act(offline):
     eng.audit_protection()
     assert _ids(_orders(offline)) == kept
     assert offline.amt(DOGE) == amt and not _closes(offline)
+    assert not any("보류" in m or "조회 불가" in m for m in eng.tg.sent)
+    eng.clock.off += eng.cfg.transient_alert_s + 1
+    offline.fx.inject("open_orders_all", lambda fn: [], times=1)
+    offline.fx.inject("open_orders", "unavailable", times=1)
+    eng.audit_protection()
+    assert _ids(_orders(offline)) == kept and offline.amt(DOGE) == amt and not _closes(offline)
     assert any(
         "보류" in m or "조회 불가" in m or "확인 불가" in m or "점검" in m
         for m in eng.tg.sent
@@ -132,6 +138,11 @@ def test_unknown_confirm_with_missing_sl_still_alerts(offline):
         offline.inner.algos.pop(o["id"], None)
     amt = offline.amt(DOGE)
     assert not _stops(offline)
+    offline.fx.inject("open_orders_all", lambda fn: [], times=1)
+    offline.fx.inject("open_orders", "unavailable", times=1)
+    eng.audit_protection()
+    assert offline.amt(DOGE) == amt and not _closes(offline)
+    eng.clock.off += eng.cfg.transient_alert_s + 1
     offline.fx.inject("open_orders_all", lambda fn: [], times=1)
     offline.fx.inject("open_orders", "unavailable", times=1)
     eng.audit_protection()
@@ -282,9 +293,11 @@ def test_persistent_unknown_confirm_does_not_stack_or_flatten(offline):
     amt = offline.amt(DOGE)
     offline.fx.inject("open_orders_all", lambda fn: [], times=5)
     offline.fx.inject("open_orders", "unavailable", times=5)
-    for _ in range(5):
+    for i in range(5):
+        if i == 4:
+            eng.clock.off += eng.cfg.transient_alert_s + 1
         eng.audit_protection()
     assert _ids(_orders(offline)) == kept
     assert offline.amt(DOGE) == amt and not _closes(offline)
     notes = [m for m in eng.tg.sent if "보류" in m or "조회 불가" in m or "확인 불가" in m or "점검" in m]
-    assert notes, f"five unknown audits were silent: {eng.tg.sent}"
+    assert len(notes) == 1, notes

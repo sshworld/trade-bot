@@ -26,7 +26,7 @@ def _holds(eng, sym=None):
     return rows
 
 
-def _empty_book_hold(offline, eng, times=4):
+def _empty_book_hold(offline, eng, times=12):
     offline.fx.inject("open_orders_all", lambda fn: [], times=1)
     offline.fx.inject("open_orders", lambda fn, sym: [], times=times)
     eng.audit_protection()

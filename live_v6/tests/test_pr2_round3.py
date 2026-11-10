@@ -152,8 +152,16 @@ def test_tp_reject_unreadable_confirm_alerts_once(offline, side):
         if o["symbol"] == DOGE and str(o["client_id"]).endswith("t1"):
             offline.inner.algos.pop(o["id"], None)
     _sleeps(eng)
+    seen = {"n": 0}
+
+    def algo_then_down(fn, sym, cid):
+        seen["n"] += 1
+        if seen["n"] <= 2:                          # exit-fill and the pre-check can read; the reject confirm cannot
+            return fn(sym, cid)
+        raise ExchangeUnavailable("confirm down")
+
     offline.fx.inject("take_profit", "reject", times=40)
-    offline.fx.inject("algo_order", "unavailable", times=40)
+    offline.fx.inject("algo_order", algo_then_down, times=40)
     for _ in range(4):
         eng.tick()
     raw = [m for m in _alerts(eng) if "조회 불가" in m and DOGE in m]

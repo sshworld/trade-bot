@@ -41,8 +41,10 @@ def test_dedup_does_not_suppress_other_coin(offline):
     open_pos(offline, eng, 1)
     amt_d, amt_s = offline.amt(DOGE), offline.amt(SOL)
     kept = _ids(_orders(offline)) | _ids(_orders(offline, SOL))
-    offline.fx.inject("open_orders_all", lambda fn: [], times=1)
+    offline.fx.inject("open_orders_all", lambda fn: [], times=2)
     offline.fx.inject("open_orders", "unavailable", times=99)
+    eng.audit_protection()
+    eng.clock.off += eng.cfg.transient_alert_s + 1
     eng.audit_protection()
     assert any("점검 보류" in m and DOGE in m for m in _alerts(eng)), _alerts(eng)
     assert any("점검 보류" in m and SOL in m for m in _alerts(eng)), _alerts(eng)
@@ -64,7 +66,7 @@ def test_unknown_then_readable_missing_sl_reinstalls(offline):
     offline.fx.inject("open_orders", "unavailable", times=1)
     eng.audit_protection()
     assert not _stops(offline) and not _closes(offline)
-    assert _holds(eng, DOGE), "first unknown confirm must alert"
+    assert not _holds(eng, DOGE)
     _sleeps(eng)
     eng.audit_protection()
     assert offline.amt(DOGE) == amt and not _closes(offline)
@@ -83,11 +85,19 @@ def test_flapping_unknown_known_realerts(offline):
     offline.fx.inject("open_orders_all", lambda fn: [], times=1)
     offline.fx.inject("open_orders", "unavailable", times=1)
     eng.audit_protection()
+    eng.clock.off += eng.cfg.transient_alert_s + 1
+    offline.fx.inject("open_orders_all", lambda fn: [], times=1)
+    offline.fx.inject("open_orders", "unavailable", times=1)
+    eng.audit_protection()
     assert len(_holds(eng, DOGE)) == 1
     eng.audit_protection()  # bundled + per-symbol readable, SL still there
     assert _ids(_orders(offline)) == kept and offline.amt(DOGE) == amt
     assert not _closes(offline)
     n = len(_holds(eng, DOGE))
+    offline.fx.inject("open_orders_all", lambda fn: [], times=1)
+    offline.fx.inject("open_orders", "unavailable", times=1)
+    eng.audit_protection()
+    eng.clock.off += eng.cfg.transient_alert_s + 1
     offline.fx.inject("open_orders_all", lambda fn: [], times=1)
     offline.fx.inject("open_orders", "unavailable", times=1)
     eng.audit_protection()
@@ -105,10 +115,18 @@ def test_dedup_state_does_not_survive_restart(offline):
     offline.fx.inject("open_orders_all", lambda fn: [], times=1)
     offline.fx.inject("open_orders", "unavailable", times=1)
     eng.audit_protection()
+    eng.clock.off += eng.cfg.transient_alert_s + 1
+    offline.fx.inject("open_orders_all", lambda fn: [], times=1)
+    offline.fx.inject("open_orders", "unavailable", times=1)
+    eng.audit_protection()
     assert len(_holds(eng, DOGE)) == 1
     eng2 = engine_for(offline, "e")
     assert DOGE in eng2.st["pos"]
     assert not getattr(eng2, "_audit_unknown", set())
+    offline.fx.inject("open_orders_all", lambda fn: [], times=1)
+    offline.fx.inject("open_orders", "unavailable", times=1)
+    eng2.audit_protection()
+    eng2.clock.off += eng2.cfg.transient_alert_s + 1
     offline.fx.inject("open_orders_all", lambda fn: [], times=1)
     offline.fx.inject("open_orders", "unavailable", times=1)
     eng2.audit_protection()
@@ -133,7 +151,9 @@ def test_persistent_unknown_is_rechecked_each_audit(offline):
 
     offline.fx.inject("open_orders_all", lambda fn: [], times=5)
     offline.fx.inject("open_orders", boom, times=5)
-    for _ in range(5):
+    for i in range(5):
+        if i == 4:
+            eng.clock.off += eng.cfg.transient_alert_s + 1
         eng.audit_protection()
     assert n["n"] == 5, f"confirm was not retried each audit: {n['n']}"
     assert _ids(_orders(offline)) == kept
@@ -187,9 +207,12 @@ def test_unknown_confirm_never_places_cancels_or_flattens(offline):
     amt = offline.amt(DOGE)
     n_stop = len([c for c in offline.fx.calls if c[0] == "stop"])
     n_tp = len([c for c in offline.fx.calls if c[0] == "take_profit"])
-    offline.fx.inject("open_orders_all", lambda fn: [], times=1)
-    offline.fx.inject("open_orders", "unavailable", times=1)
-    offline.fx.inject("cancel", "unavailable", times=1)
+    offline.fx.inject("open_orders_all", lambda fn: [], times=2)
+    offline.fx.inject("open_orders", "unavailable", times=2)
+    offline.fx.inject("cancel", "unavailable", times=2)
+    eng.audit_protection()
+    assert not _holds(eng, DOGE)
+    eng.clock.off += eng.cfg.transient_alert_s + 1
     eng.audit_protection()
     assert _ids(_orders(offline)) == kept
     assert offline.amt(DOGE) == amt and not _closes(offline)
