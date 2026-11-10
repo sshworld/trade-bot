@@ -350,6 +350,7 @@ class V6Engine:
     def resume(self):
         self.meta.pop("halted", None)
         self.meta.pop("daily_halt", None)       # peak_dd is NOT cleared here: team-only, live_v6/tools/clear_peak_halt.py
+        self._lock_hold_alerted.clear()          # a later incident, including a new emergency reason, can alert
         self.save()
 
     def _peak_guard(self):
@@ -2977,7 +2978,7 @@ class V6Engine:
         """§8c L3 only: equity ≤ halt_fraction × C0 (−25 %), a position that stays unprotected after L1, or API dead > 5 min with an
         unprotected position → close ALL positions (reduceOnly MARKET) + halt."""
         if self._schema_lock:
-            self._lock_hold_alert("*", "emergency_flatten", reason)
+            self._lock_hold_alert("*", f"emergency_flatten:{reason}", reason)
             return
         self.halt(f"emergency: {reason}")
         self.alert("비상청산 — 전 포지션 정리 + 매매 중단", reason)
@@ -3672,6 +3673,7 @@ class V6Engine:
             if amt == 0:
                 u = self.st["unknown"].pop(sym, None)
                 if u is not None:                               # TA R4: resolved by hand (or its stop fired)
+                    self._clear_symbol_holds(sym)               # this path does not go through _after_flat
                     self.save()
                     self.notify(f"✅ 기록 없는 포지션 해소 — {sym} {u.get('amt')} 거래소에서 0 · 이 코인 신규 진입 재개", kind="recovery")
                 pending = tuple(f"{c}p" for c in self.st["intents"])        # pre-arm of an unresolved entry stays
