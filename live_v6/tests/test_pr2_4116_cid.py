@@ -108,7 +108,7 @@ def test_4116_unbooked_t1_arms_be_and_t3_once(offline, side):
     open_pos(offline, eng, side)
     j = eng.st["pos"][DOGE]
     t1 = next(o for o in _tps(offline) if str(o["client_id"]).endswith("t1"))
-    _spend(offline, t1)
+    _spend(offline, t1, executed=D(j["tp"]["q1"]), status="FINISHED")
     _sync_qty(offline, j, D(j["tp"]["q2"]), side)
     eng.save()
     _park(offline, eng, j, side)
@@ -144,7 +144,7 @@ def test_4116_unbooked_later_tp_is_booked_once(offline, side, which):
         j["tp1_done"] = True
         j["be_done"] = True
     left = covered - D(1)
-    _spend(offline, old)
+    _spend(offline, old, executed=covered, status="FINISHED")
     _sync_qty(offline, j, left, side)
     eng.save()
     offline.fx.inject("take_profit", _reject_cid(old["client_id"]), times=20)

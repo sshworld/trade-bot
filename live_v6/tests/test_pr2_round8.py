@@ -277,7 +277,7 @@ def test_m8_1_filled_short_of_target_can_be_replaced(offline, side):
     assert (j.get("tp_market_once") or {}).get("t1") is None
     live = _live_tp(offline, "t1")
     assert len(live) == 1 and D(live[0]["qty"]) == unrelated
-    assert offline.amt(DOGE) == qty - side * (q1 - unrelated)
+    assert offline.amt(DOGE) == qty - side * q1
     assert _covered(offline)
 
 

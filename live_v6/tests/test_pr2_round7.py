@@ -75,9 +75,10 @@ def test_t2_1_stale_qty_is_not_sold_after_the_status_changes(offline, side, stat
             st["executed_qty"] = D(0)
             return st
         st["status"] = status
-        if status in {"FILLED", "FINISHED"} and abs(offline.amt(DOGE)) == abs(qty):
+        if status in {"FILLED", "FINISHED"}:
             st["executed_qty"] = q1
-            _shrink(offline, side, q1)
+            if abs(offline.amt(DOGE)) == abs(qty):
+                _shrink(offline, side, q1)
         else:
             st["executed_qty"] = D(0)
         return st
@@ -324,7 +325,8 @@ def test_m7_1_failed_query_after_cancel_replaces_the_tp(offline, side):
     eng.tick()
     assert len(_markets(offline)) == before
     assert offline.amt(DOGE) == qty
-    assert _live_tp(offline, "t1")
+    assert [o for o in offline.inner.algos.values()
+            if o["symbol"] == DOGE and "TAKE_PROFIT" in (o.get("type") or "") and "t1" in str(o.get("client_id"))]
     assert _stop_algos(offline)
 
 
