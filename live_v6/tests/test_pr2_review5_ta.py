@@ -73,12 +73,13 @@ def _inject_empty_hold(offline, n_all=80, n_oo=4000, n_stop=80):
     offline.fx.inject("stop", _reject_cp, times=n_stop)
 
 
-def _hide_stop_as_partial(offline, eng, filled=D(6), left=D(4)):
+def _hide_stop_as_partial(offline, eng, filled=D(6), left=D(4), side=1):
     """Terminal partial on the live stop: remaining qty is still a position."""
     j = eng.st["pos"][DOGE]
     j["qty"] = str(filled + left)
     eng.save()
-    offline.inner.pos[DOGE]["amt"] = left
+    offline.inner.pos[DOGE]["amt"] = left * side
+    left = left * side
     for o in list(offline.inner.algos.values()):
         if o["symbol"] == DOGE and (o["type"] or "").startswith("STOP"):
             offline.inner.algos.pop(o["id"], None)
@@ -99,11 +100,12 @@ def _adopt_state():
 
 # ─── R1 ──────────────────────────────────────────────────────────────────────
 
-def test_r1_hold_zero_reposts_alert_once_be_once(offline):
+@pytest.mark.parametrize("side", [1, -1])
+def test_r1_hold_zero_reposts_alert_once_be_once(offline, side):
     """-4130 hold: 0 extra stop POSTs across many ticks, one missing-SL alert,
     TP1 fill still moves SL to breakeven exactly once, _manage_tps is not skipped."""
     eng = engine_for(offline, "e")
-    open_pos(offline, eng, 1)
+    open_pos(offline, eng, side)
     _sleeps(eng)
     qty = offline.amt(DOGE)
     assert eng.st["pos"][DOGE]["tp"].get("tp1")
@@ -157,11 +159,12 @@ def test_r1_hold_zero_reposts_alert_once_be_once(offline):
     assert not _closes(offline) and not _market_closes(offline)
 
 
-def test_r1_tp1_be_then_unknown_book_no_posts(offline):
+@pytest.mark.parametrize("side", [1, -1])
+def test_r1_tp1_be_then_unknown_book_no_posts(offline, side):
     """Combo: TP1 fill during -4130 hold, then the order book becomes unreadable.
     Alert once, 0 further stop/TP POSTs, residual qty unchanged, no flatten."""
     eng = engine_for(offline, "e")
-    open_pos(offline, eng, 1)
+    open_pos(offline, eng, side)
     _sleeps(eng)
     qty = offline.amt(DOGE)
     _inject_empty_hold(offline)
@@ -189,13 +192,14 @@ def test_r1_tp1_be_then_unknown_book_no_posts(offline):
 
 # ─── R2 ──────────────────────────────────────────────────────────────────────
 
-def test_r2_crash_journal_unknown_book_then_place(offline):
+@pytest.mark.parametrize("side", [1, -1])
+def test_r2_crash_journal_unknown_book_then_place(offline, side):
     """Crash before _place_tps: unknown book → alert once, 0 TP POSTs, qty same.
     Once the book is readable the monitor places the TP."""
     eng = engine_for(offline, "e")
     real = eng._place_tps
     eng._place_tps = lambda *a, **k: None
-    open_pos(offline, eng, 1)
+    open_pos(offline, eng, side)
     eng._place_tps = real
     assert "tp" not in eng.st["pos"][DOGE]
     qty = offline.amt(DOGE)
@@ -250,13 +254,14 @@ def test_r2_adopted_no_tp_and_4130_on_stop(offline):
 
 # ─── R3 ──────────────────────────────────────────────────────────────────────
 
-def test_r3_partial_residual_hold_then_restart(offline):
+@pytest.mark.parametrize("side", [1, -1])
+def test_r3_partial_residual_hold_then_restart(offline, side):
     """Combo: terminal partial residual + -4130 hold + process restart.
     Residual stays a live position (qty=4), missing-coin position query is not
     flat, hold does not re-POST, restart (memory hold cleared) rearms an SL."""
     eng = engine_for(offline, "e")
-    open_pos(offline, eng, 1)
-    left = _hide_stop_as_partial(offline, eng)
+    open_pos(offline, eng, side)
+    left = _hide_stop_as_partial(offline, eng, side=side)
     _sleeps(eng)
     _inject_empty_hold(offline)
 
@@ -265,7 +270,7 @@ def test_r3_partial_residual_hold_then_restart(offline):
         eng.tick()
         seen.append(offline.amt(DOGE))
     assert seen[-1] == left and set(seen) == {left}, seen
-    assert D(eng.st["pos"][DOGE]["qty"]) == left
+    assert D(eng.st["pos"][DOGE]["qty"]) == abs(left)
     assert DOGE in eng.st["pos"] and not _closes(offline)
     posts = len(_stop_posts(offline))
     _monitor(eng, 3)
@@ -290,19 +295,20 @@ def test_r3_partial_residual_hold_then_restart(offline):
     _monitor(eng2, 3)
     covered = [o for o in offline.inner.open_orders(DOGE)
                if (o["type"] or "").startswith("STOP")
-               and (o["close_position"] or D(o.get("qty") or 0) >= left)]
+               and (o["close_position"] or D(o.get("qty") or 0) >= abs(left))]
     assert covered, "restart did not rearm an SL for the residual"
     assert offline.amt(DOGE) == left and DOGE in eng2.st["pos"]
     assert not _closes(offline)
     assert len(_stop_posts(offline)) > posts_before_restart
 
 
-def test_r3_honest_empty_after_hold_should_rearm(offline):
+@pytest.mark.parametrize("side", [1, -1])
+def test_r3_honest_empty_after_hold_should_rearm(offline, side):
     """New-finding probe: after a -4130 hold, the hidden CP disappears and a
     later successful read is honestly empty. The residual/live position must
     not stay naked — an honest empty book is 'none', not 'unknown'."""
     eng = engine_for(offline, "e")
-    open_pos(offline, eng, 1)
+    open_pos(offline, eng, side)
     qty = offline.amt(DOGE)
     _sleeps(eng)
     _inject_empty_hold(offline)
@@ -329,7 +335,8 @@ def test_r3_honest_empty_after_hold_should_rearm(offline):
 
 # ─── R4 / R5 ─────────────────────────────────────────────────────────────────
 
-def test_r4_upgrade_4130_stops_posting_no_flatten(offline):
+@pytest.mark.parametrize("side", [1, -1])
+def test_r4_upgrade_4130_stops_posting_no_flatten(offline, side):
     eng = engine_for(offline, "e")
     _sleeps(eng)
 
@@ -341,7 +348,7 @@ def test_r4_upgrade_4130_stops_posting_no_flatten(offline):
         return fn(sym)
 
     offline.fx.inject("open_orders", oo_down, times=4000)
-    open_pos(offline, eng, 1)
+    open_pos(offline, eng, side)
     cp = [c for c in _stop_posts(offline) if not str(c[1][3]).endswith("p")]
     assert 1 <= len(cp) <= 2, f"expected at most one retry after first -4130, got {cp}"
     assert DOGE in eng._cp_hold
@@ -356,7 +363,8 @@ def test_r4_upgrade_4130_stops_posting_no_flatten(offline):
     assert not _closes(offline) and not _market_closes(offline)
 
 
-def test_r5_non_4130_keeps_visible_prearm_no_flatten(offline):
+@pytest.mark.parametrize("side", [1, -1])
+def test_r5_non_4130_keeps_visible_prearm_no_flatten(offline, side):
     eng = engine_for(offline, "e")
     _sleeps(eng)
 
@@ -366,7 +374,7 @@ def test_r5_non_4130_keeps_visible_prearm_no_flatten(offline):
         return fn(s, side, trigger, cid, qty=qty, **k)
 
     offline.fx.inject("stop", reject_cp, times=20)
-    _enter(eng)
+    _enter(eng, side)
     qty = offline.amt(DOGE)
     assert qty != 0 and DOGE in eng.st["pos"]
     assert not _closes(offline) and not _market_closes(offline)
@@ -379,7 +387,8 @@ def test_r5_non_4130_keeps_visible_prearm_no_flatten(offline):
     assert not _closes(offline) and not _market_closes(offline)
 
 
-def test_r5_unknown_book_never_market_closes(offline):
+@pytest.mark.parametrize("side", [1, -1])
+def test_r5_unknown_book_never_market_closes(offline, side):
     eng = engine_for(offline, "e")
     _sleeps(eng)
 
@@ -397,7 +406,7 @@ def test_r5_unknown_book_never_market_closes(offline):
 
     offline.fx.inject("open_orders", oo_down, times=4000)
     offline.fx.inject("stop", reject_cp, times=20)
-    _enter(eng)
+    _enter(eng, side)
     qty = offline.amt(DOGE)
     assert qty != 0 and DOGE in eng.st["pos"]
     assert not _closes(offline) and not _market_closes(offline)

@@ -414,12 +414,12 @@ def test_restart_missing_symbol_is_not_cancelled_or_closed(offline, scheme):
     assert not eng2.st["pos"][DOGE].get("closing") and not _closes(offline)
 
 
-def _enter(eng):
+def _enter(eng, side=1):
     px = D(str(eng.ex.inner.price[DOGE])) if hasattr(eng.ex, "inner") else D("0.15")
     # FaultEx wraps the fake; price lives on the fake.
     px = D(str(eng.ex.inner.price[DOGE]))
     t = now_ms()
-    eng.execute([dict(enter(DOGE, px * D("0.008"), t, side=1), model_id=t, max_age_s=20)])
+    eng.execute([dict(enter(DOGE, px * D("0.008"), t, side=side), model_id=t, max_age_s=20)])
 
 
 @pytest.mark.parametrize("scheme", ["legacy", "e"])
