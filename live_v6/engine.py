@@ -1704,7 +1704,25 @@ class V6Engine:
             return "filled"
         return "same"
 
-    def _on_tp_would_trigger(self, sym, j, which, px, qty, working_type) -> bool:
+    def _book_fill(self, sym, j, which, before, executed) -> bool:
+        """A FILLED realization. Use the position re-read when it already shows the
+        reduction; a lagging full snapshot does not replace the filled quantity."""
+        try:
+            fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+        except ExchangeError:
+            fresh = None
+        if fresh is not None and abs(fresh) < before:
+            left = abs(fresh)
+        elif executed > 0:
+            left = before - executed
+            if left < 0:
+                left = Decimal(0)
+        else:
+            return False
+        self._book_realized_tp(j, which, left)
+        return True
+
+    def _on_tp_would_trigger(self, sym, j, which, px, qty, working_type, place_tp=True) -> bool:
         """Price was through this take-profit. Re-read the last trade. Still through →
         one reduceOnly market for this slice, ever. Book tp1_done, the breakeven stop
         and the runner only after that fill, using the position re-read. Back inside →
@@ -1733,10 +1751,20 @@ class V6Engine:
         through = (s > 0 and last >= D(px)) or (s < 0 and last <= D(px))
         sent = (j.get("tp_market_once") or {}).get(which)
         if isinstance(sent, dict):
-            verdict = self._shrink_booked(sym, j, which, D(sent.get("before") or 0))
+            before_sent = D(sent.get("before") or 0)
+            try:
+                order = self.x("get_order", sym, str(sent.get("cid") or ""))
+            except ExchangeError:
+                self._tp_fail_once(sym, what, "체결 조회 실패 · 추가 주문 없음")
+                return self._shrink_booked(sym, j, which, before_sent) == "filled"
+            executed = self._executed_qty(order)
+            status = str(order.get("status") or "").upper() if isinstance(order, dict) else ""
+            if status == "FILLED" or executed > 0:
+                return self._book_fill(sym, j, which, before_sent, executed)
+            verdict = self._shrink_booked(sym, j, which, before_sent)
             if verdict == "filled":
                 return True
-            if verdict == "unknown" or through:
+            if verdict == "unknown" or through or not place_tp:
                 return False                              # one market for this slice, already sent
             try:
                 self.x("take_profit", sym, self._cs(j), px, self._tp_cid(j, which), qty, working_type=working_type)
@@ -1748,6 +1776,8 @@ class V6Engine:
                 return False
             return True
         if not through:
+            if not place_tp:
+                return False
             try:
                 self.x("take_profit", sym, self._cs(j), px, self._tp_cid(j, which), qty, working_type=working_type)
             except OrderRejected as e:
@@ -1774,10 +1804,12 @@ class V6Engine:
         except ExchangeError as e:
             self._tp_fail_once(sym, what, f"시장가 청산 결과 불명 · {e}")
             return False
-        if self._executed_qty(result) <= 0:                 # None, or nothing filled: change nothing
+        executed = self._executed_qty(result)
+        status = str(result.get("status") or "").upper() if isinstance(result, dict) else ""
+        if executed <= 0 and status != "FILLED":            # None, or nothing filled: change nothing
             self._tp_fail_once(sym, what, "시장가 청산 미확인 · 기존 손절 유지")
             return False
-        return self._shrink_booked(sym, j, which, abs(amt)) == "filled"
+        return self._book_fill(sym, j, which, abs(amt), executed)
 
     def _arm_unsplittable(self, sym, j):
         """Cannot split off TP1: +3R reduceOnly TP and the SL, both on the full qty. No TP is not allowed."""
@@ -1840,6 +1872,17 @@ class V6Engine:
                     self._dirty = True                            # filled: next reconcile books it (tp1_done / flat)
                     return
         if hold:
+            if not j.get("tp1_done") and tp.get("tp1") and self._position_open(sym):
+                try:
+                    fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+                except ExchangeError:
+                    fresh = None
+                if fresh not in (None, 0):
+                    self._on_tp_would_trigger(sym, j, "t1", D(tp["tp1"]), D(tp["q1"]), "CONTRACT_PRICE", place_tp=False)
+                    if j.get("tp1_done"):
+                        booked = abs(D(j.get("qty") or 0))
+                        if booked > 0:
+                            amt = booked if int(j.get("side", 1)) > 0 else -booked
             if j.get("tp1_done") and tp.get("tp1") and not j.get("be_done") and self._position_open(sym):
                 self._move_stop_be(sym, j, amt, orders, mk)
             return
