@@ -116,6 +116,7 @@ def test_p2_dust_slice_markets_the_whole_remainder(offline, side):
     eng = engine_for(offline, "e")
     open_pos(offline, eng, side)
     j, _qty = _prime(offline, eng, side)
+    eng.cfg.trail_atr_k = 0
     whole = D(100)
     p = offline.inner.pos[DOGE]
     p["amt"] = whole if side > 0 else -whole

@@ -1663,11 +1663,8 @@ class V6Engine:
             self._tp_retry_at[key] = self.clock() + PROTECT_AUDIT_S
         return ok
 
-    def _decision_px(self, sym, working_type) -> Decimal:
-        """The price that decides through vs inside. A MARK_PRICE runner uses the mark.
-        Anything else uses the last trade, never the book bid."""
-        if working_type == "MARK_PRICE":
-            return D(self.x("mark_price", sym))
+    def _decision_px(self, sym, working_type) -> Decimal:  # noqa: ARG002  working type does not choose the price
+        """Last traded price. A through-or-inside decision never uses the bid or the mark."""
         return D(self.x("last_price", sym))
 
     @staticmethod
@@ -1677,8 +1674,7 @@ class V6Engine:
         return D(order.get("executed_qty") or 0)
 
     def _book_realized_tp(self, j, which, left: Decimal):
-        """A confirmed slice fill. Follow-ups use `left`, not a larger stale snapshot."""
-        j.pop("tp_realize", None)
+        """Book a slice whose position re-read is already smaller. `left` is that re-read."""
         if which == "t1":
             j["tp1_done"] = True
             if left > 0:
@@ -1692,55 +1688,29 @@ class V6Engine:
                 j["exit_fill"] = "take_profit"
         self.save()
 
-    def _resolve_tp_realize(self, sym, j, pending) -> str:
-        """'filled' is booked. 'absent' means the first market did not fill, so a new one may go.
-        Anything else sends nothing: a lagging snapshot is not proof the first order missed."""
-        which = str(pending.get("which") or "")
-        before = D(pending.get("before") or 0)
+    def _shrink_booked(self, sym, j, which, before) -> str:
+        """'filled' when a fresh read is already smaller than the pre-realization qty.
+        'same' when it is not. 'unknown' when the read fails. Never sends an order."""
         what = f"익절 {which}"
         try:
-            amt = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+            fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
         except ExchangeError:
-            amt = None
-        try:
-            order = self.x("get_order", sym, str(pending.get("cid") or ""))
-        except ExchangeError:
-            order = "unknown"
-        if order == "unknown" or amt is None:
-            self._tp_fail_once(sym, what, "체결 조회 실패 · 추가 주문 없음")
+            fresh = None
+        if fresh is None:
+            self._tp_fail_once(sym, what, "포지션 조회 실패 · 추가 주문 없음")
             return "unknown"
-        executed = self._executed_qty(order)
-        if executed > 0:
-            left = before - executed
-            if left < 0:
-                left = Decimal(0)
-            if abs(amt) < left:
-                left = abs(amt)
-            self._book_realized_tp(j, which, left)
+        if abs(fresh) < before:
+            self._book_realized_tp(j, which, abs(fresh))
             return "filled"
-        status = str(order.get("status") or "").upper() if isinstance(order, dict) else ""
-        gone = order is None or status in {"EXPIRED", "CANCELED", "CANCELLED", "REJECTED"}
-        if gone and executed <= 0 and abs(amt) >= before:
-            j.pop("tp_realize", None)
-            self.save()
-            return "absent"
-        self._tp_fail_once(sym, what, "체결 수량 불명 · 추가 주문 없음")
-        return "unknown"
+        return "same"
 
     def _on_tp_would_trigger(self, sym, j, which, px, qty, working_type) -> bool:
-        """Price was through this take-profit. Re-read the working price. Still through →
-        one reduceOnly market of this slice, and only after that order is a confirmed fill.
-        Back inside → rest the rounded order once. Below the minimum notional → one alert,
-        no second take-profit. A failed read or an unconfirmed fill sends nothing."""
+        """Price was through this take-profit. Re-read the last trade. Still through →
+        one reduceOnly market for this slice, ever. Book tp1_done, the breakeven stop
+        and the runner only after that fill, using the position re-read. Back inside →
+        rest the rounded order once. A slice under min notional closes the whole
+        remainder once and does not rest another take-profit. The stop is not replaced."""
         what = f"익절 {which}"
-        pending = j.get("tp_realize")
-        if isinstance(pending, dict):
-            pending_which = str(pending.get("which") or "")
-            verdict = self._resolve_tp_realize(sym, j, pending)
-            if verdict == "filled" and pending_which == which:
-                return True
-            if verdict != "absent":
-                return False
         rules = self.rules[sym]
         s = int(j.get("side", 1))
         try:
@@ -1761,6 +1731,22 @@ class V6Engine:
             self._tp_fail_once(sym, what, "주문 조회 실패 · 기존 손절 유지")
             return False
         through = (s > 0 and last >= D(px)) or (s < 0 and last <= D(px))
+        sent = (j.get("tp_market_once") or {}).get(which)
+        if isinstance(sent, dict):
+            verdict = self._shrink_booked(sym, j, which, D(sent.get("before") or 0))
+            if verdict == "filled":
+                return True
+            if verdict == "unknown" or through:
+                return False                              # one market for this slice, already sent
+            try:
+                self.x("take_profit", sym, self._cs(j), px, self._tp_cid(j, which), qty, working_type=working_type)
+            except OrderRejected as e:
+                self._tp_fail_once(sym, what, f"시장가 청산 거절 · {e}")
+                return False
+            except ExchangeError as e:
+                self._tp_fail_once(sym, what, f"주문 조회 실패 · {e}")
+                return False
+            return True
         if not through:
             try:
                 self.x("take_profit", sym, self._cs(j), px, self._tp_cid(j, which), qty, working_type=working_type)
@@ -1771,43 +1757,27 @@ class V6Engine:
                 self._tp_fail_once(sym, what, f"주문 조회 실패 · {e}")
                 return False
             return True
-        if qty * last < rules.min_notional:
-            self._tp_fail_once(sym, what, "최소 명목 미만 · 추가 주문 없음")
-            return False
-        sell = min(D(qty), abs(amt))
+        sell = abs(amt) if qty * last < rules.min_notional else min(D(qty), abs(amt))
         if sell <= 0:
             return False
         seq = int(j.get("exit_seq", 0))
         j["exit_seq"] = seq + 1
         cid_x = f"{j['cid']}x{seq}"
-        j["tp_realize"] = {"which": which, "cid": cid_x, "before": str(abs(amt))}
-        self.save()
-        side = "SELL" if amt > 0 else "BUY"                # reduceOnly, capped at the position just read
+        j.setdefault("tp_market_once", {})[which] = {"cid": cid_x, "before": str(abs(amt))}
+        self.save()                                         # recorded before the send: a retry cannot send another
+        side = "SELL" if amt > 0 else "BUY"                # reduceOnly. This path does not touch the stop.
         try:
             result = self.submit_market(sym, side, sell, cid_x, reduce_only=True)
         except OrderRejected as e:
-            j.pop("tp_realize", None)
-            self.save()
             self._tp_fail_once(sym, what, f"시장가 청산 거절 · {e}")
             return False
         except ExchangeError as e:
             self._tp_fail_once(sym, what, f"시장가 청산 결과 불명 · {e}")
             return False
-        executed = self._executed_qty(result)
-        if executed <= 0:
+        if self._executed_qty(result) <= 0:                 # None, or nothing filled: change nothing
             self._tp_fail_once(sym, what, "시장가 청산 미확인 · 기존 손절 유지")
             return False
-        try:
-            fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
-        except ExchangeError:
-            fresh = None
-        left = abs(amt) - executed
-        if left < 0:
-            left = Decimal(0)
-        if fresh is not None and abs(fresh) < left:
-            left = abs(fresh)
-        self._book_realized_tp(j, which, left)
-        return True
+        return self._shrink_booked(sym, j, which, abs(amt)) == "filled"
 
     def _arm_unsplittable(self, sym, j):
         """Cannot split off TP1: +3R reduceOnly TP and the SL, both on the full qty. No TP is not allowed."""
