@@ -281,6 +281,18 @@ class V6Engine:
         self.alert(f"구 상태 잠금 — {sym} {state} · 시장가 안 냄",
                    incident + (f" · {detail}" if detail else ""))
 
+    _UNCOVERED_HOLDS = frozenset({
+        "lost_stop_breach", "replace_lost_stop", "stop_breach_missing",
+        "protection_failed", "through_stop_retry", "unknown_stop_rejected",
+    })
+
+    def _clear_uncovered_holds(self, sym):
+        """A cover is on the book. A later loss may alert these again."""
+        self._lock_hold_alerted = {
+            k for k in self._lock_hold_alerted
+            if k[0] != str(sym) or k[1] not in self._UNCOVERED_HOLDS
+        }
+
     def notify(self, text, kind=None, event_ms=None):
         """Every Telegram message goes through here (event time vs decision time → alerts log, §TA timeliness)."""
         self.tg.send(text, kind=kind, event_ms=event_ms, decision_ms=self.now_ms())
@@ -817,7 +829,7 @@ class V6Engine:
             try:
                 prot = self.find_stop(amt_now, self.x("open_orders", sym))
             except ExchangeError:
-                prot = None
+                return                                  # unread book is not "no stop"
             if prot and prot.get("stop_price"):
                 px = prot["stop_price"]
                 self._lock_hold_alert(
@@ -1681,21 +1693,47 @@ class V6Engine:
         cs = "SELL" if side > 0 else "BUY"
         try:
             o = self.x("stop", sym, cs, px, cid)
-        except (WouldTrigger, ExchangeError) as e:
+        except (WouldTrigger, OrderRejected) as e:
             self._through_retry_at[sym] = self.clock() + PROTECT_AUDIT_S
             self._lock_hold_alert(sym, "through_stop_retry",
                                   f"원래 손절 {j['stop_px']} 돌파 · 보호 손절 {px} 재시도 · 시장가 안 냄 · {e}",
                                   kept=False)
             return False
+        except ExchangeError as e:
+            return self._through_stop_outcome(sym, j, seq, cid, px, e)
+        self._accept_through_stop(sym, j, seq, cid, D(o.get("stop_price") or px))
+        return True
+
+    def _accept_through_stop(self, sym, j, seq, cid, placed):
+        """The id is on the book, or its POST may have landed. It must sit inside range(stop_seq)."""
         j["stop_seq"] = seq + 1
-        self._through_retry_at.pop(sym, None)
-        placed = D(o.get("stop_price") or px)
+        j["stop_cid"] = cid
         j["stop_px"] = str(placed)
-        j["stop_cid"] = o.get("client_id", cid)
+        self._through_retry_at.pop(sym, None)
+        self._clear_uncovered_holds(sym)
         self.save()
         self._lock_hold_alert(sym, f"through_stop:{placed}",
                               f"원래 손절 돌파 · 거래소 보호 손절 {placed} · 시장가 안 냄")
-        return True
+
+    def _through_stop_outcome(self, sym, j, seq, cid, px, err) -> bool:
+        """The POST raised after it may have been accepted. Query the id before reusing it."""
+        state = self._cid_state(sym, cid)
+        if state == "yes":
+            self._accept_through_stop(sym, j, seq, cid, px)
+            return True
+        if state in {"unknown", "filled"}:
+            j["stop_seq"] = seq + 1                    # do not POST this id again; record_close can still see it
+            j["stop_cid"] = cid
+            self._through_retry_at[sym] = self.clock() + PROTECT_AUDIT_S
+            self.save()
+            self._lock_hold_alert(sym, "through_stop_unknown",
+                                  f"손절 {cid} 응답 불명 · id 기록 · 시장가 안 냄 · {err}")
+            return False
+        self._through_retry_at[sym] = self.clock() + PROTECT_AUDIT_S
+        self._lock_hold_alert(sym, "through_stop_retry",
+                              f"원래 손절 {j['stop_px']} 돌파 · 보호 손절 {px} 재시도 · 시장가 안 냄 · {err}",
+                              kept=False)
+        return False
 
     def _arm_stop(self, sym, j, amt) -> bool:
         """One closePosition STOP at the journal stop. False → the position was closed or the read stayed unknown."""
@@ -3756,6 +3794,7 @@ class V6Engine:
                         self._arm_through_stop(sym, j, amt, mk)
                     else:
                         prot = self.find_stop(amt, orders)
+                        self._clear_uncovered_holds(sym)
                         self._lock_hold_alert(
                             sym, f"covered_stop:{prot['stop_price']}",
                             f"원래 손절 {stp} 돌파 · 거래소 손절 {prot['stop_price']} 유지 · 시장가 안 냄")
