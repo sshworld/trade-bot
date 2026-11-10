@@ -1797,6 +1797,8 @@ class V6Engine:
             verdict, _fresh = self.record_close(sym, reason)
             if verdict != "flat":
                 return
+        self._cp_hold.discard(sym)                          # a later position on this coin must alert again
+        self._audit_unknown.discard(sym)
         try:
             for o in self.x("open_orders", sym):
                 if (o["close_position"] or o["reduce_only"]) and str(o["client_id"]).startswith(self.cfg.cid_prefix):
