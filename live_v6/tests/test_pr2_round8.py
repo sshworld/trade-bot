@@ -501,6 +501,21 @@ def _property_script(offline, side, seed):
             return f"seed {seed} side {side}: false close alert {len(false)}", info
         if offline.amt(DOGE) != (entry - q1) * side:
             return f"seed {seed} side {side}: breach moved the position", info
+        for o in list(offline.inner.algos.values()):
+            if o.get("symbol") == DOGE and "STOP" in (o.get("type") or ""):
+                offline.inner.algos.pop(o["id"], None)
+        eng.tick()
+        if not _covered(offline):
+            return f"seed {seed} side {side}: through-stop left the position uncovered", info
+        mark = D(str(offline.inner.price[DOGE]))
+        live = _stops(offline)
+        if not live:
+            return f"seed {seed} side {side}: no replacement stop", info
+        px = D(live[0]["stop_price"])
+        if (px >= mark) if side > 0 else (px <= mark):
+            return f"seed {seed} side {side}: replacement stop {px} is through mark {mark}", info
+        if any("즉시 시장가 정리" in m for m in eng.tg.sent):
+            return f"seed {seed} side {side}: alert still promises a market close", info
         return None, info
     if kind == "orphan_pos":
         eng.st["pos"].pop(DOGE, None)
