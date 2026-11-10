@@ -497,8 +497,8 @@ def _property_script(offline, side, seed):
         eng.clock.off += 6
         eng.tick()
         false = [m for m in eng.tg.sent if "이 포지션만 정리" in m or "시장가 정리" in m]
-        if len(false) > 1:
-            return f"seed {seed} side {side}: false close alert repeated {len(false)}", info
+        if false:
+            return f"seed {seed} side {side}: false close alert {len(false)}", info
         if offline.amt(DOGE) != (entry - q1) * side:
             return f"seed {seed} side {side}: breach moved the position", info
         return None, info

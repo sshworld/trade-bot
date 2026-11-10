@@ -248,6 +248,7 @@ class V6Engine:
         self._cap_retry_at: dict = {}                       # sym → earliest clock() to retry a rejected BE cap close
         self._cap_alerted: set = set()                      # symbols already told that a cap close was held
         self._schema_lock = False                          # old state: SL only, no take-profit and no entries
+        self._lock_hold_alerted: set = set()               # (symbol, incident) already told under the schema lock
         inner = getattr(ex, "inner", ex)
         if hasattr(inner, "on_rate_limit"):
             inner.on_rate_limit = self._on_rate_limit
@@ -267,6 +268,15 @@ class V6Engine:
         log.critical("🚨 %s | %s", title, detail)
         self.tg.alert(title, detail, event_ms=event_ms, decision_ms=self.now_ms())
         self._day_count("incidents")
+
+    def _lock_hold_alert(self, sym, incident: str, detail: str = ""):
+        """One truthful notice per incident while the schema lock refuses a market close."""
+        key = (str(sym), incident)
+        if key in self._lock_hold_alerted:
+            return
+        self._lock_hold_alerted.add(key)
+        self.alert(f"구 상태 잠금 — {sym} 손절만 유지 · 시장가 안 냄",
+                   incident + (f" · {detail}" if detail else ""))
 
     def notify(self, text, kind=None, event_ms=None):
         """Every Telegram message goes through here (event time vs decision time → alerts log, §TA timeliness)."""
@@ -750,6 +760,9 @@ class V6Engine:
         j = self.st["pos"].get(sym)
         if not j or j.get("closing"):
             return
+        if self._schema_lock:
+            self._lock_hold_alert(sym, "lost_stop_breach", f"mark {mark}")
+            return
         self.alert("손절 주문 없음 + 손절가 돌파 — 이 포지션 시장가 정리" + (" (IP 차단 중: 해제 즉시 전송)" if self.ban_left() else ""),
                    f"{sym} mark {mark} vs 손절 {j['stop_lost']['px']} · 다른 포지션 유지")
         self.close(sym, "stop_lost_breach")
@@ -777,6 +790,9 @@ class V6Engine:
                 return
         except ExchangeError:
             return                                          # REST reconcile retries in ≤5 s
+        if self._schema_lock:
+            self._lock_hold_alert(sym, "stop_breach", f"mark {mark} vs {self.st['pos'][sym]['stop_px']} ({source})")
+            return
         self.alert("손절가 돌파인데 거래소 손절 미작동 — 이 포지션만 정리",
                    f"{sym} mark {mark} vs 손절 {self.st['pos'][sym]['stop_px']} ({source}) · 다른 포지션 유지")
         self.close(sym, "stop_breach")                      # §8c L1: only THAT position (reduceOnly MARKET)
@@ -1484,6 +1500,9 @@ class V6Engine:
         baseline = abs(D(j.get("qty") or 0))
         if amt == 0 or (baseline > 0 and abs(amt) < baseline):
             return False                                    # flat or partial fill: next reconcile books it
+        if self._schema_lock:
+            self._lock_hold_alert(sym, "protection_failed", f"{what} · {err}")
+            return False
         self.alert(f"보호 주문 실패 — {sym} 시장가 청산", f"{what} · reduceOnly MARKET · {err}")
         self._protect_close_failed = not bool(self.close(sym, "protection_failed"))
         return False
@@ -2705,6 +2724,9 @@ class V6Engine:
         if r == "unavailable":
             log.error("%s stop not confirmed (exchange unavailable) — reconcile retries", sym)
             return False
+        if self._schema_lock:
+            self._lock_hold_alert(sym, "sl_failed", f"{stop_px} · {r}")
+            return False
         self.alert("손절 등록 실패 — 이 포지션만 정리", f"{sym} {amt} · 손절 {stop_px} · {r} · 다른 포지션 유지")
         if not self.close(sym, f"sl_failed ({r})"):
             self.emergency_flatten_all(f"unprotected {sym}")
@@ -2905,6 +2927,9 @@ class V6Engine:
     def emergency_flatten_all(self, reason):
         """§8c L3 only: equity ≤ halt_fraction × C0 (−25 %), a position that stays unprotected after L1, or API dead > 5 min with an
         unprotected position → close ALL positions (reduceOnly MARKET) + halt."""
+        if self._schema_lock:
+            self._lock_hold_alert("*", "emergency_flatten", reason)
+            return
         self.halt(f"emergency: {reason}")
         self.alert("비상청산 — 전 포지션 정리 + 매매 중단", reason)
         for s in list(self.st["pos"]):                   # TA R4: only positions in the state file; unknown ones keep
@@ -3858,8 +3883,11 @@ class V6Engine:
             self.st["unknown"][sym] = u
         u.update(amt=str(amt), qty=str(abs(amt)), entry_px=str(p["entry"]))
         if u.get("closing"):                                # last-resort close already decided → retry until flat
-            self._unknown_last_resort(sym, u, amt)
-            return
+            if self._schema_lock:
+                u.pop("closing", None)                      # keep placing a stop; the market stays gated
+            else:
+                self._unknown_last_resort(sym, u, amt)
+                return
         if mark is None:
             try:
                 mark = self.x("mark_prices").get(sym)
@@ -3875,13 +3903,17 @@ class V6Engine:
         elif not self._unknown_stop(sym, u, amt, mark):
             age = self.now_ms() - int(u["detected_ms"])
             if int(u.get("stop_rejects", 0)) > 0 and age >= self.cfg.unknown_stop_deadline_s * 1000:
-                u["closing"] = True                         # TA R4 last resort: protection beats ownership
-                self.save()
-                self.alert(f"기록 없는 포지션 손절이 {self.cfg.unknown_stop_deadline_s / 60:.0f}분 넘게 거부됨 — 최후 수단으로 {sym} 시장가 정리",
-                           f"{sym} {amt} · 발견 {age / 1000:.0f}초 전 · 손절 거부 {u.get('stop_rejects')}회 · "
-                           f"마지막 사유 {u.get('last_reject', '-')} · reduceOnly MARKET")
-                self._unknown_last_resort(sym, u, amt)
-                return
+                if self._schema_lock:
+                    self._lock_hold_alert(sym, "unknown_stop_rejected",
+                                          f"거부 {u.get('stop_rejects')}회 · 손절 재시도 · 시장가 안 냄")
+                else:
+                    u["closing"] = True                         # TA R4 last resort: protection beats ownership
+                    self.save()
+                    self.alert(f"기록 없는 포지션 손절이 {self.cfg.unknown_stop_deadline_s / 60:.0f}분 넘게 거부됨 — 최후 수단으로 {sym} 시장가 정리",
+                               f"{sym} {amt} · 발견 {age / 1000:.0f}초 전 · 손절 거부 {u.get('stop_rejects')}회 · "
+                               f"마지막 사유 {u.get('last_reject', '-')} · reduceOnly MARKET")
+                    self._unknown_last_resort(sym, u, amt)
+                    return
         self._unknown_risk(u, mark if mark is not None else p["entry"])
         self.save()
         if first:
