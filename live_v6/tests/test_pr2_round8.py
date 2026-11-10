@@ -489,6 +489,18 @@ def _property_script(offline, side, seed):
         if not any(o.get("close_position") or (o.get("reduce_only") and D(o.get("qty") or 0) >= held)
                    for o in _stops(offline)):
             return f"seed {seed} side {side}: stop does not cover {held}", info
+        stp = D(eng.st["pos"][DOGE]["stop_px"])
+        offline.inner.stops_fire = False
+        offline.inner.set_price(DOGE, stp - side * D("0.01"))
+        _sleeps(eng)
+        eng.tick()
+        eng.clock.off += 6
+        eng.tick()
+        false = [m for m in eng.tg.sent if "이 포지션만 정리" in m or "시장가 정리" in m]
+        if len(false) > 1:
+            return f"seed {seed} side {side}: false close alert repeated {len(false)}", info
+        if offline.amt(DOGE) != (entry - q1) * side:
+            return f"seed {seed} side {side}: breach moved the position", info
         return None, info
     if kind == "orphan_pos":
         eng.st["pos"].pop(DOGE, None)
@@ -500,8 +512,24 @@ def _property_script(offline, side, seed):
             return f"seed {seed} side {side}: exchange position with no current state was traded", info
         if not _covered(offline):
             return f"seed {seed} side {side}: orphan position lost its stop", info
-        if _live_tp(offline, "t1") and eng.st.get("schema") == 2 and DOGE in eng.st["pos"]:
-            return f"seed {seed} side {side}: fresh journal placed a take-profit", info
+        for o in list(offline.inner.algos.values()):
+            if o.get("symbol") == DOGE and "STOP" in (o.get("type") or ""):
+                offline.inner.algos.pop(o["id"], None)
+        offline.fx.inject("stop", "reject", times=10 ** 6, match=lambda s, *a, **k: s == DOGE)
+        eng.clock.off += eng.cfg.unknown_stop_deadline_s + 5
+        eng.tick()
+        u = (eng.st.get("unknown") or {}).get(DOGE) or {}
+        if u.get("closing"):
+            return f"seed {seed} side {side}: unknown stuck closing under lock", info
+        sells = [o for o in offline.inner.orders.values() if o.get("symbol") == DOGE and o.get("reduce_only")]
+        if sells:
+            return f"seed {seed} side {side}: last-resort market while locked", info
+        offline.fx.clear()
+        eng.tick()
+        if not _covered(offline):
+            return f"seed {seed} side {side}: stop not replaced after rejects cleared", info
+        if offline.amt(DOGE) == 0:
+            return f"seed {seed} side {side}: position flattened", info
         return None, info
     if kind == "orphan_order":
         offline.inner.pos.pop(DOGE, None)
