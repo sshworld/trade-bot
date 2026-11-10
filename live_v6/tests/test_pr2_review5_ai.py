@@ -352,3 +352,85 @@ def test_m2_null_or_non_list_open_orders_are_unknown():
         run(b'{"not": "a list"}', b'{"orders": []}')
     assert run(b"[]", b"[]") == []
     assert run(b"[]", b'{"orders": []}') == []
+
+
+def _hold_alerts(eng):
+    return [m for m in _alerts(eng) if "점검 보류" in m and "-4130" in m and DOGE in m]
+
+
+def test_f1_absent_book_rearms_unknown_does_not_repeat_4130_is_quiet(offline):
+    """A successful read with no covering stop is absence: re-arm once.
+    An unreadable book posts nothing. A repeated -4130 adds no alert."""
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, 1)
+    qty = offline.amt(DOGE)
+    _sleeps(eng)
+
+    def empty(fn, sym):
+        return []
+
+    def reject_cp(fn, s, side, trigger, cid, qty=None, **k):
+        if qty is None:
+            raise OrderRejected(-4130, "closePosition exists")
+        return fn(s, side, trigger, cid, qty=qty, **k)
+
+    offline.fx.inject("open_orders", empty, times=4000)
+    offline.fx.inject("stop", reject_cp, times=20)
+    eng.tick()
+    assert DOGE in eng._cp_hold and len(_hold_alerts(eng)) == 1
+    posts = len(_stop_posts(offline))
+    _monitor(eng, 3)
+    assert len(_stop_posts(offline)) == posts and len(_hold_alerts(eng)) == 1
+
+    offline.fx.clear()
+    offline.fx.inject("open_orders", "unavailable", times=80)
+    _monitor(eng, 3)
+    assert len(_stop_posts(offline)) == posts and offline.amt(DOGE) == qty and not _closes(offline)
+
+    offline.fx.clear()
+    for o in list(offline.inner.algos.values()):
+        if o["symbol"] == DOGE and (o["type"] or "").startswith("STOP"):
+            offline.inner.algos.pop(o["id"], None)
+    eng.tick()
+    assert len(_stop_posts(offline)) >= posts + 1
+    covered = [o for o in offline.inner.open_orders(DOGE)
+               if (o["type"] or "").startswith("STOP")
+               and (o["close_position"] or D(o.get("qty") or 0) >= abs(qty))]
+    assert covered and offline.amt(DOGE) == qty and len(_hold_alerts(eng)) == 1
+
+
+def test_f2_exchange_stop_then_new_position_4130_alerts_once(offline):
+    """An exchange stop-out clears the hold, so the next position's first -4130 alerts once."""
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, 1)
+    stop_px = D(eng.st["pos"][DOGE]["stop_px"])
+    _sleeps(eng)
+
+    def empty(fn, sym):
+        return []
+
+    def reject_cp(fn, s, side, trigger, cid, qty=None, **k):
+        if qty is None:
+            raise OrderRejected(-4130, "closePosition exists")
+        return fn(s, side, trigger, cid, qty=qty, **k)
+
+    offline.fx.inject("open_orders", empty, times=50)
+    offline.fx.inject("stop", reject_cp, times=5)
+    eng.tick()
+    assert DOGE in eng._cp_hold
+    offline.fx.clear()
+    offline.inner.set_price(DOGE, stop_px)
+    eng.reconcile()
+    assert DOGE not in eng.st["pos"]
+    assert DOGE not in eng._cp_hold and DOGE not in eng._audit_unknown and DOGE not in eng._tp_unknown
+
+    assert eng.enter(DOGE, D("0.0012"), eng.now_ms() + 3_600_000)
+    qty = offline.amt(DOGE)
+    assert qty != 0
+    before = len(_hold_alerts(eng))
+    offline.fx.inject("open_orders", empty, times=4000)
+    offline.fx.inject("stop", reject_cp, times=20)
+    eng.tick()
+    _monitor(eng, 3)
+    assert len(_hold_alerts(eng)) == before + 1
+    assert offline.amt(DOGE) == qty and not _closes(offline)
