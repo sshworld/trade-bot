@@ -225,6 +225,7 @@ class V6Engine:
                                                            # empty after a restart until reconcile confirms again
         self._protect_audit_at = self.clock()              # protection audit is due PROTECT_AUDIT_S after this
         self._audit_unknown: set = set()                    # coins whose audit confirm is unread; alert once until known
+        self._cp_hold: set = set()                          # -4130 hold already alerted; cleared when a read shows the stop
         inner = getattr(ex, "inner", ex)
         if hasattr(inner, "on_rate_limit"):
             inner.on_rate_limit = self._on_rate_limit
@@ -1338,10 +1339,13 @@ class V6Engine:
                 if getattr(e, "code", None) == -4130:
                     cover = self._stop_covers(sym, j)
                     if cover == "yes":
+                        self._cp_hold.discard(sym)          # book shows the stop: a later hold may alert again
                         return True
                     # empty, wrong side, too-small qty, or an unreadable book: the exchange
                     # already said a closePosition stop exists. Do not retry into a flatten.
-                    self.alert(f"보호 점검 보류 — {sym}", f"{what} · -4130 손절 존재 · 조회와 불일치 · 유지")
+                    if sym not in self._cp_hold:
+                        self._cp_hold.add(sym)
+                        self.alert(f"보호 점검 보류 — {sym}", f"{what} · -4130 손절 존재 · 조회와 불일치 · 유지")
                     return False
                 last = e
                 state = self._cid_state(sym, cid)
@@ -2653,9 +2657,10 @@ class V6Engine:
                     self.alert(f"보호 점검 보류 — {sym}", f"주문 조회 불가 · 손절·익절 유지 · {e}")
                 return
         self._audit_unknown.discard(sym)
-        if not self.find_stop(amt, orders):
-            if not self._arm_stop(sym, j, amt) or not self._position_open(sym):
-                return
+        if self.find_stop(amt, orders):
+            self._cp_hold.discard(sym)                      # covering stop is visible: the -4130 hold may alert again
+        elif not self._arm_stop(sym, j, amt) or not self._position_open(sym):
+            return
         if not j.get("tp"):
             return
         for which, px, qty, wt in self._tp_repairs(j, amt, orders):
