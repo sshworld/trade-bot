@@ -438,8 +438,10 @@ def _property_script(offline, side, seed):
         j["tp_got"] = {"t1": "8000"}
         j["tp_market_once"] = {"t1": {"cid": cid, "before": str(entry), "accepted": True}}
         j["tp1_done"] = False
+        j["opened_ms"] = eng.now_ms() - int(eng.cfg.max_hold_s * 1000) - 3_600_000
         eng.st.pop("schema", None)
         eng.save()
+        before_sells = {o.get("client_id") for o in offline.inner.orders.values() if o.get("reduce_only")}
         eng = e_engine(offline, eng.clock)
         eng.cfg.trail_atr_k = 0
         _sleeps(eng)
@@ -453,16 +455,22 @@ def _property_script(offline, side, seed):
         eng.tick()
         if offline.amt(DOGE) == 0:
             return f"seed {seed} side {side}: old ledger flattened the position", info
+        new_sells = [o for o in offline.inner.orders.values()
+                     if o.get("reduce_only") and o.get("client_id") not in before_sells]
+        if new_sells:
+            return f"seed {seed} side {side}: bot sell while locked {[o.get('client_id') for o in new_sells]}", info
         if not _covered(offline):
             return f"seed {seed} side {side}: stop missing after refuse", info
         return None, info
     if kind == "bare_qty":
         j.pop("entry_qty", None)
         j["qty"] = str(q1)
+        j["opened_ms"] = eng.now_ms() - int(eng.cfg.max_hold_s * 1000) - 3_600_000
         _end(offline, t1, D(0), "CANCELED")
         _shrink(offline, side, q1)
         eng.st.pop("schema", None)
         eng.save()
+        before_sells = {o.get("client_id") for o in offline.inner.orders.values() if o.get("reduce_only")}
         eng = e_engine(offline, eng.clock)
         eng.cfg.trail_atr_k = 0
         _sleeps(eng)
@@ -473,8 +481,14 @@ def _property_script(offline, side, seed):
             return f"seed {seed} side {side}: rested a take-profit on an unproved size", info
         if offline.amt(DOGE) != (entry - q1) * side:
             return f"seed {seed} side {side}: position moved", info
-        if not _covered(offline):
-            return f"seed {seed} side {side}: stop missing", info
+        new_sells = [o for o in offline.inner.orders.values()
+                     if o.get("reduce_only") and o.get("client_id") not in before_sells]
+        if new_sells:
+            return f"seed {seed} side {side}: bot sell while locked {[o.get('client_id') for o in new_sells]}", info
+        held = abs(offline.amt(DOGE))
+        if not any(o.get("close_position") or (o.get("reduce_only") and D(o.get("qty") or 0) >= held)
+                   for o in _stops(offline)):
+            return f"seed {seed} side {side}: stop does not cover {held}", info
         return None, info
     if kind == "orphan_pos":
         eng.st["pos"].pop(DOGE, None)
