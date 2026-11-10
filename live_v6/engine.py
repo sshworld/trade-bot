@@ -236,6 +236,8 @@ class V6Engine:
         self._tp_retry_at: dict = {}                        # (sym, what) → earliest clock() for another rejected-TP cycle
         self._tp_cooled: set = set()                        # rejected TPs whose next try is a single POST, not 1s+3s+10s
         self._armed_now: set = set()                        # symbols already stop-armed in this reconcile
+        self._cap_retry_at: dict = {}                       # sym → earliest clock() to retry a rejected BE cap close
+        self._cap_alerted: set = set()                      # symbols already told that a cap close was held
         inner = getattr(ex, "inner", ex)
         if hasattr(inner, "on_rate_limit"):
             inner.on_rate_limit = self._on_rate_limit
@@ -1831,12 +1833,9 @@ class V6Engine:
         the position). Mark already at/through tgt → reduceOnly market close. Returns 'ok' | 'closed' | 'pending'
         (not confirmed: the old stop stays, one 🚨, retried by reconcile)."""
         s, breach = int(j.get("side", 1)), ("be_stop_breach" if why == "be" else "trail_stop_breach")
-        if mk is not None and s * (D(mk) - tgt) <= 0:             # a stop there would fire at once → close now
-            if self._hold_keeps_stop(sym, j, why):
-                return "pending"                              # a hold is not a reason to flatten
+        if mk is not None and s * (D(mk) - tgt) <= 0:             # SL must not sit past breakeven after TP1
             log.warning("%s mark %s already beyond %s stop %s → close remainder", sym, mk, why, tgt)
-            self.close(sym, breach)                               # (old stop stays until flat; _after_flat cleans up)
-            return "closed"
+            return self._cap_close(sym, j, breach)
         seq = int(j.get("stop_seq", 0))
         j["stop_seq"] = seq + 1
         self.save()
@@ -1846,10 +1845,7 @@ class V6Engine:
             self.x("stop", sym, self._cs(j), tgt, cid, qty=abs(amt))
             sent = True
         except WouldTrigger:                                      # price already back through the level → close now
-            if self._hold_keeps_stop(sym, j, why):
-                return "pending"
-            self.close(sym, breach)
-            return "closed"
+            return self._cap_close(sym, j, breach)
         except ExchangeError as e:
             log.error("%s %s stop placement: %s → read-back", sym, why, e)
         try:
@@ -2085,21 +2081,68 @@ class V6Engine:
         self._dup_retry_at = {k: v for k, v in self._dup_retry_at.items() if k[0] != sym}
         self._tp_cooled = {k for k in self._tp_cooled if k[0] != sym}
         self._tp_retry_at = {k: v for k, v in self._tp_retry_at.items() if k[0] != sym}
+        self._cap_retry_at.pop(sym, None)
+        self._cap_alerted.discard(sym)
 
     @staticmethod
     def _book_sig(orders):
         return tuple(sorted(str(o.get("client_id") or o.get("id") or "") for o in orders))
 
-    def _hold_keeps_stop(self, sym, j, why) -> bool:
-        """During a -4130 hold a breakeven/trail that would fire now keeps the old stop."""
-        if sym not in self._cp_hold:
-            return False
-        if not j.get(f"{why}_hold_alerted"):
-            j[f"{why}_hold_alerted"] = True
-            self.alert(f"보호 점검 보류 — {sym}",
-                       f"{'본절' if why == 'be' else '추적'} 이동 · 보류 중 시장가 청산 안 함 · 기존 손절 유지")
+    def _cap_alert_once(self, sym, detail):
+        if sym in self._cap_alerted:
+            return
+        self._cap_alerted.add(sym)
+        self.alert(f"보호 점검 보류 — {sym}", detail)
+
+    def _cap_close(self, sym, j, reason) -> str:
+        """One reduceOnly MARKET for the qty just read. A failed read sends nothing.
+        A rejected close keeps the old stop and is reconsidered in a minute.
+        Returns 'closed' | 'pending'."""
+        if self.clock() < self._cap_retry_at.get(sym, 0):
+            return "pending"
+        try:
+            amt = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+        except ExchangeError:
+            amt = None
+        if amt is None:
+            self._cap_alert_once(sym, "본절 이탈 · 포지션 조회 실패 · 기존 손절 유지")
+            self._cap_retry_at[sym] = self.clock() + PROTECT_AUDIT_S
+            return "pending"
+        if amt == 0:
+            j["closing"], j["close_reason"] = True, reason
             self.save()
-        return True
+            self._after_flat(sym, reason)
+            return "closed"
+        try:
+            self.x("open_orders", sym)
+        except ExchangeError:
+            self._cap_alert_once(sym, "본절 이탈 · 주문 조회 실패 · 기존 손절 유지")
+            self._cap_retry_at[sym] = self.clock() + PROTECT_AUDIT_S
+            return "pending"
+        seq = int(j.get("exit_seq", 0))
+        j["exit_seq"] = seq + 1
+        self.save()
+        side = "SELL" if amt > 0 else "BUY"                # opposite the position: reduceOnly cannot flip it
+        try:
+            self.submit_market(sym, side, abs(amt), f"{j['cid']}x{seq}", reduce_only=True)
+        except OrderRejected as e:
+            self._cap_alert_once(sym, f"본절 이탈 · 시장가 청산 거절 · 기존 손절 유지 · {e}")
+            self._cap_retry_at[sym] = self.clock() + PROTECT_AUDIT_S
+            return "pending"
+        except ExchangeError as e:
+            self._cap_alert_once(sym, f"본절 이탈 · 시장가 청산 결과 불명 · 기존 손절 유지 · {e}")
+            self._cap_retry_at[sym] = self.clock() + PROTECT_AUDIT_S
+            return "pending"
+        try:
+            left = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+        except ExchangeError:
+            left = None
+        if left == 0:
+            j["closing"], j["close_reason"] = True, reason
+            self.save()
+            self._after_flat(sym, reason)
+            return "closed"
+        return "pending"
 
     def _hold_should_rearm(self, sym, orders) -> bool:
         """A failed read never reaches here. A book whose order set changed (a TP
