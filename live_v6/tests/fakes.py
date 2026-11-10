@@ -274,13 +274,22 @@ class FakeExchange:
         return dict(o)
 
     def countdown_cancel_all(self, symbol, countdown_ms):
-        """POST /fapi/v1/countdownCancelAll. 0 stops the timer. Otherwise open orders die when it lapses."""
+        """POST /fapi/v1/countdownCancelAll. 0 stops the timer and, on testnet, also drops reduce-only qty
+        algo orders already on the symbol (a closePosition stop is left). A positive value arms the dead-man."""
         ms = int(countdown_ms)
         if ms <= 0:
             self.countdown.pop(symbol, None)
+            self._cancel_qty_algos(symbol)
             return {"symbol": symbol, "countdownTime": 0}
         self.countdown[symbol] = {"ms": ms, "set_at": time.time()}
         return {"symbol": symbol, "countdownTime": ms}
+
+    def _cancel_qty_algos(self, symbol):
+        """Reduce-only qty conditional orders (the TP). closePosition stops stay."""
+        for aid, o in list(self.algos.items()):
+            if o["symbol"] == symbol and not o.get("close_position"):
+                self.algos.pop(aid, None)
+                self._algo_end(o, "CANCELED")
 
     def _housekeep(self, symbol):
         """Exchange-side maintenance observed on testnet: a flat reduce-only qty stop dies within ~1s,

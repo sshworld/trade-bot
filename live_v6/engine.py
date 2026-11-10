@@ -616,6 +616,9 @@ class V6Engine:
             self._countdown(sym, 0)
             return
         j = self.st["pos"][sym]
+        # Disarm before the reduce-only TP. On testnet, countdownCancelAll(0) cancels qty conditional
+        # orders already resting (the TP) and leaves a closePosition stop. The entry limit is not reduce-only.
+        self._countdown(sym, 0)
         if self.cfg.take_profit and self.cfg.exit_mode == "full_tp_pct":
             self._resize_full_tp(sym, j)
         elif self.cfg.take_profit and not isinstance(j.get("tp"), dict):
@@ -623,7 +626,6 @@ class V6Engine:
         elif self.cfg.exit_mode == "full_tp_pct":
             self._stamp_full_tp(sym, j, D(j["qty"]))
             self.save()
-        self._countdown(sym, 0)                            # SL and TP journalled: the dead-man must not cancel them
         if done:
             self.st["intents"].pop(intent["cid"], None)
             self.save()
@@ -1455,8 +1457,13 @@ class V6Engine:
                 rejected = True
                 break
             except OrderRejected as e:
-                rejected = True
-                log.error("%s closePosition stop attempt %d rejected: %s", sym, attempt + 1, e)
+                if e.code == -4130:
+                    self._drop_other_close_stops(sym, self._cs(j), placed_id)
+                    self.sleep(self.cfg.stop_retry_delay_s)
+                    log.error("%s closePosition stop -4130, attempt %d", sym, attempt + 1)
+                else:
+                    rejected = True
+                    log.error("%s closePosition stop attempt %d rejected: %s", sym, attempt + 1, e)
             except ExchangeError as e:
                 log.error("%s closePosition stop attempt %d: %s", sym, attempt + 1, e)
             try:
@@ -1477,6 +1484,13 @@ class V6Engine:
                 self.sleep(self.cfg.stop_retry_delay_s)
         if rejected:                                        # exchange stop DEFINITIVELY rejected: caller flattens (🚨)
             return "rejected"
+        try:
+            oo = self.x("open_orders", sym)
+        except ExchangeError:
+            oo = []
+        if any(o.get("close_position") and (o.get("type") or "").startswith("STOP") and o.get("side") == self._cs(j)
+               for o in oo):
+            return "unavailable"                           # -4130: a closePosition stop is still there, do not flatten
         if pre is None:
             return "unavailable"
         log.warning("%s keeps the pre-armed reduceOnly stop %s", sym, pre["stop_price"])
@@ -1575,9 +1589,9 @@ class V6Engine:
         on the last price (CONTRACT_PRICE, TA 2026-11-02: last-price klines reached 2R without a mark-price TP2 fill);
         every stop stays on MARK_PRICE. A live TP placed on MARK_PRICE before this change is left as-is (re-placed only
         when missing, by client id, so never duplicated)."""
+        cid = f"{j['cid']}{which}"
         try:
-            self.x("take_profit", sym, self._cs(j), px, f"{j['cid']}{which}", qty, working_type="CONTRACT_PRICE")
-            return True
+            self.x("take_profit", sym, self._cs(j), px, cid, qty, working_type="CONTRACT_PRICE")
         except WouldTrigger:
             seq = int(j.get("exit_seq", 0))
             j["exit_seq"] = seq + 1
@@ -1600,6 +1614,14 @@ class V6Engine:
         except ExchangeError as e:
             log.error("%s %s placement failed (reconcile retries): %s", sym, which, e)
             return False
+        try:
+            oo = self.x("open_orders", sym)
+        except ExchangeError:
+            return True
+        if any(o.get("client_id") == cid for o in oo):
+            return True
+        log.error("%s %s placement failed: accepted but not on the book", sym, which)
+        return False
 
     def _full_tp_px(self, sym, j) -> Decimal:
         s = int(j.get("side", 1))
@@ -1959,8 +1981,14 @@ class V6Engine:
                 log.error("%s stop %s would trigger immediately", sym, stop_px)
                 return "would_trigger"
             except OrderRejected as e:
-                status = "rejected"
-                log.error("%s stop rejected (%s), attempt %d", sym, e, attempt + 1)
+                if e.code == -4130:
+                    self._drop_other_close_stops(sym, side, f"{cid_base}s{seq}")
+                    self.sleep(self.cfg.stop_retry_delay_s)
+                    status = "blocked"
+                    log.error("%s stop -4130 (closePosition already on the book), attempt %d", sym, attempt + 1)
+                else:
+                    status = "rejected"
+                    log.error("%s stop rejected (%s), attempt %d", sym, e, attempt + 1)
             except ExchangeUnavailable as e:
                 log.error("%s stop placement unknown (%s) → read-back", sym, e)
             try:
@@ -1976,7 +2004,13 @@ class V6Engine:
                 oo = None
             if attempt + 1 < self.cfg.stop_attempts:
                 self.sleep(self.cfg.stop_retry_delay_s)
-        return status
+        try:
+            oo = self.x("open_orders", sym)
+        except ExchangeError:
+            return "unavailable"
+        if any(o.get("close_position") and (o.get("type") or "").startswith("STOP") and o.get("side") == side for o in oo):
+            return "unavailable"                       # a stop is still there: do not market-close on -4130
+        return status if status == "rejected" else "unavailable"
 
     def protect(self, sym, amt, stop_px, cid_base) -> bool:
         """§8c L1 → L3(b). Stop re-placed (3 tries); rejected/would-trigger → close ONLY this position; if even that
@@ -2707,11 +2741,38 @@ class V6Engine:
         self.check_halts(daily=False)   # daily-loss check runs at the end of reconcile
         return "flat", Decimal(0)
 
-    def _verified_close_sl(self, orders, close_side) -> bool:
-        """A closePosition STOP on the closing side. A reduce-only qty stop does not count: Binance cancels it while flat,
-        and it does not track a position that grew after a partial fill."""
-        return any((o.get("type") or "").startswith("STOP") and o.get("close_position") and o.get("side") == close_side
-                   for o in orders)
+    @staticmethod
+    def _is_our_stop_id(client_id, cid_base) -> bool:
+        """Only `{cid}sN` is this entry's stop. A foreign closePosition (v6ETHa…s0) is not."""
+        cid = str(client_id or "")
+        head = f"{cid_base}s"
+        return cid.startswith(head) and cid[len(head):].isdigit()
+
+    def _drop_other_close_stops(self, sym, close_side, keep_id):
+        """Cancel closePosition stops that are not `keep_id`. One alert. They block our stop with -4130."""
+        try:
+            oo = self.x("open_orders", sym)
+        except ExchangeError:
+            return
+        for o in oo:
+            if not ((o.get("type") or "").startswith("STOP") and o.get("close_position") and o.get("side") == close_side):
+                continue
+            if keep_id and o.get("client_id") == keep_id:
+                continue
+            self._alert_once(sym, "stale_sl", "다른 전량 손절 취소 — 우리 손절을 등록",
+                             f"{sym} {o.get('client_id')} @ {o.get('stop_price')}")
+            self._cancel_quiet(sym, o)
+
+    def _verified_close_sl(self, orders, close_side, cid_base=None) -> bool:
+        """Our closePosition STOP (`{cid}sN`) on the closing side. Any other closePosition stop does not count."""
+        for o in orders:
+            if not ((o.get("type") or "").startswith("STOP") and o.get("close_position") and o.get("side") == close_side):
+                continue
+            if cid_base is None or self._is_our_stop_id(o.get("client_id"), cid_base):
+                if cid_base is None:
+                    continue
+                return True
+        return False
 
     def _verified_covering_tp(self, orders, close_side, qty: Decimal) -> bool:
         return any(o.get("type") == "TAKE_PROFIT_MARKET" and o.get("reduce_only") and not o.get("close_position")
@@ -2735,7 +2796,14 @@ class V6Engine:
             self.save()
             return
         stop_px = self._stop_at(sym, entry, side, D(it.get("stop_dist") or 0))
-        if not self._verified_close_sl(orders, cs):
+        # Disarm first so a pending countdown cannot cancel the reduce-only TP we are about to place.
+        self._countdown(sym, 0)
+        self._drop_other_close_stops(sym, cs, "")
+        try:
+            oo = self.x("open_orders", sym)
+        except ExchangeError:
+            oo = orders
+        if not self._verified_close_sl(oo, cs, it["cid"]):
             seq = int(it.get("stop_seq") or 0)
             it["stop_seq"] = seq + 1
             self.save()
@@ -2744,7 +2812,8 @@ class V6Engine:
                 self.x("stop", sym, cs, stop_px, placed)
             except OrderRejected as e:
                 if e.code == -4130:
-                    self._cancel_stops_except(sym, placed)
+                    self._drop_other_close_stops(sym, cs, placed)
+                    self.sleep(self.cfg.stop_retry_delay_s)
                     try:
                         self.x("stop", sym, cs, stop_px, placed)
                     except ExchangeError as e2:
@@ -2755,7 +2824,11 @@ class V6Engine:
                 log.error("%s pending-fill stop: %s", sym, e)
         scratch = {"cid": it["cid"], "side": side, "entry_px": str(entry), "qty": str(abs(amt)),
                    "stop_px": str(stop_px), "stop_dist": str(it.get("stop_dist") or 0)}
-        if self.cfg.take_profit and not self._verified_covering_tp(orders, cs, abs(amt)):
+        try:
+            oo = self.x("open_orders", sym)
+        except ExchangeError:
+            oo = orders
+        if self.cfg.take_profit and not self._verified_covering_tp(oo, cs, abs(amt)):
             if self.cfg.exit_mode == "full_tp_pct":
                 self._arm_full_tp(sym, scratch, abs(amt))
             else:

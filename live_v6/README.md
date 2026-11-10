@@ -154,7 +154,10 @@ dead process cannot leave the limit up. A reduce-only qty stop is not rested und
 those within about a second when there is no position. On any fill the countdown is set to 0 after the SL and TP
 are on the book. If the fill lands while the order lookup is down, there is no journal yet and the pending
 intent does not skip protection: reconcile audits the exchange position and places a closePosition SL and a
-covering TP anyway. The intent stays until the lookup succeeds. A partial fill keeps the remainder of the limit working, places a closePosition SL, and resizes
+covering TP anyway. The countdown is stopped before that take-profit, because `countdownCancelAll(0)` drops a
+reduce-only qty order already on the book and leaves a closePosition stop. A foreign closePosition stop is
+cancelled (one alert) and replaced with this entry's `{cid}sN` stop. `-4130` retries that replacement and
+does not market-close while any closePosition stop is still on the symbol. The intent stays until the lookup succeeds. A partial fill keeps the remainder of the limit working, places a closePosition SL, and resizes
 the reduce-only TP to the live position (`journal["tp"]` stays set while the position exists). On the fill:
 full-qty `TAKE_PROFIT_MARKET` at
 `entry*1.020` (`CONTRACT_PRICE`) and `STOP_MARKET` at `entry*0.9925` (`MARK_PRICE`), both tick-rounded toward entry.

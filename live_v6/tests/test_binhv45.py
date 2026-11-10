@@ -627,6 +627,72 @@ def _assert_covered(b, eng):
     assert len(tps) == 1 and tps[0]["reduce_only"] and tps[0]["qty"] >= amt
 
 
+def test_tp_is_placed_after_countdown_disarm_and_stays(offline):
+    """countdownCancelAll(0) drops a reduce-only TP already on the book and leaves a closePosition SL.
+    The TP send has to come after that disarm, and the order has to still be open."""
+    eng = _eng(offline)
+    offline.inner.set_price(DOGE, D("0.151"))
+    assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"))
+    cid = next(iter(eng.st["intents"]))
+    offline.inner.fill_limit(cid)
+    eng.reconcile()
+    seq = list(offline.fx.calls)
+    zeros = [i for i, c in enumerate(seq) if c[0] == "countdown_cancel_all" and int(c[1][1]) == 0]
+    tps = [i for i, c in enumerate(seq) if c[0] == "take_profit"]
+    assert zeros and tps and zeros[-1] < tps[0]
+    live = _tps(offline)
+    assert len(live) == 1 and live[0]["qty"] == abs(offline.amt(DOGE))
+    assert live[0]["working_type"] == "CONTRACT_PRICE"
+
+
+def test_pending_fill_replaces_a_foreign_close_position(offline):
+    """A foreign closePosition stop is not our 0.75% stop, and it blocks ours with -4130."""
+    from live_v6.exchange import ExchangeUnavailable
+
+    eng = _eng(offline)
+    offline.inner.set_price(DOGE, D("0.151"))
+    assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"))
+    cid = next(iter(eng.st["intents"]))
+    offline.inner.fill_limit(cid)
+    entry = offline.inner.pos[DOGE]["entry"]
+    foreign_px = round_full_tp(entry * D("0.97"), eng.rules[DOGE].tick_size, -1)
+    offline.inner.stop(DOGE, "SELL", foreign_px, "v6ETHa1794314000s0")
+    offline.fx.inject("get_order", lambda fn, *a, **kw: (_ for _ in ()).throw(ExchangeUnavailable("down")), times=20)
+    eng.reconcile()
+    assert cid in eng.st["intents"] and DOGE not in eng.st["pos"]
+    stops = _stops(offline)
+    assert len(stops) == 1 and stops[0]["client_id"].startswith(cid + "s") and stops[0]["client_id"][len(cid) + 1:].isdigit()
+    want = round_full_tp(entry * D("0.9925"), eng.rules[DOGE].tick_size, -1)
+    assert stops[0]["stop_price"] == want and stops[0]["close_position"]
+    assert _tps(offline) and _tps(offline)[0]["qty"] >= abs(offline.amt(DOGE))
+    assert any("손절" in m for m in eng.tg.sent)
+
+
+def test_4130_does_not_market_close_while_a_stop_remains(offline):
+    """-4130 means a closePosition stop is still on the symbol. Read, cancel what is not ours, retry.
+    Market-close only once the book truly has no stop."""
+    from live_v6.exchange import OrderRejected
+
+    eng, _j = _filled(offline)
+    st = _stops(offline)[0]
+    offline.inner.algos[st["id"]]["client_id"] = "v6ETHa1794314000s0"
+    offline.fx.inject("cancel", "unavailable", times=9)
+    offline.fx.inject(
+        "stop",
+        lambda fn, *a, **kw: (_ for _ in ()).throw(
+            OrderRejected(-4130, "An open stop or take profit order with GTE and closePosition in the direction is existing.")),
+        times=9,
+    )
+    eng.reconcile()
+    assert offline.amt(DOGE) > 0 and DOGE in eng.st["pos"]
+    assert any(o["client_id"] == "v6ETHa1794314000s0" for o in _stops(offline))
+    offline.fx.clear()
+    eng.reconcile()
+    stops = [o for o in _stops(offline) if o["close_position"]]
+    assert len(stops) == 1 and stops[0]["client_id"].startswith(eng.st["pos"][DOGE]["cid"] + "s")
+    assert offline.amt(DOGE) > 0
+
+
 def test_prefix_v6_does_not_own_v6t_orders(offline):
     eng = _eng(offline)
     assert eng.cfg.cid_prefix == "v6"
