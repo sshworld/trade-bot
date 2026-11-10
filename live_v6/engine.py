@@ -23,6 +23,12 @@ Invariants (ported from the verified live_v1 safety layer, spec v1 §8-10 / v2 �
     Resolution is manual (close by hand, or `python -m live_v6.tools.adopt_position`). Only exception (protection
     beats ownership): the exchange keeps REJECTING the stop and none is confirmed within 5 min of detection →
     reduceOnly MARKET close of that position + 🚨.
+  * TA protection policy v1 (2026-11-09): after TP1, a reduceOnly TAKE_PROFIT_MARKET at entry ± 3R
+    (MARK_PRICE) rests on the remainder beside the chandelier stop. A qty that cannot be split gets
+    that +3R TP and the SL on the full size. A failed SL/TP placement is retried at 1s, 3s, 10s
+    (alert each time) and then reduceOnly-market closed. Once a minute the book is checked and a
+    missing SL or TP is restored the same way. A symbol missing from the positions response is
+    unknown: that read never cancels SL/TP and never market-closes.
 """
 from __future__ import annotations
 
@@ -158,6 +164,9 @@ EXIT_KIND = {"stop_loss": "exchange_close", "be_stop": "exchange_close", "trail_
 # ≈ 1 minute) the "still unconfirmed" alert fires again. The journal stays open and the symbol stays blocked.
 # A close is never committed on this timer.
 CLOSE_HOLD_MAX = 12
+# TA protection policy v1: three retries, then reduceOnly market close. Book audit once a minute.
+PROTECT_RETRY_S = (1.0, 3.0, 10.0)
+PROTECT_AUDIT_S = 60.0
 
 
 class V6Engine:
@@ -213,6 +222,7 @@ class V6Engine:
         self._foreign_seen: set = set()                    # (sym, order id) of non-bot orders on a flat coin already 🚨'd
         self._flat_confirmed: set = set()                  # symbols whose position read in THIS process returned 0.
                                                            # empty after a restart until reconcile confirms again
+        self._protect_audit_at = self.clock()              # protection audit is due PROTECT_AUDIT_S after this
         inner = getattr(ex, "inner", ex)
         if hasattr(inner, "on_rate_limit"):
             inner.on_rate_limit = self._on_rate_limit
@@ -1044,9 +1054,14 @@ class V6Engine:
             log.warning("entry alert %s: actual risk display failed (%r) → configured %s%%", sym, e, act)
         if self.cfg.take_profit:
             self._place_tps(sym, j)
+        if not self._position_open(sym):
+            return False
         tp = j.get("tp") or {}
-        part += (f"\n익절 TP1 {tp['tp1']} ({tp['q1']})" + (f" · TP2 {tp['tp2']} ({tp['q2']})" if tp.get("tp2") else " · 이후 추적 손절")
-                 if tp.get("tp1") else "")
+        if tp.get("tp1"):
+            part += (f"\n익절 TP1 {tp['tp1']} ({tp['q1']})"
+                     + (f" · TP2 {tp['tp2']} ({tp['q2']})" if tp.get("tp2") else " · 이후 추적 손절"))
+        elif tp.get("full") and tp.get("tp3"):
+            part += f"\n익절 +3R {tp['tp3']} (전량 {tp['q3']})"
         self.notify(f"🟢 진입 {sym} {'롱' if side > 0 else '숏'} · 수량 {j['qty']} · 체결가 {j['entry_px']}{part}\n"
                      f"손절 {j['stop_px']} · {sz.lev}x · 위험 {D(j['risk_usdt']):.4f} USDT ({act}%)",
                      kind="entry", event_ms=intent.get("model_id") or intent.get("T"))
@@ -1203,18 +1218,109 @@ class V6Engine:
         qty = D(j["qty"])
         q1 = rules.floor_qty(qty * D(str(self.cfg.tp1_frac)))
         if q1 < rules.order_min_qty or q1 >= qty or (qty - q1) < rules.order_min_qty:
-            q1 = Decimal(0)                                        # cannot split → TP2 only for the whole qty
+            q1 = Decimal(0)                                        # cannot split → +3R TP on the full qty (policy v1)
         return (rules.price(e + s * r * D(str(self.cfg.tp1_r)), rnd), q1,
                 rules.price(e + s * r * D(str(self.cfg.tp2_r)), rnd) if self.cfg.tp2_r else None, qty - q1)
 
-    def _place_tp(self, sym, j, which, px, qty) -> bool:
-        """reduceOnly TAKE_PROFIT_MARKET. Price already beyond it → reduceOnly market for that qty. TP1 and TP2 trigger
-        on the last price (CONTRACT_PRICE, TA 2026-11-02: last-price klines reached 2R without a mark-price TP2 fill);
-        every stop stays on MARK_PRICE. A live TP placed on MARK_PRICE before this change is left as-is (re-placed only
-        when missing, by client id, so never duplicated)."""
+    def _position_open(self, sym) -> bool:
+        j = self.st["pos"].get(sym)
+        return isinstance(j, dict) and not j.get("closing")
+
+    def _runner_due(self, j) -> bool:
+        """+3R runner is the TP once TP1 has filled, or on the full qty when a split was impossible."""
+        tp = j.get("tp") or {}
+        return bool(tp.get("full") or (j.get("tp1_done") and tp.get("tp1")))
+
+    def _runner_px(self, sym, j) -> Decimal:
+        """entry ± 3R. R is the same initial distance TP1 used (stop_px_entry), not the trailed stop."""
+        s = int(j.get("side", 1))
+        e = D(j["entry_px"])
+        r = abs(e - D(j.get("stop_px_entry") or j["stop_px"]))
+        return self.rules[sym].price(e + s * r * D(3), "up" if s > 0 else "down")
+
+    def _bind_runner(self, sym, j, amt):
+        if not self._runner_due(j):
+            return
+        tp = j.setdefault("tp", {})
+        if not tp.get("tp3"):
+            tp["tp3"] = str(self._runner_px(sym, j))
+            tp["q3"] = str(abs(amt))
+            self.save()
+
+    def _cid_live(self, sym, cid) -> bool:
         try:
-            self.x("take_profit", sym, self._cs(j), px, f"{j['cid']}{which}", qty, working_type="CONTRACT_PRICE")
-            return True
+            oo = self.x("open_orders", sym)
+        except ExchangeError:
+            return False
+        return any(o.get("client_id") == cid for o in oo)
+
+    def _give_up_protection(self, sym, j, what, err) -> bool:
+        """Retries exhausted. Market-close only a known nonzero row. A missing row is unknown: no close, no cancel."""
+        try:
+            pos = self.x("positions", self.cfg.symbols)
+        except ExchangeError as e:
+            self.alert(f"보호 주문 실패 — {sym} 청산 보류", f"{what} · 포지션 조회 실패 · 손절·익절 유지 · {e}")
+            return False
+        amt = self._row_amt(pos, sym)
+        if amt is None:
+            self.alert(f"보호 주문 실패 — {sym} 청산 보류", f"{what} · 포지션 응답에 없음 · 손절·익절 유지 · {err}")
+            return False
+        if amt == 0:
+            return False
+        self.alert(f"보호 주문 실패 — {sym} 시장가 청산", f"{what} · reduceOnly MARKET · {err}")
+        self.close(sym, "protection_failed")
+        return False
+
+    def _arm_protection(self, sym, j, what, cid, place) -> bool:
+        """Place `place()`. On failure alert and retry at 1s, 3s, 10s. Still failing → reduceOnly market close + 🚨.
+        WouldTrigger propagates so the caller can close just the qty that is already through. A live order with
+        `cid` (lost response) is success, not another send."""
+        last = None
+        for i, delay in enumerate((*PROTECT_RETRY_S, None)):
+            try:
+                place()
+                return True
+            except WouldTrigger:
+                raise
+            except ExchangeError as e:
+                last = e
+                if self._cid_live(sym, cid):
+                    return True
+                if delay is not None:
+                    self.alert("보호 주문 실패 — 재시도",
+                               f"{sym} {what} · {i + 1}회 실패 · {delay:g}초 후 재시도 · {e}")
+                    self.sleep(delay)
+        return self._give_up_protection(sym, j, what, last)
+
+    def _arm_stop(self, sym, j, amt) -> bool:
+        """One closePosition STOP at the journal stop. False → the position was closed or the read stayed unknown."""
+        seq = int(j.get("stop_seq", 0))
+        j["stop_seq"] = seq + 1
+        self.save()
+        cid = f"{j['cid']}s{seq}"
+        px = D(j["stop_px"])
+
+        def place():
+            self.x("stop", sym, self._cs(j), px, cid)
+
+        try:
+            return self._arm_protection(sym, j, "손절", cid, place)
+        except WouldTrigger:
+            log.error("%s stop %s would trigger — market close", sym, px)
+            self._give_up_protection(sym, j, f"손절 {px} 즉시 발동", "would trigger")
+            return False
+
+    def _place_tp(self, sym, j, which, px, qty, working_type="CONTRACT_PRICE") -> bool:
+        """reduceOnly TAKE_PROFIT_MARKET. Price already beyond it → reduceOnly market for that qty. TP1 and TP2 stay
+        on CONTRACT_PRICE (TA 2026-11-02). The +3R runner (which='t3') is MARK_PRICE. A failed placement is retried
+        (policy v1), never logged and left missing. A live order with this client id is left as-is."""
+        cid = f"{j['cid']}{which}"
+
+        def place():
+            self.x("take_profit", sym, self._cs(j), px, cid, qty, working_type=working_type)
+
+        try:
+            return self._arm_protection(sym, j, f"익절 {which}", cid, place)
         except WouldTrigger:
             seq = int(j.get("exit_seq", 0))
             j["exit_seq"] = seq + 1
@@ -1223,33 +1329,54 @@ class V6Engine:
                 self.submit_market(sym, self._cs(j), qty, f"{j['cid']}x{seq}", reduce_only=True)
             except ExchangeError as e:
                 log.error("%s %s market (TP already through) failed: %s", sym, which, e)
+                self._give_up_protection(sym, j, f"익절 {which} 이미 통과", e)
             self._dirty = True
             return False
-        except ExchangeError as e:
-            log.error("%s %s placement failed (reconcile retries): %s", sym, which, e)
-            return False
+
+    def _arm_unsplittable(self, sym, j):
+        """Cannot split off TP1: +3R reduceOnly TP and the SL, both on the full qty. No TP is not allowed."""
+        s = int(j.get("side", 1))
+        qty = D(j["qty"])
+        px = self._runner_px(sym, j)
+        j["tp"] = {"tp1": None, "q1": "0", "tp2": None, "q2": str(qty),
+                   "tp3": str(px), "q3": str(qty), "full": True}
+        j["tp1_done"] = False
+        self.save()
+        amt = qty if s > 0 else -qty
+        try:
+            oo = self.x("open_orders", sym)
+        except ExchangeError:
+            oo = None                                          # unknown book: do not stack a second stop
+        if oo is not None and not self.find_stop(amt, oo):
+            if not self._arm_stop(sym, j, amt) or not self._position_open(sym):
+                return
+        self._place_tp(sym, j, "t3", px, qty, working_type="MARK_PRICE")
 
     def _place_tps(self, sym, j):
         try:
             tp1, q1, tp2, q2 = self._tp_levels(sym, j)
-        except Exception as e:  # noqa: BLE001  TPs are profit-taking only; the stop protects
+        except Exception as e:  # noqa: BLE001  cannot price a TP → do not leave the position without one
             log.error("%s TP levels failed: %r", sym, e)
+            self._give_up_protection(sym, j, "익절 가격", e)
             return
-        j["tp"] = {"tp1": str(tp1) if q1 > 0 else None, "q1": str(q1), "tp2": str(tp2) if tp2 else None, "q2": str(q2)}
-        j["tp1_done"] = q1 <= 0                                    # E, cannot split: no TP at all, the trailing SL exits
+        if q1 <= 0:
+            self._arm_unsplittable(sym, j)
+            return
+        j["tp"] = {"tp1": str(tp1), "q1": str(q1), "tp2": str(tp2) if tp2 else None, "q2": str(q2)}
+        j["tp1_done"] = False
         self.save()
-        if q1 > 0:
-            self._place_tp(sym, j, "t1", tp1, q1)
-        if tp2:
+        self._place_tp(sym, j, "t1", tp1, q1)
+        if tp2 and self._position_open(sym):
             self._place_tp(sym, j, "t2", tp2, q2)
 
     def _manage_tps(self, sym, j, amt, orders, mk):
-        """Every reconcile: missing TP orders re-placed; after TP1 the stop is moved to breakeven (new first)."""
+        """Every reconcile: missing TP orders re-placed; after TP1 the +3R runner is armed and the stop moves to breakeven."""
+        self._bind_runner(sym, j, amt)
         tp, cids = j["tp"], {o["client_id"] for o in orders}
-        for w, k in (("t1", "tp1"), ("t2", "tp2")):               # a TP missing from open orders most likely just fired:
-            if (tp.get(k) and f"{j['cid']}{w}" not in cids     # `amt` / `mk` may predate it -> fresh position read
-                    and not (w == "t1" and j.get("tp1_done"))):  # first (testnet LINK + PEPE 2026-10-30: re-place ->
-                try:                                              # -2021 -> a 2nd market TP1 closed the remainder)
+        for w, k in (("t1", "tp1"), ("t2", "tp2"), ("t3", "tp3")):  # a TP missing from open orders most likely just fired:
+            if (tp.get(k) and f"{j['cid']}{w}" not in cids        # `amt` / `mk` may predate it -> fresh position read
+                    and not (w == "t1" and j.get("tp1_done"))):     # first (testnet LINK + PEPE 2026-10-30: re-place ->
+                try:                                                 # -2021 -> a 2nd market TP1 closed the remainder)
                     fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
                 except ExchangeError:
                     return
@@ -1260,6 +1387,8 @@ class V6Engine:
                     return
         if not j.get("tp1_done") and f"{j['cid']}t1" not in cids and tp.get("tp1"):
             self._place_tp(sym, j, "t1", D(tp["tp1"]), D(tp["q1"]))
+            if not self._position_open(sym):
+                return
         if tp.get("tp2") and not self.cfg.tp2_r:                   # adopted pre-E position: TP2 cancelled (E has none)
             o2 = next((o for o in orders if o["client_id"] == f"{j['cid']}t2"), None)
             try:
@@ -1270,9 +1399,15 @@ class V6Engine:
                 log.info("%s TP2 %s (E: no TP2, trailing SL)", sym, "cancelled" if o2 else "dropped (not open)")
             except ExchangeError as e:
                 log.error("%s TP2 cancel failed (retried next reconcile): %s", sym, e)
-        elif tp.get("tp2") and f"{j['cid']}t2" not in cids:
+        elif tp.get("tp2") and f"{j['cid']}t2" not in cids and self._position_open(sym):
             self._place_tp(sym, j, "t2", D(tp["tp2"]), abs(amt) if j.get("tp1_done") else D(tp["q2"]))
-        if j.get("tp1_done") and tp.get("tp1") and not j.get("be_done"):
+            if not self._position_open(sym):
+                return
+        if self._runner_due(j) and tp.get("tp3") and f"{j['cid']}t3" not in cids and self._position_open(sym):
+            self._place_tp(sym, j, "t3", D(tp["tp3"]), abs(amt), working_type="MARK_PRICE")
+            if not self._position_open(sym):
+                return
+        if j.get("tp1_done") and tp.get("tp1") and not j.get("be_done") and self._position_open(sym):
             self._move_stop_be(sym, j, amt, orders, mk)
 
     def _exit_fills(self, sym, j, amt, orders):
@@ -1290,6 +1425,8 @@ class V6Engine:
                 cand[f"{cid}t1"] = "tp1"
             if j["tp"].get("tp2"):
                 cand[f"{cid}t2"] = "tp2"
+            if j["tp"].get("tp3") and self._runner_due(j):
+                cand[f"{cid}t3"] = "tp3"
         cand = {c: k for c, k in cand.items() if c not in open_}
         if not cand:
             return None
@@ -1312,7 +1449,7 @@ class V6Engine:
         if amt is None:
             return False                                    # missing row is not a confirmed flat fill
         log.info("%s exit fill from order status: %s → position %s", sym, filled, amt)
-        if "stop" in filled or "tp2" in filled:
+        if "stop" in filled or "tp2" in filled or "tp3" in filled:
             j["exit_fill"] = ("trail_stop" if j.get("trailed") else "be_stop" if j.get("be_done") else "stop_loss") \
                 if "stop" in filled else "take_profit"
             self.save()
@@ -1919,6 +2056,8 @@ class V6Engine:
             cids.append(f"{cid}t1")
         if tp.get("tp2"):
             cids.append(f"{cid}t2")
+        if tp.get("tp3"):
+            cids.append(f"{cid}t3")
         cids += [f"{cid}s{i}" for i in range(int(j.get("stop_seq") or 0))]
         cids += [f"{cid}x{i}" for i in range(int(j.get("exit_seq") or 0))]
         for c in cids:
@@ -2183,7 +2322,7 @@ class V6Engine:
         self.meta.setdefault("trades", []).append(rec)
         del self.meta["trades"][:-1000]
         self.save()
-        lab = {"t1": "TP1", "t2": "TP2", "p": "손절"}
+        lab = {"t1": "TP1", "t2": "TP2", "t3": "+3R", "p": "손절"}
         leg_lines = []
         for x in sorted(exit_legs, key=lambda g: g["time"] or 0):
             k = x["order_id"]
@@ -2360,8 +2499,85 @@ class V6Engine:
                     if r in self.blocks:
                         self.unblock(r)
         self.save()
+        self._audit_protection_if_due()
         self.check_ledger()
         self.check_halts()
+
+    def _audit_protection_if_due(self):
+        if self.clock() - self._protect_audit_at < PROTECT_AUDIT_S:
+            return
+        self._protect_audit_at = self.clock()
+        self.audit_protection()
+
+    def _read_open_orders_all(self):
+        """One open-order read for every symbol when the adapter can do it. Otherwise one read per symbol."""
+        if callable(getattr(self.ex, "open_orders_all", None)):
+            return self.x("open_orders_all")
+        rows = []
+        for sym in self.cfg.symbols:
+            rows.extend(self.x("open_orders", sym))
+        return rows
+
+    def audit_protection(self):
+        """Once a minute: each known nonzero position has its SL and its stage TP. Missing → retry, then market
+        close. A symbol absent from the positions response is unknown: this pass does not cancel or close it."""
+        if not self.st.get("pos"):
+            return
+        try:
+            pos = self.x("positions", self.cfg.symbols)
+        except ExchangeError as e:
+            log.error("protection audit positions: %s", e)
+            return
+        need = []
+        for sym, j in self.st["pos"].items():
+            if not isinstance(j, dict) or j.get("closing"):
+                continue
+            amt = self._row_amt(pos, sym)
+            if amt is None or amt == 0:
+                continue                                   # unknown or flat: never cancel from this pass
+            need.append((sym, j, amt))
+        if not need:
+            return
+        try:
+            orders = self._read_open_orders_all()
+        except ExchangeError as e:
+            log.error("protection audit orders: %s", e)
+            return
+        for sym, j, amt in need:
+            if sym not in self.st["pos"]:
+                continue
+            self._audit_symbol(sym, self.st["pos"][sym], amt, [o for o in orders if o.get("symbol") == sym])
+
+    def _audit_symbol(self, sym, j, amt, orders):
+        if not self._position_open(sym):
+            return
+        if not self.find_stop(amt, orders):
+            if not self._arm_stop(sym, j, amt) or not self._position_open(sym):
+                return
+        if not j.get("tp"):
+            return
+        self._bind_runner(sym, j, amt)
+        cid = self._required_tp_cid(j)
+        if not cid or any(o.get("client_id") == cid for o in orders):
+            return
+        tp = j["tp"]
+        if cid.endswith("t3"):
+            self._place_tp(sym, j, "t3", D(tp["tp3"]), abs(amt), working_type="MARK_PRICE")
+        elif tp.get("tp1"):
+            self._place_tp(sym, j, "t1", D(tp["tp1"]), D(tp["q1"]))
+
+    @staticmethod
+    def _required_tp_cid(j):
+        tp, cid = j.get("tp") or {}, j.get("cid")
+        if not cid or not tp:
+            return None
+        if tp.get("full") or (j.get("tp1_done") and tp.get("tp1")):
+            return f"{cid}t3"
+        if tp.get("tp1") and not j.get("tp1_done"):
+            return f"{cid}t1"
+        if tp.get("tp3"):
+            return f"{cid}t3"
+        return None
 
     def _unknown_position(self, sym, p, orders, mark):
         """TA R4: exchange position that is NOT in the state file (opened by hand, or the state file was lost).

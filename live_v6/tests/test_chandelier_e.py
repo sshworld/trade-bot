@@ -199,7 +199,10 @@ def test_tp1_then_fee_breakeven_no_tp2(offline, side):
         st = stops(offline)
         assert jj["tp1_done"] and jj["be_done"] and len(st) == 1 and st[0]["stop_price"] == want
         assert side * (want - e * (1 + side * D("0.0015"))) > 0          # ≥ entry ± 0.15 % (≈ ± 0.25 %)
-        assert not tps(offline) and st[0]["qty"] == abs(offline.amt(DOGE))
+        runners = [o for o in tps(offline) if o["client_id"].endswith("t3")]
+        assert len(runners) == 1 and runners[0]["working_type"] == "MARK_PRICE"   # +3R runner; still no TP2
+        assert not [o for o in tps(offline) if o["client_id"].endswith("t2")]
+        assert st[0]["qty"] == abs(offline.amt(DOGE))
         eng.close(DOGE, "manual")
         assert not offline.inner.open_orders(DOGE)
 
@@ -304,4 +307,7 @@ def test_adopt_old_be_tightens_to_fee_be(offline):
     new.reconcile()
     jj = new.st["pos"][DOGE]
     want = new.rules[DOGE].price(e * (1 + F) / (1 - F) * D("1.0015"), "up")
-    assert D(jj["stop_px"]) == want > D(jo["stop_px"]) and len(stops(offline)) == 1 and not tps(offline)
+    runners = [o for o in tps(offline) if o["client_id"].endswith("t3")]
+    assert len(runners) == 1 and runners[0]["working_type"] == "MARK_PRICE"
+    assert not [o for o in tps(offline) if o["client_id"].endswith("t2")]
+    assert D(jj["stop_px"]) == want > D(jo["stop_px"]) and len(stops(offline)) == 1

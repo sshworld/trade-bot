@@ -206,6 +206,9 @@ class SimExchange:
                  "stop_price": st["trigger"], "close_position": st["qty"] is None, "reduce_only": True,
                  "qty": st["qty"] or Decimal(0)} for st in self.stops.get(s, [])]
 
+    def open_orders_all(self):
+        return [o for s in list(self.stops) for o in self.open_orders(s)]
+
     def set_margin_type(self, s, mt="ISOLATED"):
         self.mt[s] = mt
 

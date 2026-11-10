@@ -102,6 +102,9 @@ class FakeExchange:
     def open_orders(self, s):
         return [dict(o) for o in self.algos.values() if o["symbol"] == s]
 
+    def open_orders_all(self):
+        return [dict(o) for o in self.algos.values()]
+
     def get_order(self, s, cid):
         return dict(self.orders[cid]) if cid in self.orders else None
 

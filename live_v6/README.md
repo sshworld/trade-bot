@@ -157,6 +157,16 @@ journal, so a restart catches up from the 1m bars and the SL never moves back. P
 adopted: best seeded from entry + catch-up, TP2 cancelled, an old BE stop tightened to the fee-BE floor. 24 h time exit,
 daily −10 % halt, dir cap and peak guard unchanged. Exit label `trail_stop` (추적 손절).
 
+**Protection orders (TA 2026-11-09, policy v1; legacy TP2 and scheme E):** after TP1 fills, a reduceOnly
+`TAKE_PROFIT_MARKET` at entry ± 3R (`MARK_PRICE`) rests on the remaining qty. The chandelier / breakeven stop is
+left in place; whichever is hit first ends the trade, and the other order is cancelled only after a fresh read
+shows the position at 0. A symbol missing from that read is unknown — SL/TP are not cancelled and the position
+is not market-closed. If the qty cannot be split into a TP1, the full qty gets the +3R TP and the SL (there is
+no “no TP” path). A failed SL or TP placement is retried at 1s, 3s and 10s with an alert each time; if it is
+still missing, that position is closed with a reduceOnly market order and a 🚨 alert. Once a minute, one
+positions read and one all-symbol open-order read check that each known open position still has its SL and its
+stage TP, and a missing one is replaced by the same retry. Strategy, size and entry rules are unchanged.
+
 **Same-direction cap (TA PASS 2026-11-03 23:26 KST, qrmtf `max_same_side=2`):** at most 2 open positions on one side (long
 or short); the total cap stays `max_positions=3`. Gate order: max_positions → dir_cap → risk caps → margin, at both the first
 check and the final check right before the order. The count comes from the fresh exchange positions read (state-file and

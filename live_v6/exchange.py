@@ -278,14 +278,24 @@ class BinanceREST:
                     raise ExchangeError(f"symbolConfig: bad leverage for {symbol}: {type(e).__name__}") from e
         raise ExchangeError(f"symbolConfig: no row for {symbol}")
 
+    def _collect_orders(self, std, algo, symbol) -> list[dict]:
+        algo = algo if isinstance(algo, list) else ((algo or {}).get("orders") or [])
+        out = [{"kind": "std", "id": str(o["orderId"]), "client_id": o.get("clientOrderId", ""),
+                "symbol": symbol or o.get("symbol"), "type": o.get("type"), "side": o.get("side"),
+                "stop_price": Decimal(str(o.get("stopPrice") or 0)),
+                "close_position": bool(o.get("closePosition")), "reduce_only": bool(o.get("reduceOnly"))} for o in std or []]
+        return out + [_norm_algo(o) for o in algo]
+
     def open_orders(self, symbol) -> list[dict]:
         std = self._req("GET", "/fapi/v1/openOrders", {"symbol": symbol}, critical=True)
         algo = self._req("GET", "/fapi/v1/openAlgoOrders", {"symbol": symbol}, critical=True)
-        algo = algo if isinstance(algo, list) else (algo.get("orders") or [])
-        out = [{"kind": "std", "id": str(o["orderId"]), "client_id": o.get("clientOrderId", ""), "symbol": symbol,
-                "type": o.get("type"), "side": o.get("side"), "stop_price": Decimal(str(o.get("stopPrice") or 0)),
-                "close_position": bool(o.get("closePosition")), "reduce_only": bool(o.get("reduceOnly"))} for o in std]
-        return out + [_norm_algo(o) for o in algo]
+        return self._collect_orders(std, algo, symbol)
+
+    def open_orders_all(self) -> list[dict]:
+        """Every open order, one standard read and one algo read, not one pair per symbol."""
+        std = self._req("GET", "/fapi/v1/openOrders", {}, critical=True)
+        algo = self._req("GET", "/fapi/v1/openAlgoOrders", {}, critical=True)
+        return self._collect_orders(std, algo, None)
 
     def user_trades(self, symbol, start_ms) -> list[dict]:
         rows = self._req("GET", "/fapi/v1/userTrades", {"symbol": symbol, "startTime": int(start_ms), "limit": 1000})
