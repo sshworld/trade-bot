@@ -1784,18 +1784,26 @@ class V6Engine:
 
     def _ledger_add(self, j, which, cid, executed) -> Decimal:
         """Store this cid's executed qty. A later read never lowers what that cid already filled.
-        A cached tp_got is migrated only when this cid does not already describe that same qty."""
+
+        A cached tp_got is an older sum, not a second order. It is never planted while a
+        realization cid is still pending: that order is the fill the cache was describing.
+        Adding the pending cid drops a legacy row even when the two quantities differ
+        (a lagging 7000 must not sit beside the same order's 8000)."""
         book = j.setdefault("tp_ledger", {}).setdefault(which, {"cids": [], "sum": "0"})
         book.setdefault("cids", [])
         cid = str(cid)
         executed = D(executed)
         legacy_mark = ":legacy"
+        pending = self._pending_market_cid(j, which)
         real = [r for r in book["cids"] if not str(r.get("cid") or "").endswith(legacy_mark)]
         cached = D((j.get("tp_got") or {}).get(which) or 0)
-        if not real and cached > 0 and cached != executed:
+        if pending:
+            if cid == pending:
+                book["cids"] = [r for r in book["cids"] if not str(r.get("cid") or "").endswith(legacy_mark)]
+        elif not real and cached > 0 and cached != executed:
             if not any(str(r.get("cid") or "").endswith(legacy_mark) for r in book["cids"]):
                 book["cids"].append({"cid": f"{j.get('cid', '')}{which}{legacy_mark}", "executed": str(cached)})
-        if not real and cached == executed and cached > 0:
+        elif not real and cached == executed and cached > 0:
             book["cids"] = [r for r in book["cids"] if not str(r.get("cid") or "").endswith(legacy_mark)]
         row = next((r for r in book["cids"] if r.get("cid") == cid), None)
         if row is None:
@@ -1822,9 +1830,38 @@ class V6Engine:
     def _got(self, j, which) -> Decimal:
         return D(self._ledger(j, which).get("sum") or 0)
 
+    def _opened_size(self, j):
+        """Opened size stored on the journal. The current position is not a substitute:
+        after a fill it is the remainder, and using it makes the runner reserve zero."""
+        raw = j.get("entry_qty")
+        if raw in (None, ""):
+            return None
+        return abs(D(raw))
+
+    def _freeze_entry_qty(self, j) -> bool:
+        """Persist the opened size from a journal that has not booked a fill yet.
+
+        ``qty`` is still that size until the exchange sync overwrites it. A row that
+        already records a fill keeps the post-fill remainder in ``qty`` and stays unknown.
+        """
+        if j.get("entry_qty") not in (None, ""):
+            return False
+        if j.get("tp1_done") or j.get("tp2_done") or j.get("tp3_done"):
+            return False
+        if any(D(v or 0) > 0 for v in (j.get("tp_got") or {}).values()):
+            return False
+        led = j.get("tp_ledger") or {}
+        if any(isinstance(b, dict) and D(b.get("sum") or 0) > 0 for b in led.values()):
+            return False
+        if j.get("qty") in (None, ""):
+            return False
+        j["entry_qty"] = str(abs(D(j["qty"])))
+        return True
+
     def _slice_sell(self, sym, j, which, fresh, last=None):
         """min(target − ledger, room above the reserved remainder, position).
-        None when the position read is missing. 0 when nothing may be sold."""
+        None when the position read is missing. 0 when nothing may be sold,
+        including when the opened size was never stored (leave it to the stop)."""
         if fresh is None:
             return None
         rules = self.rules[sym]
@@ -1832,7 +1869,9 @@ class V6Engine:
         got = self._got(j, which)
         if fresh == 0 or (target > 0 and got >= target):
             return Decimal(0)
-        entry = abs(D(j.get("entry_qty") or fresh))
+        entry = self._opened_size(j)
+        if entry is None:
+            return Decimal(0)
         prior = D((j.get("tp") or {}).get("q1") or 0) if which == "t2" and j.get("tp1_done") else Decimal(0)
         expect = Decimal(0) if which == "t3" else max(entry - prior - target, Decimal(0))
         room = abs(fresh) - expect
@@ -1928,7 +1967,9 @@ class V6Engine:
             if target > 0 and got >= target:
                 self._book_realized_tp(j, which, abs(fresh))
                 return Decimal(0), fresh, "done"
-            entry = abs(D(j.get("entry_qty") or fresh))
+            entry = self._opened_size(j)
+            if entry is None:
+                return Decimal(0), fresh, "dust"          # opened size unknown: do not sell the remainder
             prior = D((j.get("tp") or {}).get("q1") or 0) if which == "t2" and j.get("tp1_done") else Decimal(0)
             expect = Decimal(0) if which == "t3" else max(entry - prior - target, Decimal(0))
             if abs(fresh) - expect <= 0:
@@ -3514,6 +3555,8 @@ class V6Engine:
             self._book_down_since.pop(sym, None)
             filled = None
             if j and amt != 0:                                  # exit order missing → its exchange status decides
+                if self._freeze_entry_qty(j):
+                    self.save()                                # opened size, before a fill syncs qty down
                 r = self._exit_fills(sym, j, amt, orders)
                 if r is False:
                     continue                                    # closing fill still being applied → next reconcile

@@ -58,6 +58,7 @@ def build(state: dict, sym: str, model_entry_open: str, cid_prefix: str, now_ms:
                      f"adopted model_entry_open={meo}) → the bot will CLOSE {sym} at the next 4h close (model_sync).")
     sd = entry - stop
     j = {"cid": f"{cid_prefix}{sym.removesuffix('USDT')}a{now_ms // 1000}", "side": 1, "qty": str(qty),
+         "entry_qty": str(qty),
          "entry_px": str(entry), "stop_px": str(stop), "stop_px_entry": str(stop), "stop_dist": str(sd),
          "risk_usdt": str(max(sd, Decimal(0)) * qty),
          "risk_frac": u.get("risk_frac"), "lev": None, "mmr": None, "model_entry_open": meo, "opened_ms": now_ms,

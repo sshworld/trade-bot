@@ -293,6 +293,9 @@ def test_r6_book_fill_does_not_subtract_tp_got_twice(offline, side):
     p = offline.inner.pos[DOGE]
     p["amt"] = left if side > 0 else -left
     j["qty"] = str(left)
+    # The 8000 is an earlier fill of its own order. tp_got alone is not a second
+    # source once a realization cid is pending.
+    j["tp_ledger"] = {"t1": {"cids": [{"cid": j["cid"] + "t0", "executed": str(got)}], "sum": str(got)}}
     j.setdefault("tp_got", {})["t1"] = str(got)
     cid = f"{j['cid']}x0"
     offline.inner.orders[cid] = {"id": "9", "client_id": cid, "status": "FILLED", "executed_qty": extra,
