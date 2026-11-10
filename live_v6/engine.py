@@ -1691,19 +1691,24 @@ class V6Engine:
             px = rules.price(D(mark) + rules.tick_size, "up")
         seq = int(j.get("stop_seq", 0))
         cid = f"{j['cid']}s{seq}"
-        cs = "SELL" if side > 0 else "BUY"
-        try:
-            o = self.x("stop", sym, cs, px, cid)
-        except (WouldTrigger, OrderRejected) as e:
-            self._through_retry_at[sym] = self.clock() + PROTECT_AUDIT_S
-            self._lock_hold_alert(sym, "through_stop_retry",
-                                  f"원래 손절 {j['stop_px']} 돌파 · 보호 손절 {px} 재시도 · 시장가 안 냄 · {e}",
-                                  kept=False)
-            return False
-        except ExchangeError as e:
-            return self._through_stop_outcome(sym, j, seq, cid, px, e)
-        self._accept_through_stop(sym, j, seq, cid, D(o.get("stop_price") or px))
-        return True
+        outcome = self.ensure_protected(sym, journal=j, mark=mark, role="through", want_cid=cid, want_px=px,
+                                        what="돌파 손절")
+        if outcome == "placed":
+            self._accept_through_stop(sym, j, seq, cid, px)
+            return True
+        if outcome == "lost":
+            return self._through_stop_outcome(sym, j, seq, cid, px, ExchangeError("stop response unread"))
+        if outcome == "covered":
+            self._clear_uncovered_holds(sym)
+            live = j.get("stop_px")
+            self._lock_hold_alert(sym, f"covered_stop:{live}",
+                                  f"원래 손절 {j['stop_px']} 돌파 · 거래소 손절 {live} 유지 · 시장가 안 냄")
+            return True
+        self._through_retry_at[sym] = self.clock() + PROTECT_AUDIT_S
+        self._lock_hold_alert(sym, "through_stop_retry",
+                              f"원래 손절 {j['stop_px']} 돌파 · 보호 손절 {px} 재시도 · 시장가 안 냄",
+                              kept=False)
+        return False
 
     def _accept_through_stop(self, sym, j, seq, cid, placed):
         """The id is on the book, or its POST may have landed. It must sit inside range(stop_seq)."""
@@ -1945,6 +1950,10 @@ class V6Engine:
         if self._state_current():
             return
         if self._book_is_clear():
+            if self.st.get("intents") or any(
+                    isinstance(j, dict) and (j.get("fallback_stop_cids") or j.get("fallback_exit_cids"))
+                    for j in (self.st.get("pos") or {}).values()):
+                return                              # an unresolved fill still has to be booked
             self.st["schema"] = STATE_SCHEMA
             self.st["pos"] = {}
             self.st["intents"] = {}
@@ -3803,10 +3812,10 @@ class V6Engine:
             stp = D(j["stop_px"])
             if mk is not None and ((amt > 0 and mk <= stp) or (amt < 0 and mk >= stp)):
                 if self._schema_lock:
-                    if not self.find_stop(amt, orders):
+                    prot = self._covering_stop(amt, orders, mk)
+                    if not prot:
                         self._arm_through_stop(sym, j, amt, mk)
                     else:
-                        prot = self.find_stop(amt, orders)
                         self._clear_uncovered_holds(sym)
                         self._lock_hold_alert(
                             sym, f"covered_stop:{prot['stop_price']}",
@@ -3817,7 +3826,7 @@ class V6Engine:
                     self._in_reconcile = False
                     return
                 continue
-            if not self.find_stop(amt, orders):
+            if not self._covering_stop(amt, orders, mk):
                 rearm = sym not in self._cp_hold or self._hold_should_rearm(sym, orders)
                 if not rearm:
                     pass                                    # hold stands: empty book is not retried every 5s
@@ -4061,11 +4070,33 @@ class V6Engine:
         """An orphan pre-arm is the bot's own leftover. It is not protection of a position the bot does not own."""
         return [o for o in orders if not self._is_orphan_prearm(o)]
 
-    def _cp_blockers(self, amt, orders):
-        """Same-side closePosition orders that are not stops. A take-profit here blocks the stop slot."""
+    def _on_safe_side(self, amt, order, mark) -> bool:
+        px = D(order.get("stop_price") or 0)
+        if px <= 0 or mark is None:
+            return False
+        return px < D(mark) if amt > 0 else px > D(mark)
+
+    def _is_our_order(self, order) -> bool:
+        return str(order.get("client_id") or "").startswith(self.cfg.cid_prefix)
+
+    def _covering_stop(self, amt, orders, mark=None):
+        """A stop that protects. Our own stop still counts when price is already through it.
+        A foreign closePosition stop on the wrong side of the mark does not."""
+        hit = self.find_stop(amt, self._without_orphans(orders))
+        if hit is None:
+            return None
+        if mark is None or self._on_safe_side(amt, hit, mark) or self._is_our_order(hit):
+            return hit
+        return None
+
+    def _cp_blockers(self, amt, orders, mark=None):
+        """Foreign same-side closePosition stops that do not protect. A take-profit is not one."""
+        if mark is None:
+            return []
         cs = "SELL" if amt > 0 else "BUY"
         return [o for o in orders if o.get("close_position") and o.get("side") == cs
-                and not (o.get("type") or "").startswith("STOP")]
+                and (o.get("type") or "").startswith("STOP") and not self._is_our_order(o)
+                and not self._on_safe_side(amt, o, mark)]
 
     def _adopt_cover(self, sym, order, journal, unknown, src):
         if not order:
@@ -4101,7 +4132,7 @@ class V6Engine:
             return
         else:
             self._cp_block_alerted.add(sym)
-        self.alert(f"손절 자리 점유 — {sym} closePosition 익절 취소 후 손절 재등록",
+        self.alert(f"손절 자리 점유 — {sym} 비보호 closePosition 손절 취소 후 재등록",
                    f"{what} · " + ", ".join(str(o.get("client_id")) for o in blockers))
 
     def _account_reject(self, sym, unknown, journal, err) -> str:
@@ -4116,10 +4147,14 @@ class V6Engine:
             if unknown is not None:
                 unknown.pop("closing", None)
             return "flat"
-        cover = self._close_position_stop(journal, oo) if journal is not None else self.find_stop(amt, self._without_orphans(oo))
+        cover = self._covering_stop(amt, oo, None) if journal is not None else self.find_stop(amt, self._without_orphans(oo))
         if cover:
             self._adopt_cover(sym, cover, journal, unknown, "exchange (re-read)")
             return "covered"
+        if getattr(err, "code", None) == -4130:
+            if unknown is not None:
+                unknown["book_unread"] = True          # -4130 proves a stop the read did not show
+            return "unread"
         if unknown is None:
             return "held"
         unknown["stop_rejects"] = int(unknown.get("stop_rejects", 0)) + 1
@@ -4159,8 +4194,8 @@ class V6Engine:
             self._unknown_unprotected(sym, unknown, f"손절 등록 결과 불명 {px} (재조회 후 재시도)")
         return "unread"
 
-    def _place_journal_stop(self, sym, j, cid) -> str:
-        px = D(j["stop_px"])
+    def _place_journal_stop(self, sym, j, cid, px=None) -> str:
+        px = D(px if px is not None else j["stop_px"])
         if not cid:
             cid, _place = self._mint_stop(sym, j)
 
@@ -4174,19 +4209,23 @@ class V6Engine:
         except OrderRejected as e:
             return self._account_reject(sym, None, j, e)
         except ExchangeError as e:
-            return self._lost_post(sym, None, j, cid, px, "journal")
+            lost = self._lost_post(sym, None, j, cid, px, "journal")
+            return "lost" if px is not None and lost == "unread" else lost
         self._release_cp_hold(sym)
         if not j.get("stop_px_entry"):
             j["stop_px_entry"] = str(j["stop_px"])
         self.save()
         return "placed"
 
-    def ensure_protected(self, sym, *, journal=None, unknown=None, mark=None, role="arm", want_cid=None, what="손절") -> str:
+    def ensure_protected(self, sym, *, journal=None, unknown=None, mark=None, role="arm", want_cid=None, want_px=None, what="손절") -> str:
         """One protection pass. Read the position and this symbol's book, classify the orders,
-        cancel a non-covering closePosition, and place a missing stop. A failed read does nothing.
-        A reject is counted only when a fresh read still shows the position open and uncovered."""
+        cancel a foreign closePosition stop that does not protect, and place a missing stop.
+        A failed read does nothing. -4130 with no stop in the re-read is unread, not a reject.
+        A closePosition take-profit is never cancelled."""
         snap = self._read_protection(sym)
         if snap is None:
+            if role == "through" and journal is not None:
+                return self._place_journal_stop(sym, journal, want_cid, want_px)
             if unknown is not None:
                 unknown["book_unread"] = True
             return "unread"
@@ -4195,11 +4234,16 @@ class V6Engine:
             if unknown is not None:
                 unknown.pop("closing", None)
             return "flat"
-        cover = self._close_position_stop(journal, oo) if journal is not None and unknown is None else self.find_stop(amt, self._without_orphans(oo))
+        if mark is None:
+            try:
+                mark = (self.x("mark_prices") or {}).get(sym)
+            except ExchangeError:
+                mark = None
+        cover = self._covering_stop(amt, oo, mark)
         if cover:
             self._adopt_cover(sym, cover, journal, unknown, "exchange (existing, untouched)")
             return "covered"
-        blockers = self._cp_blockers(amt, oo)
+        blockers = self._cp_blockers(amt, oo, mark)
         if blockers:
             self._alert_block_once(sym, blockers, unknown, what)
             for o in blockers:
@@ -4214,7 +4258,7 @@ class V6Engine:
                 if unknown is not None:
                     unknown.pop("closing", None)
                 return "flat"
-            cover = self._close_position_stop(journal, oo) if journal is not None and unknown is None else self.find_stop(amt, self._without_orphans(oo))
+            cover = self._covering_stop(amt, oo, mark)
             if cover:
                 self._adopt_cover(sym, cover, journal, unknown, "exchange")
                 return "covered"
@@ -4223,7 +4267,7 @@ class V6Engine:
         if unknown is not None:
             return self._unknown_stop(sym, unknown, amt, mark)
         if journal is not None:
-            return self._place_journal_stop(sym, journal, want_cid)
+            return self._place_journal_stop(sym, journal, want_cid, want_px)
         return "held"
 
     def _unknown_position(self, sym, p, orders, mark):

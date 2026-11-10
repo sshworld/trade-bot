@@ -53,6 +53,7 @@ class FakeExchange:
         self.incomes = []
         self.accepted = {}     # client id -> times accepted (duplicate detector)
         self.stops_fire = True # False: exchange stop "does not fire" (breach test)
+        self.countdown = {}    # symbol -> countdownCancelAll timer; 0 does not cancel orders
         self._id = itertools.count(1)
         self.kl = {}           # (sym, interval) -> kline rows (tests set them; forming bar = close_time in the future)
 
@@ -213,8 +214,9 @@ class FakeExchange:
         if qty is None:                                   # closePosition: Binance rules
             if not p:
                 raise OrderRejected(-4509, "Time in Force (TIF) GTE can only be used with open positions.")
-            if any(o["symbol"] == s and o["side"] == side and o["close_position"] for o in self.algos.values()):
-                raise OrderRejected(-4130, "An open stop or take profit order with GTE and closePosition in the direction is existing.")
+            if any(o["symbol"] == s and o["side"] == side and o["close_position"]
+                   and (o.get("type") or "").startswith("STOP") for o in self.algos.values()):
+                raise OrderRejected(-4130, "An open stop order with GTE and closePosition in the direction is existing.")
         if p and ((p["amt"] > 0 and self.price[s] <= trigger) or (p["amt"] < 0 and self.price[s] >= trigger)):
             raise WouldTrigger(-2021, "Order would immediately trigger.")
         aid = str(next(self._id))
@@ -255,6 +257,12 @@ class FakeExchange:
     def cancel(self, s, o):
         if self.algos.pop(o["id"], None) is not None:
             self._algo_end(o, "CANCELED")
+
+    def countdown_cancel_all(self, s, countdown_time=0):
+        """countdownTime 0 clears the auto-cancel timer. It does not cancel resting orders,
+        including reduce-only quantity conditional orders."""
+        self.countdown[s] = int(countdown_time)
+        return {"symbol": s, "countdownTime": int(countdown_time)}
 
     # test helpers
     def set_price(self, s, px):

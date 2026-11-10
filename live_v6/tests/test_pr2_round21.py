@@ -41,7 +41,10 @@ def _close_tp(offline, side):
 
 
 @pytest.mark.parametrize("side", [1, -1])
-def test_t21_tp_fill_during_cancel_does_not_close_the_reopen(offline, side):
+def test_t21_position_gone_before_the_stop_does_not_close_the_reopen(offline, side):
+    """The user's closePosition take-profit is not cancelled. If the position is
+    already gone when the stop is sent, that is not a last resort, and a later
+    reopen is not market-closed."""
     eng = engine_for(offline, "e")
     open_pos(offline, eng, side)
     qty = offline.amt(DOGE)
@@ -57,14 +60,13 @@ def test_t21_tp_fill_during_cancel_does_not_close_the_reopen(offline, side):
     eng.save()
     _close_tp(offline, side)
 
-    def cancel_fills(fn, sym, order):
-        out = fn(sym, order)
-        if str(order.get("client_id")) == "hand-tp":
-            offline.inner.pos.pop(DOGE, None)
-        return out
+    def position_gone(fn, sym, cs, px, cid, qty=None):
+        offline.inner.pos.pop(DOGE, None)
+        return fn(sym, cs, px, cid, qty)
 
-    offline.fx.inject("cancel", cancel_fills, times=3)
+    offline.fx.inject("stop", position_gone, times=1)
     eng._unknown_position(DOGE, {"amt": qty, "entry": D("0.15")}, list(offline.inner.open_orders(DOGE)), D("0.15"))
+    assert any(o.get("client_id") == "hand-tp" for o in offline.inner.open_orders(DOGE))
     assert not any("최후 수단" in m for m in eng.tg.sent)
     assert not any(o.get("reduce_only") for o in offline.inner.orders.values())
     assert not (eng.st["unknown"].get(DOGE) or {}).get("closing")
