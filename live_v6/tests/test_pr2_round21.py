@@ -13,7 +13,6 @@ from decimal import Decimal as D
 from live_v6.exchange import ExchangeUnavailable
 from live_v6.strategies.base import enter
 from live_v6.tests.test_protection_policy_v1 import _sleeps, engine_for
-from live_v6.tests.test_pr2_round8 import _covered
 from live_v6.tests.test_pr2_round14 import _drop_stops
 from live_v6.tests.test_qrmtf import DOGE, now_ms, open_pos
 
@@ -129,17 +128,27 @@ def test_t21_stop_that_fills_before_discovery_is_booked(offline, side):
 
 
 @pytest.mark.parametrize("side", [1, -1])
-def test_t21_journal_close_position_tp_is_replaced_by_a_stop(offline, side):
+def test_t21_journal_foreign_stop_is_replaced_and_the_tp_stays(offline, side):
     eng = engine_for(offline, "e")
     open_pos(offline, eng, side)
     qty = offline.amt(DOGE)
     _sleeps(eng)
     offline.inner.stops_fire = False
     _drop_stops(offline)
+    cs = "SELL" if side > 0 else "BUY"
+    offline.inner.algos["bad-stop"] = {
+        "id": "bad-stop", "client_id": "hand-stop", "symbol": DOGE,
+        "type": "STOP_MARKET", "side": cs,
+        "stop_price": D("0.16") if side > 0 else D("0.14"),
+        "close_position": True, "reduce_only": True, "qty": D(0),
+        "working_type": "MARK_PRICE",
+    }
     _close_tp(offline, side)
     eng.tick()
+    book = list(offline.inner.open_orders(DOGE))
     assert offline.amt(DOGE) == qty
-    assert _covered(offline)
-    assert not any(o.get("type") == "TAKE_PROFIT_MARKET" and o.get("close_position")
-                   for o in offline.inner.open_orders(DOGE))
+    assert any(o.get("client_id") == "hand-tp" for o in book)
+    assert not any(o.get("client_id") == "hand-stop" for o in book)
+    live = [o for o in book if (o.get("type") or "").startswith("STOP") and o.get("close_position")]
+    assert live and ((D(live[0]["stop_price"]) < D("0.15")) if side > 0 else (D(live[0]["stop_price"]) > D("0.15")))
     assert not any("조회와 불일치" in m for m in eng.tg.sent)

@@ -54,7 +54,9 @@ def test_t20_failed_4130_verify_does_not_flatten(offline, side):
 
 
 @pytest.mark.parametrize("side", [1, -1])
-def test_t20_close_position_tp_does_not_leave_the_unknown_naked(offline, side):
+def test_t20_foreign_stop_does_not_leave_the_unknown_naked(offline, side):
+    """A foreign closePosition stop on the wrong side of the mark is the blocker.
+    The user's closePosition take-profit stays."""
     eng = engine_for(offline, "e")
     open_pos(offline, eng, side)
     qty = offline.amt(DOGE)
@@ -67,18 +69,28 @@ def test_t20_close_position_tp_does_not_leave_the_unknown_naked(offline, side):
         "amt": str(qty), "qty": str(abs(qty)), "entry_px": "0.15",
     }
     eng.save()
+    cs = "SELL" if side > 0 else "BUY"
+    offline.inner.algos["bad-stop"] = {
+        "id": "bad-stop", "client_id": "hand-stop", "symbol": DOGE,
+        "type": "STOP_MARKET", "side": cs,
+        "stop_price": D("0.16") if side > 0 else D("0.14"),
+        "close_position": True, "reduce_only": True, "qty": D(0),
+        "working_type": "MARK_PRICE",
+    }
     offline.inner.algos["tp-block"] = {
         "id": "tp-block", "client_id": "hand-tp", "symbol": DOGE,
-        "type": "TAKE_PROFIT_MARKET", "side": "SELL" if side > 0 else "BUY",
+        "type": "TAKE_PROFIT_MARKET", "side": cs,
         "stop_price": D("0.20") if side > 0 else D("0.10"),
         "close_position": True, "reduce_only": True, "qty": D(0),
         "working_type": "MARK_PRICE",
     }
     eng._unknown_position(DOGE, {"amt": qty, "entry": D("0.15")}, list(offline.inner.open_orders(DOGE)), D("0.15"))
+    book = list(offline.inner.open_orders(DOGE))
     assert offline.amt(DOGE) == qty
-    assert _covered(offline)
-    assert not any(o.get("type") == "TAKE_PROFIT_MARKET" and o.get("close_position")
-                   for o in offline.inner.open_orders(DOGE))
+    assert any(o.get("client_id") == "hand-tp" for o in book)
+    assert not any(o.get("client_id") == "hand-stop" for o in book)
+    live = [o for o in book if (o.get("type") or "").startswith("STOP") and o.get("close_position")]
+    assert live and ((D(live[0]["stop_price"]) < D("0.15")) if side > 0 else (D(live[0]["stop_price"]) > D("0.15")))
 
 
 @pytest.mark.parametrize("side", [1, -1])
