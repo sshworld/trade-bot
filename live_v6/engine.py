@@ -226,6 +226,7 @@ class V6Engine:
         self._protect_audit_at = self.clock()              # protection audit is due PROTECT_AUDIT_S after this
         self._audit_unknown: set = set()                    # coins whose audit confirm is unread; alert once until known
         self._cp_hold: set = set()                          # -4130 hold already alerted; cleared when a read shows the stop
+        self._tp_unknown: set = set()                       # book unreadable: TP not placed, alerted once until known
         inner = getattr(ex, "inner", ex)
         if hasattr(inner, "on_rate_limit"):
             inner.on_rate_limit = self._on_rate_limit
@@ -1612,8 +1613,10 @@ class V6Engine:
         j["stop_seq"] = seq + 1
         self.save()
         cid = f"{j['cid']}s{seq}"
+        sent = False
         try:                                                      # NEW stop first (qty: one closePosition per side)
             self.x("stop", sym, self._cs(j), tgt, cid, qty=abs(amt))
+            sent = True
         except WouldTrigger:                                      # price already back through the level → close now
             self.close(sym, breach)
             return "closed"
@@ -1624,6 +1627,13 @@ class V6Engine:
             new = next((o for o in oo if o["client_id"] == cid), None)
         except ExchangeError:
             oo, new = [], None
+        if new is None and sent and sym in self._cp_hold:
+            j.update(stop_px=str(tgt), stop_cid=cid)       # hold book is not proof the accepted stop is missing
+            j.pop(f"{why}_alerted", None)
+            if why == "trail":
+                j["trailed"] = True
+            self.save()
+            return "ok"
         if new is None:
             try:                                                  # accepted but fired at once (instant fire)?
                 flat = self._row_amt(self.x("positions", self.cfg.symbols), sym) == 0
@@ -1833,6 +1843,7 @@ class V6Engine:
                 return
         self._cp_hold.discard(sym)                          # a later position on this coin must alert again
         self._audit_unknown.discard(sym)
+        self._tp_unknown.discard(sym)
         try:
             for o in self.x("open_orders", sym):
                 if (o["close_position"] or o["reduce_only"]) and str(o["client_id"]).startswith(self.cfg.cid_prefix):
@@ -2493,7 +2504,20 @@ class V6Engine:
             if amt is None:
                 continue                                 # unknown: keep the journal in risk, do not cancel SL/TP
             j = self.st["pos"].get(sym)
-            orders = self.x("open_orders", sym)
+            try:
+                orders = self.x("open_orders", sym)
+            except ExchangeError as e:
+                # Unreadable book: do not place a TP and do not flatten. An open position still
+                # fails the pass so a later symbol is not reconciled on a half-read.
+                if self.cfg.take_profit and j and amt not in (None, 0) and not j.get("closing"):
+                    if sym not in self._tp_unknown:
+                        self._tp_unknown.add(sym)
+                        self.alert(f"보호 점검 보류 — {sym}", f"주문 상태 불명 · 익절 주문 안 냄 · {e}")
+                    raise
+                if self.cfg.take_profit and (j is None or amt in (None, 0)):
+                    continue
+                raise
+            self._tp_unknown.discard(sym)
             filled = None
             if j and amt != 0:                                  # exit order missing → its exchange status decides
                 r = self._exit_fills(sym, j, amt, orders)
