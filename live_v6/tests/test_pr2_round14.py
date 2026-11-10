@@ -111,3 +111,63 @@ def test_t14_daily_halt_expiry_does_not_open_entries_under_lock(offline, side):
     eng2.submit_market(DOGE, "BUY" if side > 0 else "SELL", D(1), cid, False)
     assert len(offline.inner.orders) == before
     assert offline.amt(DOGE) != 0
+
+
+def _hold_notes(eng):
+    return [m for m in eng.tg.sent if "손절만 유지" in m and "시장가 안 냄" in m]
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_t14_resume_clears_the_hold_alert(offline, side):
+    """resume() lets the same incident alert once more. Fails on ee51632."""
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    eng._lock_hold_alert(DOGE, "stop_breach", "once")
+    assert len(_hold_notes(eng)) == 1
+    eng.resume()
+    eng._lock_hold_alert(DOGE, "stop_breach", "again")
+    assert len(_hold_notes(eng)) == 2
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_t14_unknown_flat_clears_the_hold_alert(offline, side):
+    """An unknown position going flat clears its latch without _after_flat. Fails on ee51632."""
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    _prep(offline, eng)
+    _drop_stops(offline)
+    eng.st["pos"].pop(DOGE, None)
+    eng.st.pop("schema", None)
+    eng.save()
+    eng2 = e_engine(offline, eng.clock)
+    _sleeps(eng2)
+    assert eng2._schema_lock is True and DOGE in eng2.st["unknown"]
+    eng2._lock_hold_alert(DOGE, "unknown_stop_rejected", "once")
+    assert len(_hold_notes(eng2)) == 1
+    offline.inner.pos.pop(DOGE, None)
+    _drop_stops(offline)
+    eng2.tick()
+    assert DOGE not in eng2.st.get("unknown", {})
+    assert offline.amt(DOGE) == 0
+    eng2._lock_hold_alert(DOGE, "unknown_stop_rejected", "again")
+    assert len(_hold_notes(eng2)) == 2
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_t14_emergency_latch_follows_the_reason(offline, side):
+    """A new emergency reason alerts once. The same reason stays one notice. Fails on ee51632."""
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    qty = offline.amt(DOGE)
+    _prep(offline, eng)
+    eng2 = _locked(offline, eng)
+    before = list(_sells(offline))
+    eng2.emergency_flatten_all("unprotected doge")
+    eng2.emergency_flatten_all("unprotected doge")
+    same = [m for m in _hold_notes(eng2) if "unprotected doge" in m]
+    assert len(same) == 1
+    eng2.emergency_flatten_all("api dead")
+    other = [m for m in _hold_notes(eng2) if "api dead" in m]
+    assert len(other) == 1
+    assert offline.amt(DOGE) == qty
+    assert _sells(offline) == before
