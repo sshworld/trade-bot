@@ -3757,11 +3757,10 @@ class V6Engine:
                 continue
             if j is None:
                 pending_intent = any(it.get("sym") == sym for it in self.st["intents"].values())
-                if pending_intent and not self._schema_lock:
-                    mismatch.append(f"{sym} 진입 결과 확인 중 {amt}")     # our own unresolved entry (pre-arm protects it)
-                    continue
-                if pending_intent:                                  # lock: the intent stays, but a missing pre-arm must not
-                    mismatch.append(f"{sym} 진입 결과 확인 중 {amt} · 잠금 중 손절 재시도")
+                if pending_intent:
+                    # The intent stays unresolved until get_order succeeds. That wait must not
+                    # leave the live position without a stop: the flat pre-arm is already gone.
+                    mismatch.append(f"{sym} 진입 결과 확인 중 {amt} · 손절 재시도")
                 # TA condition 1 (2026-10-26): an orphan pre-arm (entry definitively rejected, its cancel failed, no intent) is the BOT's own
                 # order protecting nothing. It must never count as protection of a position the bot does not own, and it is cancelled
                 # right away (after _unknown_position, whether or not that position has a stop): left alive it could close the user's
@@ -3908,26 +3907,31 @@ class V6Engine:
         return rows
 
     def audit_protection(self):
-        """Once a minute: each known nonzero position has its SL and its stage TP. Missing → retry, then market
-        close. A symbol absent from the positions response is unknown: this pass does not cancel or close it."""
+        """Once a minute: every live exchange position has an SL. A journaled one also gets its stage TP.
+        A position with no journal still gets the unknown-stop retry. A missing row is not cancelled or closed."""
         if not getattr(self, "_in_reconcile", False):
             self._armed_now = set()                 # a direct audit is not the reconcile that just armed
-        if not self.st.get("pos"):
-            return
         try:
             pos = self.x("positions", self.cfg.symbols)
         except ExchangeError as e:
             log.error("protection audit positions: %s", e)
             return
         need = []
-        for sym, j in self.st["pos"].items():
+        for sym, j in (self.st.get("pos") or {}).items():
             if not isinstance(j, dict) or j.get("closing"):
                 continue
             amt = self._row_amt(pos, sym)
             if amt is None or amt == 0:
                 continue                                   # unknown or flat: never cancel from this pass
             need.append((sym, j, amt))
-        if not need:
+        bare = []
+        for sym in self.cfg.symbols:
+            if sym in (self.st.get("pos") or {}):
+                continue
+            amt = self._row_amt(pos, sym)
+            if amt not in (None, 0):
+                bare.append((sym, amt))
+        if not need and not bare:
             return
         try:
             orders = self._read_open_orders_all()
@@ -3938,6 +3942,13 @@ class V6Engine:
             if sym not in self.st["pos"]:
                 continue
             self._audit_symbol(sym, self.st["pos"][sym], amt, [o for o in orders if o.get("symbol") == sym])
+        for sym, amt in bare:
+            if sym in self._armed_now:
+                continue
+            oo = [o for o in orders if o.get("symbol") == sym]
+            if self.find_stop(amt, oo):
+                continue
+            self._unknown_position(sym, pos[sym], oo, self.marks.get(sym))
 
     def _audit_symbol(self, sym, j, amt, orders):
         if not self._position_open(sym):
