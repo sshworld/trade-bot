@@ -115,6 +115,8 @@ def test_t9_3_legacy_tp_got_is_not_added_to_the_pending_market(offline, side):
     assert _ledger_sum(j2, "t1") == filled
     offline.inner.orders[cid]["status"] = "EXPIRED"
     _at_entry(offline, eng2)
+    from live_v6.engine import PROTECT_AUDIT_S
+    eng2.clock.off += PROTECT_AUDIT_S + 1
     eng2.tick()
     eng2.clock.off += 1
     eng2.tick()

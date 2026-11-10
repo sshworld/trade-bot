@@ -265,7 +265,7 @@ def test_t8_5_hold_rearm_uses_the_unfilled_slice(offline, side):
 
 @pytest.mark.parametrize("side", [1, -1])
 def test_m8_1_filled_short_of_target_can_be_replaced(offline, side):
-    """A FILLED market below the stage target releases the row so the rest can be re-placed."""
+    """A FILLED market below the stage target releases the row. The leftover is the runner, so nothing new is rested."""
     eng = engine_for(offline, "e")
     open_pos(offline, eng, side)
     j = eng.st["pos"][DOGE]
@@ -291,7 +291,7 @@ def test_m8_1_filled_short_of_target_can_be_replaced(offline, side):
     j = eng.st["pos"][DOGE]
     assert (j.get("tp_market_once") or {}).get("t1") is None
     live = _live_tp(offline, "t1")
-    assert len(live) == 1 and D(live[0]["qty"]) == unrelated
+    assert live == []
     assert offline.amt(DOGE) == qty - side * q1
     assert _covered(offline)
 

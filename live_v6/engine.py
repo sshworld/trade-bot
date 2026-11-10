@@ -1632,20 +1632,6 @@ class V6Engine:
             return True
         if pending == "wait":
             return False
-        target = self._stage_qty(sym, j, which, qty)
-        remain = rules.floor_qty(target - self._got(j, which))
-        try:
-            fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
-        except ExchangeError:
-            fresh = None
-        if fresh not in (None, 0) and abs(fresh) < abs(D(j.get("qty") or 0)):
-            remain = rules.floor_qty(min(remain, abs(fresh)))
-            j["qty"] = str(abs(fresh))                   # a smaller read is the position; a larger one can be stale
-            self.save()
-        if remain < rules.order_min_qty:
-            self._tp_fail_once(sym, what, "남은 수량 최소 미달")
-            return False
-        qty = remain
         cid = self._tp_cid(j, which)
         state = self._cid_state(sym, cid)
         if state == "yes":
@@ -1661,10 +1647,25 @@ class V6Engine:
         if state in {"terminal", "filled"}:
             for cid_i in self._tp_fill_cids(j, which):
                 self._record_stage_order(sym, j, which, cid_i)
+        try:
+            fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+        except ExchangeError:
+            fresh = None
+        sell = self._slice_sell(sym, j, which, fresh)
         if state in {"terminal", "filled"} and self._spent_is_unbooked_fill(sym, j, which):
             self._note_filled_tp(sym, j, what)
             self._clear_dup_unknown(sym, what)
             return True                                 # booked fill: no second order of this tranche
+        if sell is None:
+            self._tp_fail_once(sym, what, "포지션 조회 실패 · 기존 손절 유지")
+            return False
+        if sell <= 0:
+            self._tp_fail_once(sym, what, "남은 수량 최소 미달")
+            return False
+        if fresh not in (None, 0) and abs(fresh) < abs(D(j.get("qty") or 0)):
+            j["qty"] = str(abs(fresh))                   # a smaller read is the position; a larger one can be stale
+            self.save()
+        qty = sell
         if state in {"terminal", "filled"}:
             cid = self._bump_tp_cid(j, which)           # cancelled / expired: one POST under a new id
 
@@ -1767,22 +1768,40 @@ class V6Engine:
         """One persisted record per stage: the client ids and the sum of their executedQty."""
         book = j.setdefault("tp_ledger", {}).setdefault(which, {"cids": [], "sum": "0"})
         book.setdefault("cids", [])
-        if not book["cids"]:
+        if not book["cids"] and not self._pending_market_cid(j, which):
             legacy = D((j.get("tp_got") or {}).get(which) or 0)
             if legacy > 0:                              # an older journal stored only the sum
                 book["cids"].append({"cid": f"{j.get('cid', '')}{which}:legacy", "executed": str(legacy)})
                 book["sum"] = str(legacy)
         return book
 
+    @staticmethod
+    def _pending_market_cid(j, which) -> str:
+        row = (j.get("tp_market_once") or {}).get(which)
+        if isinstance(row, dict) and row.get("cid"):
+            return str(row["cid"])
+        return ""
+
     def _ledger_add(self, j, which, cid, executed) -> Decimal:
-        """Store this cid's executed qty (replacing that cid only) and return the stage sum."""
-        book = self._ledger(j, which)
+        """Store this cid's executed qty. A later read never lowers what that cid already filled.
+        A cached tp_got is migrated only when this cid does not already describe that same qty."""
+        book = j.setdefault("tp_ledger", {}).setdefault(which, {"cids": [], "sum": "0"})
+        book.setdefault("cids", [])
         cid = str(cid)
         executed = D(executed)
+        legacy_mark = ":legacy"
+        real = [r for r in book["cids"] if not str(r.get("cid") or "").endswith(legacy_mark)]
+        cached = D((j.get("tp_got") or {}).get(which) or 0)
+        if not real and cached > 0 and cached != executed:
+            if not any(str(r.get("cid") or "").endswith(legacy_mark) for r in book["cids"]):
+                book["cids"].append({"cid": f"{j.get('cid', '')}{which}{legacy_mark}", "executed": str(cached)})
+        if not real and cached == executed and cached > 0:
+            book["cids"] = [r for r in book["cids"] if not str(r.get("cid") or "").endswith(legacy_mark)]
         row = next((r for r in book["cids"] if r.get("cid") == cid), None)
         if row is None:
             book["cids"].append({"cid": cid, "executed": str(executed)})
         else:
+            executed = max(D(row.get("executed") or 0), executed)
             row["executed"] = str(executed)
         total = sum((D(r.get("executed") or 0) for r in book["cids"]), Decimal(0))
         book["sum"] = str(total)
@@ -1801,13 +1820,30 @@ class V6Engine:
         return self._ledger_add(j, which, st.get("client_id") or cid, st.get("executed_qty") or 0)
 
     def _got(self, j, which) -> Decimal:
-        book = (j.get("tp_ledger") or {}).get(which)
-        if isinstance(book, dict) and book.get("cids"):
-            return D(book.get("sum") or 0)
-        legacy = D((j.get("tp_got") or {}).get(which) or 0)
-        if legacy > 0:
-            return self._ledger_add(j, which, f"{j.get('cid', '')}{which}:legacy", legacy)
-        return Decimal(0)
+        return D(self._ledger(j, which).get("sum") or 0)
+
+    def _slice_sell(self, sym, j, which, fresh, last=None):
+        """min(target − ledger, room above the reserved remainder, position).
+        None when the position read is missing. 0 when nothing may be sold."""
+        if fresh is None:
+            return None
+        rules = self.rules[sym]
+        target = self._stage_qty(sym, j, which, 0)
+        got = self._got(j, which)
+        if fresh == 0 or (target > 0 and got >= target):
+            return Decimal(0)
+        entry = abs(D(j.get("entry_qty") or fresh))
+        prior = D((j.get("tp") or {}).get("q1") or 0) if which == "t2" and j.get("tp1_done") else Decimal(0)
+        expect = Decimal(0) if which == "t3" else max(entry - prior - target, Decimal(0))
+        room = abs(fresh) - expect
+        if room <= 0:
+            return Decimal(0)
+        sell = rules.floor_qty(min(max(target - got, Decimal(0)), room, abs(fresh)))
+        if sell < rules.order_min_qty:
+            return Decimal(0)
+        if last is not None and sell * D(last) < rules.min_notional:
+            return Decimal(0)
+        return sell
 
     def _note_partial(self, j, which, got: Decimal, left, release=False):
         """Mirror the ledger into tp_got. Drop a realization cid only once that order is terminal."""
@@ -1857,7 +1893,6 @@ class V6Engine:
     def _quote_market(self, sym, j, which, qty, last):
         """min(remaining slice, position read in this call). The next call is the market send.
         Returns (sell, signed_position, why) with why in ok, live, done, dust, flat."""
-        rules = self.rules[sym]
         try:
             st = self.x("algo_order", sym, self._tp_cid(j, which))
         except ExchangeError:
@@ -1888,14 +1923,16 @@ class V6Engine:
         if target > 0 and got >= target:
             self._book_realized_tp(j, which, abs(fresh))
             return Decimal(0), fresh, "done"
-        entry = abs(D(j.get("entry_qty") or fresh))
-        prior = D((j.get("tp") or {}).get("q1") or 0) if which == "t2" and j.get("tp1_done") else Decimal(0)
-        expect = Decimal(0) if which == "t3" else max(entry - prior - target, Decimal(0))
-        room = abs(fresh) - expect
-        if room <= 0:
-            return Decimal(0), fresh, "flat"
-        sell = rules.floor_qty(min(max(target - got, Decimal(0)), room, abs(fresh)))
-        if sell < rules.order_min_qty or sell * D(last) < rules.min_notional:
+        sell = self._slice_sell(sym, j, which, fresh, last)
+        if not sell:
+            if target > 0 and got >= target:
+                self._book_realized_tp(j, which, abs(fresh))
+                return Decimal(0), fresh, "done"
+            entry = abs(D(j.get("entry_qty") or fresh))
+            prior = D((j.get("tp") or {}).get("q1") or 0) if which == "t2" and j.get("tp1_done") else Decimal(0)
+            expect = Decimal(0) if which == "t3" else max(entry - prior - target, Decimal(0))
+            if abs(fresh) - expect <= 0:
+                return Decimal(0), fresh, "flat"
             return Decimal(0), fresh, "dust"
         return sell, fresh, "ok"
 
@@ -1998,29 +2035,32 @@ class V6Engine:
         return True
 
     def _post_rest(self, sym, j, which, px, qty, working_type, what) -> bool:
-        """Rest the unfilled slice: min(target − ledger, position), under a new id when the old one is terminal."""
-        rules = self.rules[sym]
-        for cid in self._tp_fill_cids(j, which):
-            self._record_stage_order(sym, j, which, cid)
-        target = self._stage_qty(sym, j, which, qty)
-        got = self._got(j, which)
-        if target > 0 and got >= target:
-            self._note_filled_tp(sym, j, what)
-            return True
+        """Rest min(target − ledger, room, position). Unknown id: not a success, no POST."""
+        cid = self._tp_cid(j, which)
+        state = self._cid_state(sym, cid)
+        if state == "unknown":
+            self._tp_fail_once(sym, what, "주문 조회 실패 · 추가 주문 없음")
+            return False
+        if state == "yes":
+            return True                                 # confirmed on the book already
+        if state in {"terminal", "filled"}:
+            for cid_i in self._tp_fill_cids(j, which):
+                self._record_stage_order(sym, j, which, cid_i)
+            cid = self._bump_tp_cid(j, which)
         try:
             fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
         except ExchangeError:
             fresh = None
-        if fresh is None:
+        if self._got(j, which) >= self._stage_qty(sym, j, which, qty) > 0:
+            self._note_filled_tp(sym, j, what)
+            return True
+        sell = self._slice_sell(sym, j, which, fresh)
+        if sell is None:
             self._tp_fail_once(sym, what, "포지션 조회 실패 · 기존 손절 유지")
             return False
-        sell = rules.floor_qty(min(max(target - got, Decimal(0)), abs(fresh)))
-        if sell < rules.order_min_qty:
+        if sell <= 0:
             self._tp_fail_once(sym, what, "남은 수량 최소 미달")
             return False
-        cid = self._tp_cid(j, which)
-        if self._cid_state(sym, cid) in {"terminal", "filled"}:
-            cid = self._bump_tp_cid(j, which)
         try:
             self.x("take_profit", sym, self._cs(j), px, cid, sell, working_type=working_type)
         except OrderRejected as e:
