@@ -483,16 +483,33 @@ class V6Engine:
                 self._cancel_quiet(sym, o)
             self.st["intents"].pop(cid, None)
             self.save()
+            if sym not in self.st["pos"]:
+                self._after_flat(sym, "limit_cancel")       # pre-arm and any other bot reduce-only leftover
+            return
+
+    def _stop_at(self, sym, px, side: int, stop_dist: Decimal) -> Decimal:
+        """Protective stop from a price. sl_pct: px*(1∓sl_pct), tick-round toward entry. Else the stop distance."""
+        if self.cfg.sl_pct:
+            raw = D(px) * (1 - side * D(str(self.cfg.sl_pct)))
+            return round_full_tp(raw, self.rules[sym].tick_size, -side)
+        return stop_price(self.rules[sym], D(px), side, D(stop_dist))
 
     def _rest_limit(self, sym, stop_dist, T, model_id, signal_px, side, sz, acct, ref) -> bool:
-        """Post-only limit at `ref` (already the tick-rounded signal price). No position until a fill report."""
+        """Post-only limit at `ref`. A reduceOnly STOP_MARKET (MARK_PRICE) is live at limit×(1∓sl_pct) before the
+        limit can fill, the same pre-arm market entries use (closePosition cannot be placed with no position: -4509)."""
         cid = self.cid(sym, T)
         px = self.rules[sym].price(D(ref), "down" if side > 0 else "up")
+        stop_px = self._stop_at(sym, px, side, D(stop_dist))
+        pre = self._prearm(sym, stop_px, sz.qty, cid, side)
+        if pre is None:
+            self.skip(sym, "stop_prearm", f"protective stop {stop_px} not confirmed → entry not sent")
+            return False
         intent = {"sym": sym, "cid": cid, "T": T, "side": side, "model_id": model_id if model_id is not None else T,
                   "signal_px": str(signal_px) if signal_px is not None else str(px), "stop_dist": str(stop_dist),
                   "ref": str(px), "qty": str(sz.qty), "lev": sz.lev, "mmr": sz.mmr, "risk_frac": sz.risk_frac,
                   "risk_pct_used": sz.risk_pct_used, "wallet": str(acct["wallet"]), "path": sz.path, "q0": str(sz.q0),
-                  "loss_frac": sz.loss_frac, "order": "limit", "signal_ms": int(T), "limit_px": str(px)}
+                  "loss_frac": sz.loss_frac, "order": "limit", "signal_ms": int(T), "limit_px": str(px),
+                  "prearm": pre["id"], "prearm_ms": self.now_ms()}
         self.st["intents"][cid] = intent
         self.save()
         try:
@@ -500,15 +517,16 @@ class V6Engine:
         except OrderRejected as e:
             self.st["intents"].pop(cid, None)
             self.save()
+            self._cancel_quiet(sym, pre)
             self.skip(sym, "post_only_reject", f"{sz.qty} @ {px}: {str(e)[:120]}")
             return False
         except ExchangeError as e:
-            self.alert("지정가 진입 결과 불명", f"{cid} {sz.qty} {sym}: {str(e)[:100]} · 대조 루프가 확인")
+            self.alert("지정가 진입 결과 불명", f"{cid} {sz.qty} {sym}: {str(e)[:100]} · 선행 손절 유지 · 대조 루프가 확인")
             return False
         return True
 
     def _finish_fill(self, sym, intent, order):
-        """Exchange reported a fill. Journal it and arm the SL and the full TP immediately."""
+        """Exchange reported a fill. Keep the pre-arm when it already matches the fill; otherwise re-arm. Then the TP."""
         j = self._journal_entry(sym, intent, order)
         self.st["intents"].pop(intent["cid"], None)
         self.save()
@@ -516,8 +534,21 @@ class V6Engine:
             self.close(sym, "dust_entry")
             return
         amt = D(j["qty"]) * int(j.get("side", 1))
-        if not self.protect(sym, amt, D(j["stop_px"]), j["cid"]):
-            return                                  # would-trigger / rejected → protect already market-closes
+        want = D(j["stop_px"])
+        try:
+            oo = self.x("open_orders", sym)
+        except ExchangeError:
+            oo = []
+        pre = next((o for o in oo if o.get("client_id") == f"{j['cid']}p"), None)
+        if pre is not None and D(pre["stop_price"]) == want and self.find_stop(amt, [pre]):
+            pass                                         # fill at the limit: the pre-arm is already the stop
+        elif pre is not None:
+            if self._upgrade_stop(sym, j, pre) == "rejected":
+                self.alert("진입 체결 후 손절 거절 — 전량 청산", f"{sym} {j['qty']} · 손절 {j['stop_px']}")
+                self.close(sym, "stop_rejected_after_fill")
+                return
+        elif not self.protect(sym, amt, want, j["cid"]):
+            return                                      # would-trigger / rejected → protect already market-closes
         if sym not in self.st["pos"] or self.st["pos"][sym].get("closing"):
             return
         if self.cfg.take_profit:
@@ -1256,11 +1287,7 @@ class V6Engine:
         fill = o["avg_price"] if o["avg_price"] > 0 else D(intent["ref"])
         qty = o["executed_qty"]
         side = int(intent.get("side", 1))
-        if self.cfg.sl_pct:
-            raw = fill * (1 - side * D(str(self.cfg.sl_pct)))
-            stp = round_full_tp(raw, self.rules[sym].tick_size, -side)   # toward entry, never past sl_pct
-        else:
-            stp = stop_price(self.rules[sym], fill, side, sd)    # re-placed from the FILL at the same distance (TA)
+        stp = self._stop_at(sym, fill, side, sd)
         j = {"cid": intent["cid"], "side": side, "qty": str(qty), "entry_qty": str(qty), "entry_px": str(fill), "stop_px": str(stp),
              "stop_dist": str(sd), "risk_usdt": str(abs(fill - stp) * qty), "risk_frac": intent["risk_frac"],
              "lev": intent["lev"], "mmr": intent["mmr"], "model_entry_open": intent.get("model_id", intent["T"]), "opened_ms": self.now_ms(),

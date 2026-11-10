@@ -131,6 +131,70 @@ def test_pending_or_open_symbol_is_not_signalled_again(offline):
 
 
 # ── orders, exits, sizing, gates ─────────────────────────────────────────────
+def _stops(b, sym=DOGE):
+    return [o for o in b.inner.open_orders(sym) if o["type"] == "STOP_MARKET"]
+
+
+def _tps(b, sym=DOGE):
+    return [o for o in b.inner.open_orders(sym) if o["type"] == "TAKE_PROFIT_MARKET"]
+
+
+def test_resting_limit_prearms_stop_at_limit_times_09925(offline):
+    eng = _eng(offline)
+    offline.inner.set_price(DOGE, D("0.151"))
+    assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"), signal_px="0.15")
+    assert offline.amt(DOGE) == 0
+    want = round_full_tp(D("0.15") * D("0.9925"), eng.rules[DOGE].tick_size, -1)
+    st = _stops(offline)
+    assert len(st) == 1 and st[0]["client_id"].endswith("p")
+    assert st[0]["working_type"] == "MARK_PRICE" and st[0]["reduce_only"]
+    assert st[0]["stop_price"] == want and st[0]["side"] == "SELL"
+
+
+def test_fill_while_down_restart_keeps_prearm_and_places_one_tp(offline):
+    eng = _eng(offline)
+    offline.inner.set_price(DOGE, D("0.151"))
+    assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"), signal_px="0.15")
+    pre = _stops(offline)[0]
+    cid = next(iter(eng.st["intents"]))
+    offline.inner.fill_limit(cid)                              # filled while this process is down: no reconcile
+    eng2 = _eng(offline)
+    assert DOGE in eng2.st["pos"]
+    st, tp = _stops(offline), _tps(offline)
+    assert len(st) == 1 and st[0]["id"] == pre["id"]           # the pre-arm is already the stop
+    assert len(tp) == 1 and tp[0]["working_type"] == "CONTRACT_PRICE" and tp[0]["reduce_only"]
+    assert tp[0]["qty"] == abs(offline.amt(DOGE))
+    eng2.reconcile()
+    assert len(_stops(offline)) == 1 and len(_tps(offline)) == 1
+
+
+def test_different_fill_rearms_stop_from_the_fill(offline):
+    eng = _eng(offline)
+    offline.inner.set_price(DOGE, D("0.151"))
+    assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"))
+    cid = next(iter(eng.st["intents"]))
+    offline.inner.fill_limit(cid)
+    offline.inner.orders[cid]["avg_price"] = D("0.152")        # fill is not the limit
+    eng.reconcile()
+    want = round_full_tp(D("0.152") * D("0.9925"), eng.rules[DOGE].tick_size, -1)
+    st = _stops(offline)
+    assert len(st) == 1 and st[0]["stop_price"] == want and st[0]["close_position"]
+    assert not st[0]["client_id"].endswith("p")
+    assert D(eng.st["pos"][DOGE]["stop_px"]) == want
+
+
+def test_ttl_cancel_removes_the_prearm(offline):
+    eng = _eng(offline)
+    offline.inner.set_price(DOGE, D("0.151"))
+    eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"))
+    assert _stops(offline)
+    cid, it = next(iter(eng.st["intents"].items()))
+    it["signal_ms"] = eng.now_ms() - 24 * 3600_000 - 1000
+    eng.reconcile()
+    assert offline.amt(DOGE) == 0 and not _stops(offline)
+    assert eng.st["intents"] == {} and offline.inner.get_order(DOGE, cid)["status"] == "CANCELED"
+
+
 def test_gtx_limit_rests_until_exchange_reports_a_fill(offline):
     eng = _eng(offline)
     offline.inner.set_price(DOGE, D("0.151"))

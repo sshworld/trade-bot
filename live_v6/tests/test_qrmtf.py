@@ -3,6 +3,7 @@
 import pytest
 import json
 import time
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from live_v6.runner import live_settings
@@ -333,6 +334,9 @@ def test_short_history_tf_contributes_zero(offline):
 
 def test_rest_weight_per_minute_steady_state(offline):
     clk = Clock()
+    # 7m05s after a UTC midnight, so +60s stays inside the same 15m/30m/1h/4h/1d bar.
+    # A wall-clock minute that crosses one of those boundaries refetches that TF and the weight jumps.
+    clk.t = datetime(2026, 1, 1, 0, 7, 5, tzinfo=timezone.utc).timestamp()
     eng, strat = mtf_engine(offline, clk)
     for s in eng.cfg.symbols:
         set_market(offline, s, "up", "down", "up", int(clk.t * 1000), px=0.15)
