@@ -166,20 +166,50 @@ def test_p3_unknown_fill_is_not_sold_again(offline, side):
     offline.fx.inject("positions", stale, times=80)
     eng.clock.off += PROTECT_AUDIT_S + 1
     eng.tick()
+    # The position snapshot still shows the old size, but the realization cid is FILLED: book it, do not resend.
     assert offline.amt(DOGE) == after
     assert offline.amt(DOGE) != 0
     assert len(_fills(offline)) == 1
-    # The read is still the old size, so this is not a confirmed shrink and not a second market.
-    assert eng.st["pos"][DOGE].get("tp1_done") is not True
-    offline.fx.clear()
-    eng.clock.off += PROTECT_AUDIT_S + 1
-    eng.tick()
-    assert offline.amt(DOGE) == after
-    assert len(_fills(offline)) == 1
+    assert sum(o["orig_qty"] for o in _fills(offline)) <= q1
     assert eng.st["pos"][DOGE].get("tp1_done") is True
     assert D(eng.st["pos"][DOGE]["qty"]) == abs(after)
+    cid = (eng.st["pos"][DOGE].get("tp_market_once") or {}).get("t1", {}).get("cid")
+    assert cid and _fills(offline)[0]["client_id"] == cid
     runners = [o for o in offline.inner.open_orders(DOGE) if "t3" in str(o["client_id"])]
     assert len(runners) == 1 and runners[0]["qty"] == abs(after)
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_p3_unknown_cid_sends_nothing(offline, side):
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    j, qty = _prime(offline, eng, side)
+
+    def hide(fn, s, cid, **k):
+        if cid in offline.inner.orders:
+            raise ExchangeUnavailable("status unknown")
+        return fn(s, cid, **k)
+
+    offline.fx.inject("market", "lost", times=1)
+    offline.fx.inject("get_order", hide, times=80)
+    eng.tick()
+    after = offline.amt(DOGE)
+    assert after == qty - side * D(j["tp"]["q1"])
+    sent = len(_markets(offline))
+
+    def stale(fn, symbols, **k):
+        out = {s: dict(r) for s, r in fn(symbols).items()}
+        if DOGE in out:
+            out[DOGE]["amt"] = qty
+        return out
+
+    offline.fx.inject("positions", stale, times=40)
+    eng.clock.off += PROTECT_AUDIT_S + 1
+    eng.tick()
+    assert len(_markets(offline)) == sent
+    assert offline.amt(DOGE) == after
+    assert eng.st["pos"][DOGE].get("tp1_done") is not True
+    assert len([m for m in _alerts(eng) if "보류" in m and DOGE in m]) == 1
 
 
 @pytest.mark.parametrize("side", [1, -1])
@@ -371,8 +401,102 @@ def test_be_would_trigger_does_not_repost_during_the_cap_gate(offline, side):
     eng._move_stop_be(DOGE, j, offline.amt(DOGE), offline.inner.open_orders(DOGE), mk)
     assert len(_stop_posts(offline)) == before + 1
     for _ in range(3):
-        eng._move_stop_be(DOGE, eng.st["pos"][DOGE], offline.amt(DOGE), offline.inner.open_orders(DOGE), mk)
+        eng.tick()
     assert len(_stop_posts(offline)) == before + 1
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_hold_allows_slice_market_after_a_position_read(offline, side):
+    """A -4130 hold may realize the slice. The old stop stays until the new one is confirmed."""
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    j, qty = _prime(offline, eng, side)
+    eng.cfg.trail_atr_k = 0
+    eng._cp_hold.add(DOGE)
+    eng._protect_audit_at = eng.clock()
+    old = next(o for o in offline.inner.algos.values() if o["symbol"] == DOGE and (o["type"] or "").startswith("STOP"))
+    q1 = D(j["tp"]["q1"])
+    eng.save()
+
+    def empty_book(fn, s, **k):
+        return [] if s == DOGE else fn(s)
+
+    offline.fx.inject("open_orders", empty_book, times=40)
+    before_m = len(_markets(offline))
+    before_tp = len(_tp_posts(offline))
+    cancels = len([c for c in offline.fx.calls if c[0] == "cancel"])
+    eng.tick()
+    assert len(_markets(offline)) == before_m + 1
+    assert len(_fills(offline)) == 1 and _fills(offline)[0]["reduce_only"] is True
+    assert _fills(offline)[0]["orig_qty"] == q1
+    assert len(_tp_posts(offline)) == before_tp
+    assert eng.st["pos"][DOGE].get("tp1_done") is True
+    assert offline.amt(DOGE) == qty - side * q1
+    assert any(o["id"] == old["id"] for o in offline.inner.algos.values())
+    assert len([c for c in offline.fx.calls if c[0] == "cancel"]) == cancels
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_hold_does_not_market_when_the_position_read_fails(offline, side):
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    _prime(offline, eng, side)
+    eng.cfg.trail_atr_k = 0
+    eng._cp_hold.add(DOGE)
+    eng._protect_audit_at = eng.clock()
+    eng.save()
+    offline.fx.inject("open_orders", lambda fn, s, **k: [] if s == DOGE else fn(s), times=20)
+    offline.fx.inject("positions", "unavailable", times=20)
+    before = len(_markets(offline))
+    eng.tick()
+    assert len(_markets(offline)) == before
+    assert eng.st["pos"][DOGE].get("tp1_done") is not True
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_hold_cancels_the_old_stop_only_after_the_new_one_is_confirmed(offline, side):
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    j = eng.st["pos"][DOGE]
+    eng._cp_hold.add(DOGE)
+    j["tp1_done"] = True
+    eng.cfg.trail_atr_k = 0
+    eng.save()
+    old = next(o for o in offline.inner.open_orders(DOGE) if (o["type"] or "").startswith("STOP"))
+    tgt = eng._be_target(DOGE, j)
+    offline.inner.stops_fire = False
+    offline.inner.set_price(DOGE, tgt + side * D("0.01"))
+    _sleeps(eng)
+
+    def hide_new(fn, s, **k):
+        rows = fn(s)
+        if s != DOGE:
+            return rows
+        return [o for o in rows if o["id"] == old["id"]]
+
+    offline.fx.inject("open_orders", hide_new, times=10)
+    eng._move_stop_be(DOGE, j, offline.amt(DOGE), offline.inner.open_orders(DOGE), tgt + side * D("0.01"))
+    assert any(o["id"] == old["id"] for o in offline.inner.algos.values())
+    assert not [c for c in offline.fx.calls if c[0] == "cancel" and c[1][-1].get("id") == old["id"]]
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_hold_cancels_the_old_stop_after_the_new_one_is_confirmed(offline, side):
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    j = eng.st["pos"][DOGE]
+    eng._cp_hold.add(DOGE)
+    j["tp1_done"] = True
+    eng.cfg.trail_atr_k = 0
+    eng.save()
+    tgt = eng._be_target(DOGE, j)
+    offline.inner.stops_fire = False
+    offline.inner.set_price(DOGE, tgt + side * D("0.01"))
+    _sleeps(eng)
+    before = len(offline.fx.calls)
+    eng._move_stop_be(DOGE, j, offline.amt(DOGE), offline.inner.open_orders(DOGE), tgt + side * D("0.01"))
+    seq = [c[0] for c in offline.fx.calls[before:] if c[0] in ("stop", "cancel")]
+    assert "stop" in seq and "cancel" in seq and seq.index("stop") < seq.index("cancel")
 
 
 @pytest.mark.parametrize("side", [1, -1])
