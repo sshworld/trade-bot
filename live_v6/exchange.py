@@ -278,13 +278,22 @@ class BinanceREST:
                     raise ExchangeError(f"symbolConfig: bad leverage for {symbol}: {type(e).__name__}") from e
         raise ExchangeError(f"symbolConfig: no row for {symbol}")
 
+    def _order_list(self, payload, what) -> list:
+        """A JSON list is the book. null or any other shape is unknown, not an empty book. [] stays empty."""
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict) and isinstance(payload.get("orders"), list):
+            return payload["orders"]
+        raise ExchangeUnavailable(f"{what} response is not a list")
+
     def _collect_orders(self, std, algo, symbol) -> list[dict]:
-        algo = algo if isinstance(algo, list) else ((algo or {}).get("orders") or [])
+        std_rows = self._order_list(std, "openOrders")
+        algo_rows = self._order_list(algo, "openAlgoOrders")
         out = [{"kind": "std", "id": str(o["orderId"]), "client_id": o.get("clientOrderId", ""),
                 "symbol": symbol or o.get("symbol"), "type": o.get("type"), "side": o.get("side"),
                 "stop_price": Decimal(str(o.get("stopPrice") or 0)),
-                "close_position": bool(o.get("closePosition")), "reduce_only": bool(o.get("reduceOnly"))} for o in std or []]
-        return out + [_norm_algo(o) for o in algo]
+                "close_position": bool(o.get("closePosition")), "reduce_only": bool(o.get("reduceOnly"))} for o in std_rows]
+        return out + [_norm_algo(o) for o in algo_rows]
 
     def open_orders(self, symbol) -> list[dict]:
         std = self._req("GET", "/fapi/v1/openOrders", {"symbol": symbol}, critical=True)

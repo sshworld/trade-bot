@@ -1179,8 +1179,22 @@ class V6Engine:
             except OrderRejected as e:
                 if getattr(e, "code", None) == -4130:
                     saw_4130 = True
-                    last = str(e)                           # closePosition already exists: not a hard reject
+                    self._cp_hold.add(sym)                  # same hold as a missing-stop -4130: stop POSTing
+                    last = str(e)
                     log.error("%s closePosition stop attempt %d already present (-4130)", sym, i + 1)
+                    try:
+                        oo = self.x("open_orders", sym)
+                        cp = next((o for o in oo if o["close_position"] and o["side"] == self._cs(j)), None)
+                        if cp:
+                            self._cp_hold.discard(sym)
+                            j["stop_px"] = str(cp["stop_price"])
+                            j.update(stop_confirmed_ms=self.now_ms(), stop_px_entry=j["stop_px"])
+                            self._cancel_quiet(sym, pre)
+                            self.save()
+                            return "ok"
+                    except ExchangeError as ex:
+                        last = str(ex)
+                    break                                   # one -4130 is enough; do not POST s{n} again
                 else:
                     rejected = True
                     last = str(e)
@@ -1206,17 +1220,22 @@ class V6Engine:
         try:
             oo = self.x("open_orders", sym)
         except ExchangeError:
+            if not j.get("stop_px_entry"):
+                j["stop_px_entry"] = str(j["stop_px"])      # R is the initial stop, even if this book stayed unread
+                self.save()
             return "kept"                                  # unknown book: do not flatten a confirmed pre-arm or a landed -4130
-        if rejected:
-            return "failed"                                 # non--4130 reject, and the book could be read
         if self.find_stop(amt, oo) or saw_4130:
+            if self.find_stop(amt, oo):
+                self._cp_hold.discard(sym)                  # a covering stop is visible: the hold may alert again
             log.warning("%s keeps the protective stop %s", sym, pre["stop_price"])
             j["stop_px"] = str(pre["stop_price"])
             j.update(stop_confirmed_ms=j.get("prearm_ms"), stop_px_entry=j["stop_px"])  # live log only
             self.save()
             self._dirty = True                              # reconcile re-verifies (qty ≥ position) right away
-            return "kept"                                   # covering stop, or -4130 said the closePosition exists
-        return "failed"                                     # read succeeded and nothing covers the filled qty
+            return "kept"                                   # pre-arm or -4130 covers the qty; a bare reject does not flatten it
+        if rejected:
+            return "failed"                                 # book was read and nothing covers the filled qty
+        return "failed"
 
     # ───────────────────────── take profit / breakeven (qrmtf) ─────────────────────────
     def _tp_levels(self, sym, j):
@@ -1452,8 +1471,9 @@ class V6Engine:
         if tp2 and self._position_open(sym):
             self._place_tp(sym, j, "t2", tp2, q2)
 
-    def _manage_tps(self, sym, j, amt, orders, mk):
-        """Every reconcile: missing TP orders re-placed; after TP1 the +3R runner is armed and the stop moves to breakeven."""
+    def _manage_tps(self, sym, j, amt, orders, mk, hold=False):
+        """Every reconcile: missing TP orders re-placed; after TP1 the +3R runner is armed and the stop moves to breakeven.
+        During a -4130 hold the book is not proof those orders are gone, so only the breakeven move runs."""
         self._bind_runner(sym, j, amt)
         tp, cids = j["tp"], {o["client_id"] for o in orders}
         for w, k in (("t1", "tp1"), ("t2", "tp2"), ("t3", "tp3")):  # a TP missing from open orders most likely just fired:
@@ -1468,6 +1488,10 @@ class V6Engine:
                 if abs(fresh) < abs(amt):
                     self._dirty = True                            # filled: next reconcile books it (tp1_done / flat)
                     return
+        if hold:
+            if j.get("tp1_done") and tp.get("tp1") and not j.get("be_done") and self._position_open(sym):
+                self._move_stop_be(sym, j, amt, orders, mk)
+            return
         if not j.get("tp1_done") and f"{j['cid']}t1" not in cids and tp.get("tp1"):
             self._place_tp(sym, j, "t1", D(tp["tp1"]), D(tp["q1"]))
             if not self._position_open(sym):
@@ -1502,7 +1526,9 @@ class V6Engine:
         cid, open_ = j["cid"], {o["client_id"] for o in orders}
         cand = {}
         if not self.find_stop(amt, orders):
-            cand.update({c: "stop" for c in [f"{cid}p"] + [f"{cid}s{i}" for i in range(int(j.get("stop_seq", 0)))]})
+            seq = int(j.get("stop_seq", 0))
+            cids = [f"{cid}p"] + ([f"{cid}s{seq - 1}"] if seq > 0 else [])   # latest stop only: seq must not grow the query
+            cand.update({c: "stop" for c in cids})
         if j.get("tp"):
             if j["tp"].get("tp1") and not j.get("tp1_done"):
                 cand[f"{cid}t1"] = "tp1"
@@ -1537,8 +1563,16 @@ class V6Engine:
                 if "stop" in filled else "take_profit"
             self.save()
             if amt != 0 and "tp1" not in filled:
-                self._dirty = True
-                return False
+                sig = f"{amt}|" + ",".join(f"{k}:{v}" for k, v in sorted(filled.items()))
+                if j.get("_partial_exit") != sig:
+                    j["_partial_exit"] = sig               # one pass may still be the fill landing
+                    self._dirty = True
+                    self.save()
+                    return False
+                j["qty"] = str(abs(amt))                   # same residual again: the exit is done
+                j.pop("_partial_exit", None)
+                self.save()
+                return amt, orders, filled
         if "tp1" in filled and not j.get("tp1_done") and amt != 0:
             j.update(tp1_done=True, qty=str(abs(amt)))           # TP1 filled (status FINISHED + executedQty)
             self.save()
@@ -2543,25 +2577,30 @@ class V6Engine:
                     return
                 continue
             if not self.find_stop(amt, orders):
-                self.alert("손절 주문 없음 — 재등록 시도", f"{sym} {amt} · 손절 {stp}")
-                if not self._arm_stop(sym, j, amt):
-                    left = self.st["pos"].get(sym)
-                    held = isinstance(left, dict) and (left.get("close_held") or left.get("reconcile_pending"))
-                    if left is not None and not held and getattr(self, "_protect_close_failed", False):
+                if sym not in self._cp_hold:
+                    self.alert("손절 주문 없음 — 재등록 시도", f"{sym} {amt} · 손절 {stp}")
+                    if not self._arm_stop(sym, j, amt):
+                        if sym not in self._cp_hold:
+                            left = self.st["pos"].get(sym)
+                            held = isinstance(left, dict) and (left.get("close_held") or left.get("reconcile_pending"))
+                            if left is not None and not held and getattr(self, "_protect_close_failed", False):
+                                try:
+                                    fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+                                except ExchangeError:
+                                    fresh = None
+                                if fresh not in (None, 0):
+                                    self.emergency_flatten_all(f"unprotected {sym}")
+                            if self.meta.get("halted", "") and str(self.meta["halted"]).startswith("emergency"):
+                                return
+                            continue
+                    else:
                         try:
-                            fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+                            orders = self.x("open_orders", sym)
                         except ExchangeError:
-                            fresh = None
-                        if fresh not in (None, 0):
-                            self.emergency_flatten_all(f"unprotected {sym}")
-                    if self.meta.get("halted", "") and str(self.meta["halted"]).startswith("emergency"):
-                        return
-                    continue
-                try:
-                    orders = self.x("open_orders", sym)
-                except ExchangeError:
-                    continue
-            elif j.get("unprotected"):
+                            continue
+            else:
+                self._cp_hold.discard(sym)                  # covering stop is visible again
+            if self.find_stop(amt, orders) and j.get("unprotected"):
                 j.pop("unprotected", None)
                 self.save()
             if j.get("stop_lost") and self.find_stop(amt, orders):
@@ -2582,8 +2621,16 @@ class V6Engine:
                 elif (prot and (prot["close_position"] or prot is mine) and o["reduce_only"] and (o["type"] or "").startswith("STOP")
                       and (not o["close_position"] or prot is mine) and str(o["client_id"]).startswith(self.cfg.cid_prefix)):
                     self._cancel_quiet(sym, o)                   # leftover pre-arm / old stop, the bot's stop is live
-            if prot and j.get("tp") and not j.get("closing"):
-                self._manage_tps(sym, j, amt, orders, mk)
+            if not j.get("closing") and sym in self.st["pos"]:
+                if not j.get("tp"):
+                    if self.cfg.take_profit:
+                        self._place_tps(sym, j)             # journaled with no TP (recovered intent, crash, adopt)
+                        if not self._position_open(sym):
+                            continue
+                elif prot:
+                    self._manage_tps(sym, j, amt, orders, mk)
+                elif sym in self._cp_hold:
+                    self._manage_tps(sym, j, amt, orders, mk, hold=True)
             if prot and self.cfg.trail_atr_k and sym in self.st["pos"] and not self.st["pos"][sym].get("closing"):
                 self._trail(sym, self.st["pos"][sym], amt, mk)
         if mismatch:
@@ -2659,12 +2706,21 @@ class V6Engine:
                     self.alert(f"보호 점검 보류 — {sym}", f"주문 조회 불가 · 손절·익절 유지 · {e}")
                 return
         self._audit_unknown.discard(sym)
-        if self.find_stop(amt, orders):
+        seen = self.find_stop(amt, orders)
+        if seen:
             self._cp_hold.discard(sym)                      # covering stop is visible: the -4130 hold may alert again
-        elif not self._arm_stop(sym, j, amt) or not self._position_open(sym):
+        elif sym not in self._cp_hold:
+            if not self._arm_stop(sym, j, amt) or not self._position_open(sym):
+                if not self._position_open(sym) or sym not in self._cp_hold:
+                    return
+        if not self._position_open(sym):
             return
         if not j.get("tp"):
+            if self.cfg.take_profit:
+                self._place_tps(sym, j)                     # no tp state yet: initialize and place
             return
+        if sym in self._cp_hold and not self.find_stop(amt, orders):
+            return                                          # contradictory book: do not re-place from it
         for which, px, qty, wt in self._tp_repairs(j, amt, orders):
             self._place_tp(sym, j, which, px, qty, working_type=wt)
             if not self._position_open(sym):

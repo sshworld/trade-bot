@@ -418,11 +418,19 @@ def test_entry_fills_but_stop_rejected_flattens_everything_and_alerts(offline, e
             raise exc
         return fn(s, side, trigger, cid, qty=qty, **k)
     offline.fx.inject("stop", only_close_position, times=10)
-    assert not eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
-    assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] == 0, "half/naked position left"
-    assert not offline.inner.open_orders("DOGEUSDT")
-    assert any("손절 거절" in m or "시장가 청산" in m for m in alerts(eng)), eng.tg.sent
-    assert len(close_calls(offline)) == 1 and not eng.st["intents"] and "DOGEUSDT" not in eng.st["pos"]
+    # WouldTrigger cannot rest, so that position is flattened. Any other reject leaves a
+    # visible pre-arm in place: the upgrade returns "kept" and does not market-close.
+    if isinstance(exc, WouldTrigger):
+        assert not eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
+        assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] == 0, "half/naked position left"
+        assert not offline.inner.open_orders("DOGEUSDT")
+        assert any("손절 거절" in m or "시장가 청산" in m for m in alerts(eng)), eng.tg.sent
+        assert len(close_calls(offline)) == 1 and not eng.st["intents"] and "DOGEUSDT" not in eng.st["pos"]
+    else:
+        assert eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
+        assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] != 0
+        assert offline.stops("DOGEUSDT")
+        assert not close_calls(offline) and "DOGEUSDT" in eng.st["pos"]
     offline.assert_safe()
 
 
