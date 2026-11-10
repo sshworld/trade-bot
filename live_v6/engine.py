@@ -235,8 +235,6 @@ class V6Engine:
         self._r3_alerted: set = set()                      # flat coins whose residual 🚨 is out (cleared by one ✅)
         self._foreign_seen: set = set()                    # (sym, order id) of non-bot orders on a flat coin already 🚨'd
         self._gap_alerted: set = set()                     # (sym, "sl"|"tp") already 🚨'd for this gap; cleared when the order is back
-        # halt_on_negative counts only trades closed after this process started
-        self._gate_i = len(self.meta.get("trades") or [])
         self._flat_confirmed: set = set()                  # symbols whose position read in THIS process returned 0.
                                                            # empty after a restart until reconcile confirms again
         inner = getattr(ex, "inner", ex)
@@ -394,9 +392,11 @@ class V6Engine:
                                  income_cursor=self.now_ms(), income_seen=[], net_transfers="0")
             self.strategy.on_start(self)
             self.st["strategy"] = self.strategy.state
+            self._gate_anchor()
             self.save()
             self.blocks.pop(STARTUP, None)
             self.started = True
+            self._restart_gate_block()                  # a persisted gate halt survives the restart
             self.notify(f"▶️ live_v6 시작 · {self.ex!r} · 포지션 {self._open_position_count()}개"
                          + (f" · 기록 없는 포지션 {','.join(self.st['unknown'])}" if self.st["unknown"] else "") + " · "
                          f"{'중단 상태: ' + self.meta['halted'] if self.meta.get('halted') else '진입 가능' if self.entries_allowed() else '진입 차단: ' + ','.join(self.blocks)}")
@@ -960,18 +960,53 @@ class V6Engine:
         finally:
             self._sig, self._sig_side = None, 1
 
+    def _gate_anchor(self):
+        """First start of binhv45. Persisted. Set once; only tools/clear_restart_gate.py replaces it."""
+        if getattr(self.strategy, "name", "") != "binhv45":
+            return None
+        if (self.cfg.restart_gate_mode or "off") == "off":
+            return None
+        anc = self.meta.get("restart_gate_anchor")
+        if isinstance(anc, dict) and anc.get("t_ms"):
+            return anc
+        anc = {"t_ms": self.now_ms(), "strategy": "binhv45"}
+        self.meta["restart_gate_anchor"] = anc
+        self.save()
+        return anc
+
+    def _trades_since_anchor(self, anc):
+        """Completed binhv45 trades closed at or after the anchor. Other strategies are ignored."""
+        t0 = int(anc["t_ms"])
+        out = []
+        for t in self.meta.get("trades") or []:
+            if t.get("strategy") not in (None, "", "binhv45"):
+                continue
+            if t.get("closed_ms") is None:
+                continue
+            if int(t["closed_ms"]) >= t0:
+                out.append(t)
+        return out
+
     def _restart_gate_block(self) -> bool:
         """True → this entry must not be sent. lock30 never blocks and never raises leverage; it alerts once.
-        halt_on_negative uses only trades closed after this process started. One alert (block() dedupes)."""
+        halt_on_negative sums binhv45 net after fees since the persisted anchor, across restarts.
+        Once halted, meta.restart_gate stays until the operator tool clears it. One alert (block() dedupes)."""
         mode = self.cfg.restart_gate_mode or "off"
         if mode == "off":
             return False
-        trades = list(self.meta.get("trades") or [])
-        if mode == "halt_on_negative":
-            trades = trades[self._gate_i:]
+        if mode == "halt_on_negative" and self.meta.get("restart_gate"):
+            self.block("restart_gate", str(self.meta["restart_gate"].get("net", "")),
+                       "재시작 게이트 — 누적 순손익 음수, 신규 진입 중단")
+            return True
+        anc = self._gate_anchor()
+        trades = self._trades_since_anchor(anc) if anc else [
+            t for t in (self.meta.get("trades") or []) if t.get("closed_ms") is not None]
         nets = [D(t.get("net") or 0) for t in trades]
         n, cum = len(nets), sum(nets, Decimal(0))
         if mode == "halt_on_negative" and n > 0 and cum < 0:
+            self.meta["restart_gate"] = {"t_ms": self.now_ms(), "net": str(cum), "n": n,
+                                         "anchor": None if anc is None else anc.get("t_ms")}
+            self.save()
             self.block("restart_gate", f"net {cum} after {n}", "재시작 게이트 — 누적 순손익 음수, 신규 진입 중단")
             return True
         if (mode == "lock30" and n >= int(self.cfg.restart_gate_n) and cum < 0
@@ -2391,6 +2426,8 @@ class V6Engine:
                "actual_risk_pct": str((self._loss_to_stop(eq, e0, stop0, int(j.get("side", 1))) / w0 * 100)
                                       .quantize(Decimal("0.0001"))) if w0 > 0 else None,
                "exit_legs": exit_legs, "exit_px_avg": str(xpx)}       # exit_px = exit_px_avg (qty-weighted, kept for old readers)
+        if getattr(self.strategy, "name", None) == "binhv45":
+            rec["strategy"] = "binhv45"
         rec["outcome"] = REASON_KO.get(reason.split(" ")[0], reason)   # TA: TP1 then the BE stop = "1차 익절 후 본절"
         t_x = max((f["time"] for f in exit_fills), default=self.now_ms())
         if reason.split(" ")[0] not in MODEL_EXITS:              # exchange stop / safety close, not a model exit

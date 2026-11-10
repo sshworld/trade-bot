@@ -276,7 +276,8 @@ def test_below_min_notional_is_skipped(offline):
 
 def test_lock30_alerts_once_and_stays_at_3x(offline):
     eng = _eng(offline, restart_gate_mode="lock30")
-    eng.meta["trades"] = [{"net": "-1"} for _ in range(30)]
+    anc = eng.meta["restart_gate_anchor"]["t_ms"]
+    eng.meta["trades"] = [{"net": "-1", "closed_ms": anc + 1, "strategy": "binhv45"} for _ in range(30)]
     offline.inner.set_price(DOGE, D("0.151"))
     assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"))
     assert next(iter(eng.st["intents"].values()))["lev"] == 3
@@ -289,7 +290,8 @@ def test_lock30_alerts_once_and_stays_at_3x(offline):
 
 def test_halt_on_negative_blocks_new_entries(offline):
     eng = _eng(offline, restart_gate_mode="halt_on_negative")
-    eng.meta["trades"] = [{"net": "-0.01"}]
+    anc = eng.meta["restart_gate_anchor"]["t_ms"]
+    eng.meta["trades"] = [{"net": "-0.01", "fees": "0.01", "closed_ms": anc + 1, "strategy": "binhv45"}]
     offline.inner.set_price(DOGE, D("0.151"))
     assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15")) is False
     assert not eng.st["intents"] and "restart_gate" in eng.blocks
@@ -322,6 +324,74 @@ def test_live_default_halts_on_negative_net_since_restart(offline):
     assert n == 1
     assert restarted.enter("SOLUSDT", D("150") * D("0.0075"), restarted.now_ms() + 2000, limit_px=D("149")) is False
     assert len([m for m in restarted.tg.sent if "재시작 게이트" in m]) == n
+
+
+def test_restart_after_a_losing_trade_stays_halted(offline):
+    eng = _eng(offline)
+    anc = eng.meta["restart_gate_anchor"]["t_ms"]
+    eng.meta.setdefault("trades", []).append(
+        {"net": "-1.5", "fees": "0.2", "closed_ms": anc + 5, "strategy": "binhv45"})
+    offline.inner.set_price(DOGE, D("0.151"))
+    assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15")) is False
+    assert eng.meta.get("restart_gate")
+    eng.save()
+    eng2 = _eng(offline)
+    assert eng2.meta["restart_gate_anchor"]["t_ms"] == anc
+    assert eng2.meta.get("restart_gate")
+    offline.inner.set_price(DOGE, D("0.151"))
+    assert eng2.enter(DOGE, D("0.15") * D("0.0075"), eng2.now_ms(), limit_px=D("0.15")) is False
+    assert "restart_gate" in eng2.blocks
+    n = len([m for m in eng2.tg.sent if "재시작 게이트" in m])
+    assert n == 1
+    eng2.resume()
+    assert eng2.meta.get("restart_gate")
+    assert eng2.enter(DOGE, D("0.15") * D("0.0075"), eng2.now_ms() + 1000, limit_px=D("0.149")) is False
+    assert len([m for m in eng2.tg.sent if "재시작 게이트" in m]) == n
+
+
+def test_restart_with_non_negative_net_keeps_counting(offline):
+    eng = _eng(offline)
+    anc = eng.meta["restart_gate_anchor"]["t_ms"]
+    eng.meta.setdefault("trades", []).append(
+        {"net": "5", "fees": "0.1", "closed_ms": anc + 5, "strategy": "binhv45"})
+    eng.save()
+    eng2 = _eng(offline)
+    assert eng2.meta["restart_gate_anchor"]["t_ms"] == anc
+    eng2.meta["trades"].append({"net": "-3", "fees": "0.1", "closed_ms": anc + 15, "strategy": "binhv45"})
+    offline.inner.set_price(DOGE, D("0.151"))
+    # +5 before the restart and -3 after it: net stays positive, so the entry is still allowed
+    assert eng2.enter(DOGE, D("0.15") * D("0.0075"), eng2.now_ms(), limit_px=D("0.15"))
+    assert "restart_gate" not in eng2.blocks
+
+
+def test_operator_tool_resets_the_anchor_and_clears_the_halt(offline):
+    from live_v6.tools.clear_restart_gate import clear
+    eng = _eng(offline)
+    anc = eng.meta["restart_gate_anchor"]["t_ms"]
+    eng.meta.setdefault("trades", []).append(
+        {"net": "-2", "fees": "0.1", "closed_ms": anc + 5, "strategy": "binhv45"})
+    offline.inner.set_price(DOGE, D("0.151"))
+    assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15")) is False
+    ent = clear(eng.st, "ops", anc + 10_000)
+    assert ent and ent["anchor_after"]["t_ms"] == anc + 10_000 and "restart_gate" not in eng.meta
+    eng.save()
+    eng2 = _eng(offline)
+    assert eng2.meta["restart_gate_anchor"]["t_ms"] == anc + 10_000
+    assert not eng2.meta.get("restart_gate")
+    offline.inner.set_price(DOGE, D("0.151"))
+    assert eng2.enter(DOGE, D("0.15") * D("0.0075"), eng2.now_ms(), limit_px=D("0.15"))
+
+
+def test_qrmtf_trades_before_the_anchor_are_ignored(offline):
+    eng = _eng(offline)
+    anc = eng.meta["restart_gate_anchor"]["t_ms"]
+    eng.meta["trades"] = [
+        {"net": "-100", "fees": "2", "closed_ms": anc - 1000, "strategy": "qrmtf"},
+        {"net": "0.20", "fees": "0.01", "closed_ms": anc + 10, "strategy": "binhv45"},
+    ]
+    offline.inner.set_price(DOGE, D("0.151"))
+    assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"))
+    assert "restart_gate" not in eng.blocks
 
 
 def test_thirty_winners_do_not_raise_leverage(offline):
