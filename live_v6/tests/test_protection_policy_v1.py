@@ -241,7 +241,7 @@ def test_sl_failure_retries_then_reduceonly_market_close(offline, scheme):
 
 @pytest.mark.parametrize("scheme", ["legacy", "e"])
 def test_tp_failure_does_not_close_or_cancel_when_symbol_missing(offline, scheme):
-    """A missing positions row is unknown: retries still run, but there is no market close and no cancel."""
+    """A missing positions row is unknown from the first read: no order is sent, and nothing is closed or cancelled."""
     eng = engine_for(offline, scheme)
     open_pos(offline, eng, 1)
     j = eng.st["pos"][DOGE]
@@ -258,8 +258,8 @@ def test_tp_failure_does_not_close_or_cancel_when_symbol_missing(offline, scheme
     offline.fx.inject("positions", omit, times=99)
     offline.fx.inject("take_profit", "reject", times=4)
     eng._place_tp(DOGE, j, "t1", D(j["tp"]["tp1"]), D(j["tp"]["q1"]))
-    assert [c for c in offline.fx.calls[n:] if c[0] == "take_profit"].__len__() == 4
-    assert sl == RETRY_S
+    assert [c for c in offline.fx.calls[n:] if c[0] == "take_profit"] == []
+    assert sl == []
     assert not _closes(offline)
     assert {o["id"] for o in _orders(offline)} == kept
     assert offline.amt(DOGE) != 0 and not j.get("closing") and DOGE in eng.st["pos"]

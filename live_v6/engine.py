@@ -1198,16 +1198,17 @@ class V6Engine:
         if rejected:
             return "failed"                                 # definitive reject: caller market-closes, pre-arm included
         try:
-            if self.find_stop(amt, self.x("open_orders", sym)):
-                log.warning("%s keeps the pre-armed reduceOnly stop %s", sym, pre["stop_price"])
-                j["stop_px"] = str(pre["stop_price"])
-                j.update(stop_confirmed_ms=j.get("prearm_ms"), stop_px_entry=j["stop_px"])  # live log only
-                self.save()
-                self._dirty = True                          # reconcile re-verifies (qty ≥ position) right away
-                return "kept"
+            oo = self.x("open_orders", sym)
         except ExchangeError:
-            pass
-        return "failed"
+            return "kept"                                  # unknown book: do not flatten a confirmed pre-arm
+        if self.find_stop(amt, oo):
+            log.warning("%s keeps the pre-armed reduceOnly stop %s", sym, pre["stop_price"])
+            j["stop_px"] = str(pre["stop_price"])
+            j.update(stop_confirmed_ms=j.get("prearm_ms"), stop_px_entry=j["stop_px"])  # live log only
+            self.save()
+            self._dirty = True                              # reconcile re-verifies (qty ≥ position) right away
+            return "kept"
+        return "failed"                                     # read succeeded and nothing covers the filled qty
 
     # ───────────────────────── take profit / breakeven (qrmtf) ─────────────────────────
     def _tp_levels(self, sym, j):
@@ -1249,15 +1250,43 @@ class V6Engine:
             tp["q3"] = str(abs(amt))
             self.save()
 
-    def _cid_live(self, sym, cid) -> bool:
+    def _signed_qty(self, j) -> Decimal:
+        q = D(j.get("qty") or 0)
+        return q if int(j.get("side", 1)) > 0 else -q
+
+    def _qty_vs(self, sym, baseline: Decimal) -> str:
+        """'same' | 'shrunk' | 'unknown'. A missing row or a failed read is unknown, never flat."""
+        try:
+            pos = self.x("positions", self.cfg.symbols)
+        except ExchangeError:
+            return "unknown"
+        amt = self._row_amt(pos, sym)
+        if amt is None:
+            return "unknown"
+        if amt == 0 or (baseline > 0 and abs(amt) < baseline):
+            return "shrunk"
+        return "same"
+
+    def _cid_state(self, sym, cid) -> str:
+        """'yes' | 'no' | 'unknown'. An unreadable book is not proof the order is absent."""
         try:
             oo = self.x("open_orders", sym)
         except ExchangeError:
-            return False
-        return any(o.get("client_id") == cid for o in oo)
+            return "unknown"
+        return "yes" if any(o.get("client_id") == cid for o in oo) else "no"
+
+    def _stop_covers(self, sym, j) -> str:
+        """'yes' | 'no' | 'unknown' from a fresh per-symbol open-order read."""
+        try:
+            oo = self.x("open_orders", sym)
+        except ExchangeError:
+            return "unknown"
+        return "yes" if self.find_stop(self._signed_qty(j), oo) else "no"
 
     def _give_up_protection(self, sym, j, what, err) -> bool:
-        """Retries exhausted. Market-close only a known nonzero row. A missing row is unknown: no close, no cancel."""
+        """Retries exhausted. Market-close only a known nonzero row that has not shrunk.
+        A missing row, a failed read, a flat row, or a partial fill is not a flatten."""
+        self._protect_close_failed = False
         try:
             pos = self.x("positions", self.cfg.symbols)
         except ExchangeError as e:
@@ -1267,31 +1296,64 @@ class V6Engine:
         if amt is None:
             self.alert(f"보호 주문 실패 — {sym} 청산 보류", f"{what} · 포지션 응답에 없음 · 손절·익절 유지 · {err}")
             return False
-        if amt == 0:
-            return False
+        baseline = abs(D(j.get("qty") or 0))
+        if amt == 0 or (baseline > 0 and abs(amt) < baseline):
+            return False                                    # flat or partial fill: next reconcile books it
         self.alert(f"보호 주문 실패 — {sym} 시장가 청산", f"{what} · reduceOnly MARKET · {err}")
-        self.close(sym, "protection_failed")
+        self._protect_close_failed = not bool(self.close(sym, "protection_failed"))
         return False
 
     def _arm_protection(self, sym, j, what, cid, place) -> bool:
         """Place `place()`. On failure alert and retry at 1s, 3s, 10s. Still failing → reduceOnly market close + 🚨.
         WouldTrigger propagates so the caller can close just the qty that is already through. A live order with
-        `cid` (lost response) is success, not another send."""
+        `cid` (lost response) is success, not another send. -4130 means a closePosition stop is already there.
+        A position that shrinks or disappears between tries is left for the next reconcile. An unreadable book
+        or position is unknown: stop, and do not flatten."""
+        self._protect_close_failed = False
+        baseline = abs(D(j.get("qty") or 0))
         last = None
         for i, delay in enumerate((*PROTECT_RETRY_S, None)):
+            seen = self._qty_vs(sym, baseline) if baseline > 0 else "same"
+            if seen == "unknown":
+                self.alert(f"보호 주문 실패 — {sym} 청산 보류", f"{what} · 포지션 조회 불가 · 손절·익절 유지")
+                return False
+            if seen == "shrunk":
+                if delay is not None:
+                    self.sleep(delay)                       # finish the scheduled gaps; do not send another order
+                    continue
+                return False
             try:
                 place()
                 return True
             except WouldTrigger:
                 raise
+            except OrderRejected as e:
+                if getattr(e, "code", None) == -4130:
+                    cover = self._stop_covers(sym, j)
+                    if cover == "yes":
+                        return True
+                    if cover == "unknown":
+                        self.alert(f"보호 주문 실패 — {sym} 청산 보류", f"{what} · 손절 조회 불가 · 유지")
+                        return False
+                last = e
+                state = self._cid_state(sym, cid)
+                if state == "yes":
+                    return True
+                if state == "unknown":
+                    self.alert(f"보호 주문 실패 — {sym} 청산 보류", f"{what} · 주문 조회 불가 · 유지 · {e}")
+                    return False
             except ExchangeError as e:
                 last = e
-                if self._cid_live(sym, cid):
+                state = self._cid_state(sym, cid)
+                if state == "yes":
                     return True
-                if delay is not None:
-                    self.alert("보호 주문 실패 — 재시도",
-                               f"{sym} {what} · {i + 1}회 실패 · {delay:g}초 후 재시도 · {e}")
-                    self.sleep(delay)
+                if state == "unknown":
+                    self.alert(f"보호 주문 실패 — {sym} 청산 보류", f"{what} · 주문 조회 불가 · 유지 · {e}")
+                    return False
+            if delay is not None:
+                self.alert("보호 주문 실패 — 재시도",
+                           f"{sym} {what} · {i + 1}회 실패 · {delay:g}초 후 재시도 · {last}")
+                self.sleep(delay)
         return self._give_up_protection(sym, j, what, last)
 
     def _arm_stop(self, sym, j, amt) -> bool:
@@ -2470,8 +2532,14 @@ class V6Engine:
                 self.alert("손절 주문 없음 — 재등록 시도", f"{sym} {amt} · 손절 {stp}")
                 if not self._arm_stop(sym, j, amt):
                     left = self.st["pos"].get(sym)
-                    if left is not None and left.get("closing"):
-                        self.emergency_flatten_all(f"unprotected {sym}")
+                    held = isinstance(left, dict) and (left.get("close_held") or left.get("reconcile_pending"))
+                    if left is not None and not held and getattr(self, "_protect_close_failed", False):
+                        try:
+                            fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+                        except ExchangeError:
+                            fresh = None
+                        if fresh not in (None, 0):
+                            self.emergency_flatten_all(f"unprotected {sym}")
                     if self.meta.get("halted", "") and str(self.meta["halted"]).startswith("emergency"):
                         return
                     continue
@@ -2566,12 +2634,18 @@ class V6Engine:
     def _audit_symbol(self, sym, j, amt, orders):
         if not self._position_open(sym):
             return
+        self._bind_runner(sym, j, amt)
+        if not self.find_stop(amt, orders) or self._tp_repairs(j, amt, orders):
+            try:                                            # bundled book can be empty or partial: confirm this symbol
+                orders = self.x("open_orders", sym)
+            except ExchangeError:
+                log.error("%s audit order read unknown — SL/TP left untouched", sym)
+                return
         if not self.find_stop(amt, orders):
             if not self._arm_stop(sym, j, amt) or not self._position_open(sym):
                 return
         if not j.get("tp"):
             return
-        self._bind_runner(sym, j, amt)
         for which, px, qty, wt in self._tp_repairs(j, amt, orders):
             self._place_tp(sym, j, which, px, qty, working_type=wt)
             if not self._position_open(sym):

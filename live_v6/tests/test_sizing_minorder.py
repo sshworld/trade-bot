@@ -498,11 +498,18 @@ def test_unconfirmed_stop_after_the_bounded_window_flattens_in_full_with_alert(o
     offline.fx.inject("open_orders", oo, times=1000)
     eng.enter("DOGEUSDT", Decimal("0.0045"), unique_T())
     from live_v6.engine import PROTECT_RETRY_S
-    assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] == 0, "must be flattened, not left unconfirmed"
-    assert any("시장가 청산" in m for m in alerts(eng)), eng.tg.sent
-    assert len(close_calls(offline)) == 1                                           # one single full exit
     assert len(_cp_stop_attempts(offline)) == len(PROTECT_RETRY_S) + 1
     assert sl == list(PROTECT_RETRY_S)
+    if how == "reads_fail":
+        # An unreadable book is unknown, not "no stop": the confirmed pre-arm stays and we do not flatten.
+        assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] != 0
+        assert any(str(o.get("client_id", "")).endswith("p") for o in offline.inner.algos.values())
+        assert not close_calls(offline)
+        assert not any("시장가 청산" in m for m in alerts(eng))
+    else:
+        assert offline.inner.positions(("DOGEUSDT",))["DOGEUSDT"]["amt"] == 0, "must be flattened, not left unconfirmed"
+        assert any("시장가 청산" in m for m in alerts(eng)), eng.tg.sent
+        assert len(close_calls(offline)) == 1
 
 
 def test_no_alias_label_strings_in_emitted_skip_reasons(offline, caplog):
