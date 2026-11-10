@@ -485,16 +485,11 @@ class V6Engine:
                 continue
             if o and o["executed_qty"] > 0 and it["sym"] not in self.st["pos"]:
                 j = self._journal_entry(it["sym"], it, o)
-                u = (self.st.get("unknown") or {}).get(it["sym"])
-                cid_u = u.get("stop_cid") if isinstance(u, dict) else None
-                if cid_u:
-                    j["stop_cid"] = cid_u
-                    if u.get("stop_px"):
-                        j["stop_px"] = str(u["stop_px"])
-                    extra = j.setdefault("fallback_stop_cids", [])
-                    if cid_u not in extra:
-                        extra.append(cid_u)
-                    self.save()
+                stamp = o.get("update_time") or it.get("order_ms")
+                if stamp:
+                    j["opened_ms"] = int(stamp)          # a late journal must still see an exit that already happened
+                self._take_fallback_cids(j, it["sym"], it)
+                self.save()
             self.st["intents"].pop(cid, None)
             self.save()
 
@@ -3369,7 +3364,8 @@ class V6Engine:
                 cids.append(str(extra))
         cids += [f"{cid}s{i}" for i in range(int(j.get("stop_seq") or 0))]
         cids += [f"{cid}x{i}" for i in range(int(j.get("exit_seq") or 0))]
-        for extra_cid in [j.get("stop_cid"), *(j.get("fallback_stop_cids") or [])]:
+        for extra_cid in [j.get("stop_cid"), *(j.get("fallback_stop_cids") or []),
+                          *(j.get("fallback_exit_cids") or [])]:
             if extra_cid and str(extra_cid) not in cids:
                 cids.append(str(extra_cid))
         for c in cids:
@@ -3748,6 +3744,9 @@ class V6Engine:
             if amt == 0:
                 u = self.st["unknown"].pop(sym, None)
                 if u is not None:                               # TA R4: resolved by hand (or its stop fired)
+                    self._stash_fallback(sym, u.get("stop_cid"), "stop")
+                    for cid_x in u.get("exit_cids") or []:
+                        self._stash_fallback(sym, cid_x, "exit")
                     self._clear_symbol_holds(sym)               # this path does not go through _after_flat
                     self.save()
                     self.notify(f"✅ 기록 없는 포지션 해소 — {sym} {u.get('amt')} 거래소에서 0 · 이 코인 신규 진입 재개", kind="recovery")
@@ -3860,6 +3859,12 @@ class V6Engine:
                 prot = mine                                     # the moved (BE) stop is the bot's stop, not an old one
             if prot:
                 self._clear_uncovered_holds(sym)
+                if prot.get("client_id") and j.get("stop_cid") != prot["client_id"]:
+                    j["stop_cid"] = prot["client_id"]
+                    extra = j.setdefault("fallback_stop_cids", [])
+                    if prot["client_id"] not in extra:
+                        extra.append(prot["client_id"])
+                    self.save()
             if prot and prot["stop_price"] > 0 and D(prot["stop_price"]) != stp:
                 j["stop_px"] = str(prot["stop_price"])          # §8c L2: the live exchange stop is the truth
                 self.save()
@@ -4070,7 +4075,9 @@ class V6Engine:
             u.pop("stop_rejects", None)
         elif not self._unknown_stop(sym, u, amt, mark):
             age = self.now_ms() - int(u["detected_ms"])
-            if int(u.get("stop_rejects", 0)) > 0 and age >= self.cfg.unknown_stop_deadline_s * 1000:
+            if u.pop("book_unread", None):
+                pass                                    # an unread -4130 check is not a license to market-close
+            elif int(u.get("stop_rejects", 0)) > 0 and age >= self.cfg.unknown_stop_deadline_s * 1000:
                 if self._schema_lock:
                     self._lock_hold_alert(sym, "unknown_stop_rejected",
                                           f"거부 {u.get('stop_rejects')}회 · 손절 재시도 · 시장가 안 냄",
@@ -4090,6 +4097,98 @@ class V6Engine:
                        f"{sym} {'롱' if side > 0 else '숏'} {abs(amt)} @ {p['entry']} · "
                        f"손절 {u.get('stop_px') or '없음 (등록 재시도 중)'} ({u.get('stop_src', '-')}) · "
                        f"포트폴리오 위험에 포함 {u.get('risk_frac', 0):.2%} · 해결: 직접 청산 또는 ops가 adopt_position 으로 등록")
+
+    def _stash_fallback(self, sym, cid_u, kind="stop"):
+        """Keep a stop or last-resort id on the unresolved intent until the journal can book it."""
+        if not cid_u:
+            return
+        key = "fallback_stop_cids" if kind == "stop" else "fallback_exit_cids"
+        changed = False
+        for it in (self.st.get("intents") or {}).values():
+            if it.get("sym") != sym:
+                continue
+            extra = it.setdefault(key, [])
+            if cid_u not in extra:
+                extra.append(cid_u)
+                changed = True
+        if changed:
+            self.save()
+
+    def _take_fallback_cids(self, j, sym, intent):
+        """Copy fallback stop and exit ids from the unknown row and the intent onto the new journal."""
+        u = (self.st.get("unknown") or {}).get(sym)
+        cids, exits = [], []
+        for src in (intent, u if isinstance(u, dict) else {}):
+            if not isinstance(src, dict):
+                continue
+            if src.get("stop_cid"):
+                cids.append(src["stop_cid"])
+            cids.extend(src.get("fallback_stop_cids") or [])
+            exits.extend(src.get("exit_cids") or [])
+            exits.extend(src.get("fallback_exit_cids") or [])
+        if isinstance(u, dict) and u.get("stop_px") and cids:
+            j["stop_px"] = str(u["stop_px"])
+        extra = j.setdefault("fallback_stop_cids", [])
+        for cid_u in cids:
+            if cid_u not in extra:
+                extra.append(cid_u)
+        if extra and not j.get("stop_cid"):
+            j["stop_cid"] = extra[-1]
+        out = j.setdefault("fallback_exit_cids", [])
+        for cid_x in exits:
+            if cid_x not in out:
+                out.append(cid_x)
+
+    def _accept_unknown_stop(self, sym, u, order, cid, src):
+        placed = order.get("client_id") or cid
+        u.update(stop_px=str(order.get("stop_price") or u.get("stop_px") or ""),
+                 stop_cid=placed, stop_src=src)
+        u.pop("unprotected", None)
+        u.pop("stop_rejects", None)
+        u.pop("book_unread", None)
+        self._stash_fallback(sym, placed, "stop")
+
+    def _unknown_landed(self, sym, cid):
+        try:
+            oo = self.x("open_orders", sym)
+        except ExchangeError:
+            return None
+        return next((o for o in oo if o.get("client_id") == cid), None)
+
+    def _unknown_on_4130(self, sym, u, amt, cs, px, cid, src) -> bool:
+        """-4130 means some closePosition order is in the way. A failed read is not a reject."""
+        try:
+            oo = self.x("open_orders", sym)
+        except ExchangeError:
+            u["book_unread"] = True
+            return False
+        prot = self.find_stop(amt, oo)
+        if prot:
+            self._accept_unknown_stop(sym, u, prot, prot.get("client_id") or cid, "exchange (-4130, verified)")
+            return True
+        blockers = [o for o in oo if o.get("close_position") and o.get("side") == cs
+                    and not (o.get("type") or "").startswith("STOP")]
+        if blockers:
+            if not u.get("cp_block_alerted"):
+                u["cp_block_alerted"] = True
+                self.alert(f"기록 없는 포지션 손절 자리 점유 — {sym} closePosition 익절 취소 후 손절 재등록",
+                           ", ".join(str(o.get("client_id")) for o in blockers))
+            for o in blockers:
+                self._cancel_quiet(sym, o)
+            try:
+                placed = self.x("stop", sym, cs, px, cid)
+            except OrderRejected as e2:
+                u["stop_rejects"] = int(u.get("stop_rejects", 0)) + 1
+                u["last_reject"] = str(e2)[:80]
+                self._unknown_unprotected(sym, u, f"손절 거부 {px}: {str(e2)[:80]}")
+                return False
+            except ExchangeError:
+                u["book_unread"] = True
+                return False
+            self._accept_unknown_stop(sym, u, placed, cid, src)
+            return True
+        u["book_unread"] = True                         # -4130 but nothing we can see: do not market-close
+        return False
 
     def _unknown_stop(self, sym, u, amt, mark) -> bool:
         """Place the protective stop for an unknown position. True = placed (exchange accepted it). Rejections
@@ -4125,26 +4224,19 @@ class V6Engine:
                 o = self.x("stop", sym, cs, px, f"{cid}b")
         except OrderRejected as e:
             if getattr(e, "code", None) == -4130:
-                try:                                        # a closePosition is already there; verify, do not count a reject
-                    oo = self.x("open_orders", sym)
-                except ExchangeError:
-                    return False
-                prot = self.find_stop(amt, oo)
-                if prot:
-                    u.update(stop_px=str(prot["stop_price"]), stop_cid=prot.get("client_id"),
-                             stop_src="exchange (-4130, verified)")
-                    u.pop("unprotected", None)
-                    u.pop("stop_rejects", None)
-                    return True
-                return False
+                return self._unknown_on_4130(sym, u, amt, cs, px, cid, src)
             u["stop_rejects"] = int(u.get("stop_rejects", 0)) + 1
             u["last_reject"] = str(e)[:80]
             self._unknown_unprotected(sym, u, f"손절 거부 {px}: {str(e)[:80]}")
             return False
         except ExchangeError as e:
+            landed = self._unknown_landed(sym, cid)
+            if landed:
+                self._accept_unknown_stop(sym, u, landed, cid, src)
+                return True
             self._unknown_unprotected(sym, u, f"손절 등록 결과 불명 {px}: {str(e)[:80]} (재조회 후 재시도)")
             return False
-        u.update(stop_px=str(o.get("stop_price") or px), stop_cid=o.get("client_id", cid), stop_src=src)
+        self._accept_unknown_stop(sym, u, o, cid, src)
         if line is not None:
             u.update(stop_line=str(line), stop_atr=str(atr))
         u.pop("unprotected", None)
@@ -4162,6 +4254,11 @@ class V6Engine:
         u["exit_seq"] = seq + 1
         self.save()
         cid = f"{self.cfg.cid_prefix}{sym.removesuffix('USDT')}u{int(u['detected_ms']) // 1000}x{seq}"
+        self._stash_fallback(sym, cid, "exit")
+        u.setdefault("exit_cids", [])
+        if cid not in u["exit_cids"]:
+            u["exit_cids"].append(cid)
+        self.save()
         try:
             self.submit_market(sym, "SELL" if amt > 0 else "BUY", abs(amt), cid, reduce_only=True)
             left = self._row_amt(self.x("positions", self.cfg.symbols), sym)
@@ -4171,6 +4268,9 @@ class V6Engine:
         if left is None:
             return                                          # missing row is not a confirmed flat
         if left == 0:
+            self._stash_fallback(sym, u.get("stop_cid"), "stop")
+            for cid_x in u.get("exit_cids") or []:
+                self._stash_fallback(sym, cid_x, "exit")
             self.st["unknown"].pop(sym, None)
             self.save()
             self.alert(f"기록 없는 포지션 최후 수단 정리 완료 — {sym}", f"{amt} → 0 · 손절이 계속 거부되어 시장가로 정리함")
