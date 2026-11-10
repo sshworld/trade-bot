@@ -155,9 +155,10 @@ def test_state_file_deleted_restart_own_position_not_closed_stop_remains(offline
 
 # ───────── entry block (coin only), portfolio risk, other close paths ─────────
 def test_entries_blocked_for_that_coin_only_and_risk_counted(offline):
-    offline.inner.open_position_raw(DOGE, 1000)
     clk = Clock(START)
-    eng, _ = started(offline, clk)
+    eng, _ = started(offline, clk)                          # current schema, flat book
+    offline.inner.open_position_raw(DOGE, 1000)
+    eng.reconcile()
     T = int(eng.meta["last_bar_close"])
     assert eng.entries_allowed()                               # no global block
     assert not eng.enter(DOGE, Decimal("0.005"), T)
@@ -170,10 +171,11 @@ def test_entries_blocked_for_that_coin_only_and_risk_counted(offline):
 
 def test_flatten_all_and_close_never_touch_unknown(offline):
     """Flatten-all (§8c L3) closes the journaled positions only; close() refuses a symbol not in the state file."""
-    offline.inner.open_position_raw(DOGE, 1000)
     clk = Clock(START)
     eng, _ = started(offline, clk)
     assert eng.enter(XRP, Decimal("0.02"), int(eng.meta["last_bar_close"]))
+    offline.inner.open_position_raw(DOGE, 1000)
+    eng.reconcile()
     assert eng.close(DOGE, "stop_breach") is False
     eng.emergency_flatten_all("test")
     assert offline.amt(XRP) == 0 and offline.amt(DOGE) == 1000
@@ -183,9 +185,10 @@ def test_flatten_all_and_close_never_touch_unknown(offline):
 
 
 def test_resolved_by_hand_clears_block(offline):
-    offline.inner.open_position_raw(DOGE, 1000)
     clk = Clock(START)
     eng, _ = started(offline, clk)
+    offline.inner.open_position_raw(DOGE, 1000)
+    eng.reconcile()
     offline.inner.market(DOGE, "SELL", Decimal(1000), "manual-close", reduce_only=True)   # the user closes it
     eng.reconcile()
     assert DOGE not in eng.st["unknown"] and not stops(offline, DOGE)
@@ -361,7 +364,7 @@ def test_adopt_tool_dry_run_writes_nothing(offline, capsys):
     from live_v6.tools import adopt_position as A
     _unknown_state(offline)
     before = offline.store_path.read_text()
-    assert A.main(["--state", str(offline.store_path), "--sym", DOGE]) == 0
+    assert A.main(["--state", str(offline.store_path), "--sym", DOGE, "--opened-qty", "1000"]) == 0
     out = capsys.readouterr().out
     assert "DRY RUN" in out and "model_sync" in out              # warns: model does not hold it
     assert offline.store_path.read_text() == before
@@ -378,7 +381,7 @@ def test_adopt_tool_apply_requires_stopped_unit_then_bot_manages_it(offline, mon
     with pytest.raises(SystemExit):
         A.main(args + ["--unit", "live_v6-citest"])              # unit running → refused
     monkeypatch.setattr(A, "unit_active", lambda u: False)
-    assert A.main(args + ["--unit", "live_v6-citest", "--cid-prefix", "v6t"]) == 0
+    assert A.main(args + ["--unit", "live_v6-citest", "--cid-prefix", "v6t", "--opened-qty", "1000"]) == 0
     saved = json.loads(offline.store_path.read_text())
     assert DOGE in saved["pos"] and DOGE not in saved["unknown"] and saved["pos"][DOGE]["adopted"]
     assert list(offline.store_path.parent.glob("state.json.bak-adopt-*"))

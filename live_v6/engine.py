@@ -44,6 +44,11 @@ from . import strategy as S
 from .events import MARKET_EVENTS, AccountUpdate, Kline, Mark, OrderUpdate, StreamStatus, Trade
 from .strategies.base import DataNotReady
 from .exchange import ExchangeError, ExchangeUnavailable, OrderRejected, WouldTrigger, rules_from_info
+
+# Current journal: every open position has a proved entry_qty, and fills live only in tp_ledger.
+# Older files have no schema key. They are not migrated.
+STATE_SCHEMA = 2
+SCHEMA_HALT = "구 상태 파일 — 익절 없이 손절만 유지"
 from .notify import Notifier
 from .rules import D, SymbolRules, stop_price
 from .sizing import TAKER_FEE, SizingParams, size_entry
@@ -242,6 +247,7 @@ class V6Engine:
         self._armed_now: set = set()                        # symbols already stop-armed in this reconcile
         self._cap_retry_at: dict = {}                       # sym → earliest clock() to retry a rejected BE cap close
         self._cap_alerted: set = set()                      # symbols already told that a cap close was held
+        self._schema_lock = False                          # old state: SL only, no take-profit and no entries
         inner = getattr(ex, "inner", ex)
         if hasattr(inner, "on_rate_limit"):
             inner.on_rate_limit = self._on_rate_limit
@@ -378,7 +384,9 @@ class V6Engine:
         self.blocks[STARTUP] = "startup"
         try:
             self.load_rules()
-            self.resolve_intents()
+            self._gate_state()
+            if not self._schema_lock:
+                self.resolve_intents()
             self.reconcile()
             for s in self.cfg.symbols:
                 if s not in self.st["pos"] and s not in self.st["unknown"]:
@@ -1610,6 +1618,8 @@ class V6Engine:
             return False
 
     def _place_tp(self, sym, j, which, px, qty, working_type="CONTRACT_PRICE") -> bool:
+        if self._schema_lock:
+            return False
         """reduceOnly TAKE_PROFIT_MARKET. Price already beyond it → one alert, no market close. TP1 and TP2 stay
         on CONTRACT_PRICE (TA 2026-11-02). The +3R runner (which='t3') is MARK_PRICE. A failed placement is retried
         (policy v1). A live order with this client id is left as-is. A cancelled id is sent again under the next id."""
@@ -1764,47 +1774,63 @@ class V6Engine:
     def _slice_target(self, sym, qty) -> Decimal:
         return self.rules[sym].floor_qty(D(qty))
 
+    def _state_current(self) -> bool:
+        """True only for this schema, with a proved opened size on every open journal."""
+        if self.st.get("schema") != STATE_SCHEMA:
+            return False
+        for j in (self.st.get("pos") or {}).values():
+            if not isinstance(j, dict) or j.get("entry_qty") in (None, ""):
+                return False
+        return True
+
+    def _book_is_clear(self) -> bool:
+        """Flat means position 0 and no open order, regular or algo, on every symbol.
+        A missing position row or a failed read is not flat."""
+        try:
+            pos = self.x("positions", self.cfg.symbols)
+        except ExchangeError:
+            return False
+        for sym in self.cfg.symbols:
+            amt = self._row_amt(pos, sym)
+            if amt is None or amt != 0:
+                return False
+            try:
+                orders = self.x("open_orders", sym)
+            except ExchangeError:
+                return False
+            if orders:
+                return False
+        return True
+
+    def _gate_state(self) -> None:
+        """Old files are not migrated. A clear book may start an empty current ledger.
+        Anything on the exchange, or a journal with no proved opened size, halts."""
+        self._schema_lock = False
+        if self._state_current():
+            return
+        if self._book_is_clear():
+            self.st["schema"] = STATE_SCHEMA
+            self.st["pos"] = {}
+            self.st["intents"] = {}
+            self.st["unknown"] = {}
+            self.save()
+            return
+        self._schema_lock = True
+        if not self.meta.get("halted"):
+            self.halt(SCHEMA_HALT)
+
     def _ledger(self, j, which) -> dict:
         """One persisted record per stage: the client ids and the sum of their executedQty."""
         book = j.setdefault("tp_ledger", {}).setdefault(which, {"cids": [], "sum": "0"})
         book.setdefault("cids", [])
-        if not book["cids"] and not self._pending_market_cid(j, which):
-            legacy = D((j.get("tp_got") or {}).get(which) or 0)
-            if legacy > 0:                              # an older journal stored only the sum
-                book["cids"].append({"cid": f"{j.get('cid', '')}{which}:legacy", "executed": str(legacy)})
-                book["sum"] = str(legacy)
         return book
 
-    @staticmethod
-    def _pending_market_cid(j, which) -> str:
-        row = (j.get("tp_market_once") or {}).get(which)
-        if isinstance(row, dict) and row.get("cid"):
-            return str(row["cid"])
-        return ""
-
     def _ledger_add(self, j, which, cid, executed) -> Decimal:
-        """Store this cid's executed qty. A later read never lowers what that cid already filled.
-
-        A cached tp_got is an older sum, not a second order. It is never planted while a
-        realization cid is still pending: that order is the fill the cache was describing.
-        Adding the pending cid drops a legacy row even when the two quantities differ
-        (a lagging 7000 must not sit beside the same order's 8000)."""
+        """Store this cid's executed qty. A later read never lowers what that cid already filled."""
         book = j.setdefault("tp_ledger", {}).setdefault(which, {"cids": [], "sum": "0"})
         book.setdefault("cids", [])
         cid = str(cid)
         executed = D(executed)
-        legacy_mark = ":legacy"
-        pending = self._pending_market_cid(j, which)
-        real = [r for r in book["cids"] if not str(r.get("cid") or "").endswith(legacy_mark)]
-        cached = D((j.get("tp_got") or {}).get(which) or 0)
-        if pending:
-            if cid == pending:
-                book["cids"] = [r for r in book["cids"] if not str(r.get("cid") or "").endswith(legacy_mark)]
-        elif not real and cached > 0 and cached != executed:
-            if not any(str(r.get("cid") or "").endswith(legacy_mark) for r in book["cids"]):
-                book["cids"].append({"cid": f"{j.get('cid', '')}{which}{legacy_mark}", "executed": str(cached)})
-        elif not real and cached == executed and cached > 0:
-            book["cids"] = [r for r in book["cids"] if not str(r.get("cid") or "").endswith(legacy_mark)]
         row = next((r for r in book["cids"] if r.get("cid") == cid), None)
         if row is None:
             book["cids"].append({"cid": cid, "executed": str(executed)})
@@ -1837,26 +1863,6 @@ class V6Engine:
         if raw in (None, ""):
             return None
         return abs(D(raw))
-
-    def _freeze_entry_qty(self, j) -> bool:
-        """Persist the opened size from a journal that has not booked a fill yet.
-
-        ``qty`` is still that size until the exchange sync overwrites it. A row that
-        already records a fill keeps the post-fill remainder in ``qty`` and stays unknown.
-        """
-        if j.get("entry_qty") not in (None, ""):
-            return False
-        if j.get("tp1_done") or j.get("tp2_done") or j.get("tp3_done"):
-            return False
-        if any(D(v or 0) > 0 for v in (j.get("tp_got") or {}).values()):
-            return False
-        led = j.get("tp_ledger") or {}
-        if any(isinstance(b, dict) and D(b.get("sum") or 0) > 0 for b in led.values()):
-            return False
-        if j.get("qty") in (None, ""):
-            return False
-        j["entry_qty"] = str(abs(D(j["qty"])))
-        return True
 
     def _slice_sell(self, sym, j, which, fresh, last=None):
         """min(target − ledger, room above the reserved remainder, position).
@@ -2076,6 +2082,8 @@ class V6Engine:
         return True
 
     def _post_rest(self, sym, j, which, px, qty, working_type, what) -> bool:
+        if self._schema_lock:
+            return False
         """Rest min(target − ledger, room, position). Unknown id: not a success, no POST."""
         cid = self._tp_cid(j, which)
         state = self._cid_state(sym, cid)
@@ -2113,6 +2121,8 @@ class V6Engine:
         return True
 
     def _on_tp_would_trigger(self, sym, j, which, px, qty, working_type, place_tp=True) -> bool:
+        if self._schema_lock:
+            return False
         """Price was through this take-profit. Re-read the last trade. Still through →
         one reduceOnly market for this slice, ever. Its qty is min(the remaining slice,
         the position read immediately before the send). Book tp1_done, the breakeven
@@ -2302,6 +2312,8 @@ class V6Engine:
         self._place_tp(sym, j, "t3", px, qty, working_type="MARK_PRICE")
 
     def _place_tps(self, sym, j):
+        if self._schema_lock:
+            return
         try:
             tp1, q1, tp2, q2 = self._tp_levels(sym, j)
         except Exception as e:  # noqa: BLE001  cannot price a TP → keep the stop, never flatten
@@ -3501,6 +3513,7 @@ class V6Engine:
 
     # ───────────────────────── reconcile (exchange → local) ─────────────────────────
     def reconcile(self):
+        self._gate_state()
         self._fresh_blocks = set()
         self._armed_now = set()
         self._in_reconcile = True
@@ -3554,9 +3567,7 @@ class V6Engine:
             self._tp_unknown.discard(sym)
             self._book_down_since.pop(sym, None)
             filled = None
-            if j and amt != 0:                                  # exit order missing → its exchange status decides
-                if self._freeze_entry_qty(j):
-                    self.save()                                # opened size, before a fill syncs qty down
+            if j and amt != 0 and not self._schema_lock:       # exit order missing → its exchange status decides
                 r = self._exit_fills(sym, j, amt, orders)
                 if r is False:
                     continue                                    # closing fill still being applied → next reconcile
@@ -3687,7 +3698,7 @@ class V6Engine:
                 elif (prot and (prot["close_position"] or prot is mine) and o["reduce_only"] and (o["type"] or "").startswith("STOP")
                       and (not o["close_position"] or prot is mine) and str(o["client_id"]).startswith(self.cfg.cid_prefix)):
                     self._cancel_quiet(sym, o)                   # leftover pre-arm / old stop, the bot's stop is live
-            if not j.get("closing") and sym in self.st["pos"]:
+            if not j.get("closing") and sym in self.st["pos"] and not self._schema_lock:
                 if not j.get("tp"):
                     if self.cfg.take_profit:
                         self._place_tps(sym, j)             # missing TP state is attached even during a hold
@@ -3697,7 +3708,8 @@ class V6Engine:
                     self._manage_tps(sym, j, amt, orders, mk)
                 elif sym in self._cp_hold:
                     self._manage_tps(sym, j, amt, orders, mk, hold=True)
-            if prot and self.cfg.trail_atr_k and sym in self.st["pos"] and not self.st["pos"][sym].get("closing"):
+            if (prot and self.cfg.trail_atr_k and not self._schema_lock
+                    and sym in self.st["pos"] and not self.st["pos"][sym].get("closing")):
                 self._trail(sym, self.st["pos"][sym], amt, mk)
         if mismatch:
             self._consistent = 0

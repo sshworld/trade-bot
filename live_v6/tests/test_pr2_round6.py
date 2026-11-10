@@ -115,7 +115,9 @@ def test_r6_2_below_min_qty_remainder_is_not_placed(offline, side):
     open_pos(offline, eng, side)
     j, qty = _prime(offline, eng, side)
     q1 = D(j["tp"]["q1"])
-    j.setdefault("tp_got", {})["t1"] = str(q1 - D("0.4"))
+    dust = q1 - D("0.4")
+    j["tp_ledger"] = {"t1": {"cids": [{"cid": j["cid"] + "t0", "executed": str(dust)}], "sum": str(dust)}}
+    j["tp_got"] = {"t1": str(dust)}
     eng.save()
     offline.inner.set_price(DOGE, D(j["entry_px"]))
     before = len([c for c in offline.fx.calls if c[0] == "take_profit"])

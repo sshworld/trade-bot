@@ -157,7 +157,7 @@ def _adopt_state():
 
 def test_r2_adopt_position_writes_tp(offline):
     from live_v6.tools.adopt_position import build
-    j, _notes = build(_adopt_state(), DOGE, "none", "v6", 1_700_000_000_000)
+    j, _notes = build(_adopt_state(), DOGE, "none", "v6", 1_700_000_000_000, opened_qty="1000")
     assert "tp" not in j
     assert j.get("stop_px_entry") == j["stop_px"]
 
@@ -170,7 +170,7 @@ def test_r2_adopted_position_tp_placed_by_monitor(offline):
     offline.inner.open_position_raw(DOGE, 1000, "0.15")
     now = eng.now_ms()
     offline.inner.stop(DOGE, "SELL", D("0.14"), f"v6DOGEa{now // 1000}s0")
-    eng.st["pos"][DOGE] = build(_adopt_state(), DOGE, "none", "v6", now)[0]
+    eng.st["pos"][DOGE] = build(_adopt_state(), DOGE, "none", "v6", now, opened_qty="1000")[0]
     eng.save()
     qty = offline.amt(DOGE)
     offline.fx.inject("open_orders", "unavailable", times=80)

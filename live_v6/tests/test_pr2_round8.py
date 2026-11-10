@@ -396,23 +396,18 @@ def _property_script(offline, side, seed):
     if kind == "restart_mid":
         partial = D(100)
         _end(offline, t1, partial, "CANCELED")
-        _shrink(offline, side, partial)
-        _at_entry(offline, eng)
-        err = tick("restart-book")
-        if err:
-            return err, info
+        _shrink(offline, side, partial + D(50))
         cid = f"{base}x0"
         offline.inner.orders[cid] = {
             "id": "rm", "client_id": cid, "status": "PARTIALLY_FILLED", "executed_qty": D(50),
             "orig_qty": q1, "symbol": DOGE, "reduce_only": True,
         }
-        j = eng.st["pos"][DOGE]
-        book = j.setdefault("tp_ledger", {}).setdefault("t1", {"cids": [], "sum": "0"})
-        book["cids"].append({"cid": cid, "executed": "50"})
-        book["sum"] = str(_ledger_sum(j, "t1") + D(50))
         j["tp_market_once"] = {"t1": {"cid": cid, "before": str(entry), "accepted": True}}
-        saved = _ledger_sum(j, "t1")
-        eng.save()
+        _at_entry(offline, eng)
+        err = tick("restart-book")
+        if err:
+            return err, info
+        saved = _ledger_sum(eng.st["pos"][DOGE], "t1")
         eng = e_engine(offline, eng.clock)
         eng.cfg.trail_atr_k = 0
         _sleeps(eng)

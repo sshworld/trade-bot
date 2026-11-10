@@ -59,7 +59,7 @@ def test_n2_odd_qty_off_tick_adopt_does_not_close_and_rounds(offline):
     state = {"unknown": {DOGE: {"side": 1, "qty": str(qty), "entry_px": str(entry), "stop_px": str(stop),
                                 "amt": str(qty), "risk_frac": "0.01"}},
              "pos": {}, "strategy": {}}
-    j, _notes = build(state, DOGE, "none", "v6", eng.now_ms())
+    j, _notes = build(state, DOGE, "none", "v6", eng.now_ms(), opened_qty=str(qty))
     assert "tp" not in j, "adopt must not hand-roll a TP; reconcile prices it"
     eng.st["pos"][DOGE] = j
     eng.save()
@@ -88,7 +88,7 @@ def test_n2_take_profit_false_places_no_tp(offline):
     offline.inner.stop(DOGE, "SELL", D("0.14"), "v6DOGEadopt-sl")
     state = {"unknown": {DOGE: {"side": 1, "qty": "1000", "entry_px": "0.15", "stop_px": "0.14",
                                 "amt": "1000"}}, "pos": {}, "strategy": {}}
-    eng.st["pos"][DOGE] = build(state, DOGE, "none", "v6", eng.now_ms())[0]
+    eng.st["pos"][DOGE] = build(state, DOGE, "none", "v6", eng.now_ms(), opened_qty="1000")[0]
     eng.save()
     before = len(_tp_posts(offline))
     eng.tick()

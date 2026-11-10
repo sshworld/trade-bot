@@ -99,13 +99,12 @@ def test_t10_1b_cancelled_partial_plus_pending_market_does_not_flatten(offline, 
 
 @pytest.mark.parametrize("side", [1, -1])
 def test_t10_2_missing_entry_qty_does_not_rest_the_runner(offline, side):
-    """Without entry_qty the reserve must not be the current leftover. No t1 of q1 on it."""
+    """Without a proved opened size the bot does not invent one from qty, and does not rest."""
     eng = engine_for(offline, "e")
     open_pos(offline, eng, side)
     j = eng.st["pos"][DOGE]
     qty = offline.amt(DOGE)
     q1 = D(j["tp"]["q1"])
-    opened = j["entry_qty"]
     _prep(offline, eng)
     j.pop("entry_qty", None)
     _end(offline, _t1(offline), D(0), "CANCELED")
@@ -116,7 +115,8 @@ def test_t10_2_missing_entry_qty_does_not_rest_the_runner(offline, side):
     eng.clock.off += 1
     eng.tick()
     j = eng.st["pos"][DOGE]
-    assert j.get("entry_qty") == opened
+    assert j.get("entry_qty") in (None, "")
+    assert eng.meta.get("halted")
     assert j.get("tp1_done") is not True
     assert _live_tp(offline, "t1") == []
     assert offline.amt(DOGE) == qty - side * q1
@@ -165,5 +165,5 @@ def test_adopt_persists_entry_qty():
         "pos": {},
         "strategy": {},
     }
-    j, _notes = build(state, "DOGEUSDT", "none", "v6", 1)
+    j, _notes = build(state, "DOGEUSDT", "none", "v6", 1, opened_qty="10")
     assert j["entry_qty"] == "10"

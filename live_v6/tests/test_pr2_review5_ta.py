@@ -232,7 +232,7 @@ def test_r2_adopted_no_tp_and_4130_on_stop(offline):
     _sleeps(eng)
     offline.inner.open_position_raw(DOGE, 1000, "0.15")
     now = eng.now_ms()
-    j, _ = build(_adopt_state(), DOGE, "none", "v6", now)
+    j, _ = build(_adopt_state(), DOGE, "none", "v6", now, opened_qty="1000")
     j.pop("tp", None)
     eng.st["pos"][DOGE] = j
     eng.save()
