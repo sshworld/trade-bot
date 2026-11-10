@@ -38,14 +38,39 @@ def test_p1_unconfirmed_market_does_not_book_tp1(offline, side):
     assert len(_stop_posts(offline)) == stops0
     assert not [o for o in offline.inner.open_orders(DOGE) if "t3" in str(o["client_id"])]
     assert len([m for m in _alerts(eng) if "보류" in m and DOGE in m]) == 1
+    sent = len(_markets(offline))
     eng.clock.off += PROTECT_AUDIT_S + 1
     eng.tick()
-    q1 = D(j["tp"]["q1"])
+    # The order never landed: change nothing, and do not send a second market.
+    assert len(_markets(offline)) == sent
+    assert eng.st["pos"][DOGE].get("tp1_done") is not True
+    assert offline.amt(DOGE) == qty
+    assert len(_stop_posts(offline)) == stops0
+    assert not [o for o in offline.inner.open_orders(DOGE) if "t3" in str(o["client_id"])]
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_p1_qty_comes_from_the_position_reread(offline, side):
+    """A confirmed fill books the position re-read, not the order's executed math."""
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    j, qty = _prime(offline, eng, side)
+    before = len(_markets(offline))
+    seen = D(9000)
+
+    def reread(fn, symbols, **k):
+        out = {s: dict(r) for s, r in fn(symbols).items()}
+        if DOGE in out and len(_markets(offline)) > before:
+            out[DOGE]["amt"] = side * seen
+        return out
+
+    offline.fx.inject("positions", reread, times=40)
+    eng.tick()
     assert eng.st["pos"][DOGE].get("tp1_done") is True
-    assert offline.amt(DOGE) == qty - side * q1
+    assert D(eng.st["pos"][DOGE]["qty"]) == seen
     runners = [o for o in offline.inner.open_orders(DOGE) if "t3" in str(o["client_id"])]
-    assert len(runners) == 1 and runners[0]["qty"] == abs(offline.amt(DOGE))
-    assert len(_stop_posts(offline)) == stops0 + 1
+    assert len(runners) == 1 and runners[0]["qty"] == seen
+    assert len(_fills(offline)) == 1
 
 
 @pytest.mark.parametrize("side", [1, -1])
@@ -67,14 +92,48 @@ def test_p2_below_min_notional_does_not_recurse(offline, side):
     for o in list(offline.inner.algos.values()):
         if o["symbol"] == DOGE and "TAKE_PROFIT" in (o["type"] or ""):
             offline.inner.algos.pop(o["id"], None)
-    before = len(_tp_posts(offline))
+    before_tp = len(_tp_posts(offline))
+    before_m = len(_markets(offline))
+    stops0 = len(_stop_posts(offline))
     old = sys.getrecursionlimit()
     sys.setrecursionlimit(80)
     try:
         eng._arm_unsplittable(DOGE, j)
     finally:
         sys.setrecursionlimit(old)
-    assert len(_tp_posts(offline)) - before <= 1
+    assert len(_tp_posts(offline)) - before_tp <= 1
+    assert not [o for o in offline.inner.open_orders(DOGE) if "TAKE_PROFIT" in (o["type"] or "")]
+    fills = _fills(offline)
+    assert len(_markets(offline)) == before_m + 1
+    assert len(fills) == 1 and fills[0]["reduce_only"] is True and fills[0]["orig_qty"] == D(1)
+    assert fills[0]["side"] == ("SELL" if side > 0 else "BUY")
+    assert len(_stop_posts(offline)) == stops0
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_p2_dust_slice_markets_the_whole_remainder(offline, side):
+    """A slice under min notional does not split and does not rest another TP."""
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    j, _qty = _prime(offline, eng, side)
+    whole = D(100)
+    p = offline.inner.pos[DOGE]
+    p["amt"] = whole if side > 0 else -whole
+    p["margin"] = whole * p["entry"] / offline.inner.lev[DOGE]
+    j["qty"] = str(whole)
+    j["tp"]["q1"] = "1"
+    eng.save()
+    before_tp = len(_tp_posts(offline))
+    before_m = len(_markets(offline))
+    stops0 = len(_stop_posts(offline))
+    eng.tick()
+    assert len(_tp_posts(offline)) - before_tp <= 1
+    assert not [o for o in offline.inner.open_orders(DOGE) if "TAKE_PROFIT" in (o["type"] or "")]
+    fills = _fills(offline)
+    assert len(_markets(offline)) == before_m + 1
+    assert len(fills) == 1 and fills[0]["orig_qty"] == whole and fills[0]["reduce_only"] is True
+    assert offline.amt(DOGE) == 0
+    assert len(_stop_posts(offline)) == stops0
 
 
 @pytest.mark.parametrize("side", [1, -1])
@@ -109,10 +168,17 @@ def test_p3_unknown_fill_is_not_sold_again(offline, side):
     assert offline.amt(DOGE) == after
     assert offline.amt(DOGE) != 0
     assert len(_fills(offline)) == 1
+    # The read is still the old size, so this is not a confirmed shrink and not a second market.
+    assert eng.st["pos"][DOGE].get("tp1_done") is not True
+    offline.fx.clear()
+    eng.clock.off += PROTECT_AUDIT_S + 1
+    eng.tick()
+    assert offline.amt(DOGE) == after
+    assert len(_fills(offline)) == 1
     assert eng.st["pos"][DOGE].get("tp1_done") is True
+    assert D(eng.st["pos"][DOGE]["qty"]) == abs(after)
     runners = [o for o in offline.inner.open_orders(DOGE) if "t3" in str(o["client_id"])]
     assert len(runners) == 1 and runners[0]["qty"] == abs(after)
-    assert len([m for m in _alerts(eng) if "보류" in m and DOGE in m]) == 1
 
 
 @pytest.mark.parametrize("side", [1, -1])
@@ -152,9 +218,19 @@ def test_p4_last_inside_replaces_even_if_bid_is_through(offline, side):
     assert len(live) == 1
 
 
+def _split_book(offline, bid, ask):
+    def book_split(s):
+        px = offline.inner.price[s]
+        if s != DOGE:
+            return {"bid": px, "ask": px}
+        return {"bid": bid, "ask": ask}
+
+    offline.inner.book = book_split
+
+
 @pytest.mark.parametrize("side", [1, -1])
-def test_p4_mark_runner_ignores_a_through_bid(offline, side):
-    """A MARK_PRICE runner is judged from the mark, not the bid."""
+def test_p4_mark_through_last_inside_does_not_market(offline, side):
+    """A MARK_PRICE runner is still judged from the last trade, never the mark."""
     eng = engine_for(offline, "e")
     open_pos(offline, eng, side)
     j = eng.st["pos"][DOGE]
@@ -162,24 +238,24 @@ def test_p4_mark_runner_ignores_a_through_bid(offline, side):
     offline.inner.stops_fire = False
     j["tp1_done"] = True
     j["be_done"] = True
+    eng.cfg.trail_atr_k = 0
     eng.save()
     runner = eng._runner_px(DOGE, j)
     be = eng._be_target(DOGE, j)
     inside = (be + runner) / 2
     offline.inner.set_price(DOGE, inside)
-    offline.inner.last = {DOGE: runner + side * D("0.01")}
+    offline.inner.last = {DOGE: inside}
+
+    def mark_through(s):
+        if s == DOGE:
+            return runner + side * D("0.01")
+        return offline.inner.price[s]
+
+    offline.inner.mark_price = mark_through
     for o in list(offline.inner.algos.values()):
         if o["symbol"] == DOGE and "TAKE_PROFIT" in (o["type"] or ""):
             offline.inner.algos.pop(o["id"], None)
-    bid = runner + side * D("0.01")
-
-    def book_split(s):
-        px = offline.inner.price[s]
-        if s != DOGE:
-            return {"bid": px, "ask": px}
-        return {"bid": bid, "ask": inside}
-
-    offline.inner.book = book_split
+    _split_book(offline, runner + side * D("0.01"), inside)
 
     def boom(fn, s, sd, trigger, c, qty=None, **k):
         raise WouldTrigger(-2021, "Order would immediately trigger.")
@@ -192,6 +268,66 @@ def test_p4_mark_runner_ignores_a_through_bid(offline, side):
     assert offline.amt(DOGE) == qty
     live = [o for o in offline.inner.open_orders(DOGE) if "t3" in str(o["client_id"])]
     assert len(live) == 1 and live[0]["working_type"] == "MARK_PRICE"
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_p4_last_through_markets_even_when_mark_is_inside(offline, side):
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    j = eng.st["pos"][DOGE]
+    _sleeps(eng)
+    offline.inner.stops_fire = False
+    j["tp1_done"] = True
+    j["be_done"] = True
+    eng.cfg.trail_atr_k = 0
+    eng.save()
+    runner = eng._runner_px(DOGE, j)
+    be = eng._be_target(DOGE, j)
+    inside = (be + runner) / 2
+    offline.inner.set_price(DOGE, inside)
+    offline.inner.last = {DOGE: runner + side * D("0.01")}
+    offline.inner.mark_price = lambda s: inside if s == DOGE else offline.inner.price[s]
+    for o in list(offline.inner.algos.values()):
+        if o["symbol"] == DOGE and "TAKE_PROFIT" in (o["type"] or ""):
+            offline.inner.algos.pop(o["id"], None)
+    _split_book(offline, inside, inside)
+
+    def boom(fn, s, sd, trigger, c, qty=None, **k):
+        raise WouldTrigger(-2021, "Order would immediately trigger.")
+
+    offline.fx.inject("take_profit", boom, times=1)
+    before = len(_markets(offline))
+    qty = offline.amt(DOGE)
+    eng.tick()
+    assert len(_markets(offline)) == before + 1
+    assert len(_fills(offline)) == 1 and _fills(offline)[0]["orig_qty"] == abs(qty)
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_p4_unreadable_last_sends_no_market(offline, side):
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    j = eng.st["pos"][DOGE]
+    _sleeps(eng)
+    offline.inner.stops_fire = False
+    j["tp1_done"] = True
+    j["be_done"] = True
+    eng.cfg.trail_atr_k = 0
+    eng.save()
+    runner = eng._runner_px(DOGE, j)
+    offline.inner.set_price(DOGE, runner + side * D("0.01"))
+    for o in list(offline.inner.algos.values()):
+        if o["symbol"] == DOGE and "TAKE_PROFIT" in (o["type"] or ""):
+            offline.inner.algos.pop(o["id"], None)
+    offline.fx.inject("last_price", "unavailable", times=10)
+    before = len(_markets(offline))
+    qty = offline.amt(DOGE)
+    stops0 = len(_stop_posts(offline))
+    eng.tick()
+    assert len(_markets(offline)) == before
+    assert offline.amt(DOGE) == qty
+    assert len(_stop_posts(offline)) == stops0
+    assert len([m for m in _alerts(eng) if "보류" in m and DOGE in m]) == 1
 
 
 @pytest.mark.parametrize("side", [1, -1])

@@ -433,8 +433,9 @@ def test_tp_would_trigger_market_rejected_waits_a_minute(offline, side):
     assert len(_markets(offline)) == before + 1
     eng.clock.off += PROTECT_AUDIT_S + 1
     eng.tick()
-    assert len(_markets(offline)) == before + 2
+    assert len(_markets(offline)) == before + 1          # one market for this slice, ever
     assert offline.amt(DOGE) == qty
+    assert eng.st["pos"][DOGE].get("tp1_done") is not True
 
 
 @pytest.mark.parametrize("side", [1, -1])
