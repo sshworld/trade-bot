@@ -196,9 +196,10 @@ def test_persistent_tp_reject_backs_off_after_the_first_cycle(offline, side):
     assert len([m for m in _alerts(eng) if "보류" in m and "익절" in m]) <= 1
 
 
-def test_m5_audit_confirm_failure_waits_60s(offline):
+@pytest.mark.parametrize("side", [1, -1])
+def test_m5_audit_confirm_failure_waits_60s(offline, side):
     eng = engine_for(offline, "e")
-    open_pos(offline, eng, 1)
+    open_pos(offline, eng, side)
     _drop_stops(offline)
     _sleeps(eng)
     offline.fx.inject("open_orders", "unavailable", times=20)
@@ -211,9 +212,10 @@ def test_m5_audit_confirm_failure_waits_60s(offline):
     assert not _market_closes(offline)
 
 
-def test_missing_position_row_blocks_a_clean_consistency_pass(offline):
+@pytest.mark.parametrize("side", [1, -1])
+def test_missing_position_row_blocks_a_clean_consistency_pass(offline, side):
     eng = engine_for(offline, "e")
-    open_pos(offline, eng, 1)
+    open_pos(offline, eng, side)
     eng.blocks[MISMATCH] = "seed"
     eng._consistent = 1
 
@@ -229,11 +231,15 @@ def test_missing_position_row_blocks_a_clean_consistency_pass(offline):
     assert eng._consistent == 1
 
 
-def test_tp_levels_exception_does_not_close(offline):
+@pytest.mark.parametrize("side", [1, -1])
+@pytest.mark.parametrize("hold", [False, True])
+def test_tp_levels_exception_does_not_close(offline, side, hold):
     eng = engine_for(offline, "e")
-    open_pos(offline, eng, 1)
+    open_pos(offline, eng, side)
     j = eng.st["pos"][DOGE]
     j.pop("tp", None)
+    if hold:
+        eng._cp_hold.add(DOGE)
     eng.save()
 
     def boom(*a, **k):
