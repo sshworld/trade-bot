@@ -247,38 +247,95 @@ def test_tp_levels_exception_does_not_close(offline):
     assert len([m for m in _alerts(eng) if "보류" in m and DOGE in m]) == 1
 
 
-@pytest.mark.parametrize("side", [1, -1])
-def test_be_through_during_hold_does_not_market_close(offline, side):
-    eng = engine_for(offline, "e")
-    open_pos(offline, eng, side)
+def _arm_be_hold(offline, eng, side):
     j = eng.st["pos"][DOGE]
     old = next(o for o in _stops(offline))
     eng._cp_hold.add(DOGE)
     j["tp1_done"] = True
     eng.save()
+    return j, old
+
+
+def _exit_orders(offline):
+    return [o for o in offline.inner.orders.values() if o["symbol"] == DOGE and o.get("reduce_only")]
+
+
+def _markets(b):
+    return [c for c in b.fx.calls if c[0] == "market"]
+
+
+@pytest.mark.parametrize("side", [1, -1])
+@pytest.mark.parametrize("how", ["mark", "trigger"])
+def test_be_cap_closes_reduce_only_for_the_qty_just_read(offline, side, how):
+    """Mark through BE, or a stop that would fire, closes with one reduceOnly
+    market for the qty just read. It must not open the other side."""
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    j, old = _arm_be_hold(offline, eng, side)
+    qty = offline.amt(DOGE)
     tgt = eng._be_target(DOGE, j)
+    _sleeps(eng)
+    if how == "trigger":
+        offline.inner.stops_fire = False
+        offline.inner.set_price(DOGE, tgt - side * D("0.01"))
+        mk = tgt + side * D("0.002")
+    else:
+        mk = tgt - side * D("0.01")
+    eng._move_stop_be(DOGE, j, qty, offline.inner.open_orders(DOGE), mk)
+    assert offline.amt(DOGE) == 0
+    exits = _exit_orders(offline)
+    assert len(exits) == 1, exits
+    assert exits[0]["reduce_only"] is True
+    assert exits[0]["side"] == ("SELL" if qty > 0 else "BUY")
+    assert exits[0]["orig_qty"] == abs(qty)
+    assert not any(o["id"] == old["id"] for o in _stops(offline))
+
+
+@pytest.mark.parametrize("side", [1, -1])
+def test_be_cap_close_rejected_keeps_stop_and_waits_a_minute(offline, side):
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    j, old = _arm_be_hold(offline, eng, side)
+    qty = offline.amt(DOGE)
+    tgt = eng._be_target(DOGE, j)
+    _sleeps(eng)
+    offline.fx.inject("market", "reject", times=10)
+    before = len(_markets(offline))
+    eng._move_stop_be(DOGE, j, qty, offline.inner.open_orders(DOGE), tgt - side * D("0.01"))
+    assert len(_markets(offline)) == before + 1
+    sent = _markets(offline)[-1][1]
+    assert sent[1] == ("SELL" if qty > 0 else "BUY") and sent[2] == abs(qty)
+    n = len(_markets(offline))
+    assert offline.amt(DOGE) == qty
+    assert any(o["id"] == old["id"] for o in _stops(offline))
+    assert len([m for m in _alerts(eng) if "거절" in m and DOGE in m]) == 1
+    for _ in range(3):
+        eng._move_stop_be(DOGE, eng.st["pos"][DOGE], qty, offline.inner.open_orders(DOGE), tgt - side * D("0.01"))
+    assert len(_markets(offline)) == n
+    assert len([m for m in _alerts(eng) if "거절" in m and DOGE in m]) == 1
+    eng.clock.off += PROTECT_AUDIT_S + 1
+    eng._move_stop_be(DOGE, eng.st["pos"][DOGE], qty, offline.inner.open_orders(DOGE), tgt - side * D("0.01"))
+    assert len(_markets(offline)) == n + 1
+    assert offline.amt(DOGE) == qty
+    assert any(o["id"] == old["id"] for o in _stops(offline))
+
+
+@pytest.mark.parametrize("side", [1, -1])
+@pytest.mark.parametrize("read", ["positions", "open_orders"])
+def test_be_cap_unreadable_does_not_close(offline, side, read):
+    eng = engine_for(offline, "e")
+    open_pos(offline, eng, side)
+    j, old = _arm_be_hold(offline, eng, side)
+    qty = offline.amt(DOGE)
+    tgt = eng._be_target(DOGE, j)
+    _sleeps(eng)
+    offline.fx.inject(read, "unavailable", times=10)
     mk = tgt - side * D("0.01")
-    eng._move_stop_be(DOGE, j, offline.amt(DOGE), offline.inner.open_orders(DOGE), mk)
-    eng._move_stop_be(DOGE, j, offline.amt(DOGE), offline.inner.open_orders(DOGE), mk)
-    assert not _market_closes(offline)
+    before = len(_markets(offline))
+    eng._move_stop_be(DOGE, j, qty, offline.inner.open_orders(DOGE), mk)
+    eng._move_stop_be(DOGE, eng.st["pos"][DOGE], qty, offline.inner.open_orders(DOGE), mk)
+    assert len(_markets(offline)) == before
+    assert offline.amt(DOGE) == qty
     assert any(o["id"] == old["id"] for o in _stops(offline))
-    assert len([m for m in _alerts(eng) if "보류" in m or "유지" in m]) == 1
-
-
-@pytest.mark.parametrize("side", [1, -1])
-def test_be_would_trigger_during_hold_does_not_market_close(offline, side):
-    eng = engine_for(offline, "e")
-    open_pos(offline, eng, side)
-    j = eng.st["pos"][DOGE]
-    old = next(o for o in _stops(offline))
-    eng._cp_hold.add(DOGE)
-    j["tp1_done"] = True
-    eng.save()
-    tgt = eng._be_target(DOGE, j)
-    offline.inner.stops_fire = False
-    offline.inner.set_price(DOGE, tgt - side * D("0.01"))
-    mk = tgt + side * D("0.002")
-    eng._move_stop_be(DOGE, j, offline.amt(DOGE), offline.inner.open_orders(DOGE), mk)
-    assert not _market_closes(offline)
-    assert any(o["id"] == old["id"] for o in _stops(offline))
-    assert len([m for m in _alerts(eng) if "보류" in m or "유지" in m]) == 1
+    notes = [m for m in _alerts(eng) if "조회" in m and "유지" in m and DOGE in m]
+    assert len(notes) == 1, notes
