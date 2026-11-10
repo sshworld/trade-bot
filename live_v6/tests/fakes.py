@@ -118,7 +118,10 @@ class FakeExchange:
         return dict(self.algo_hist[cid]) if cid in self.algo_hist else None
 
     def _algo_end(self, o, status, oid=None, q=Decimal(0), px=Decimal(0)):
-        self.algo_hist[o["client_id"]] = {"status": status, "order_id": oid, "executed_qty": q, "avg_price": px}
+        self.algo_hist[o["client_id"]] = {
+            "status": status, "order_id": oid, "executed_qty": q, "avg_price": px,
+            "id": o.get("id"), "kind": "algo", "client_id": o.get("client_id"),
+        }
 
     def user_trades(self, s, start_ms):
         return [f for f in self.fills if f["symbol"] == s and f["time"] >= start_ms]

@@ -37,6 +37,7 @@ def _hold(offline, eng, side, pop_t1=False):
         _pop_t1(offline)
     eng.cfg.trail_atr_k = 0
     eng._cp_hold.add(DOGE)
+    eng._cp_retry_at[DOGE] = eng.clock() + 10**9
     eng._protect_audit_at = eng.clock()
     eng.save()
     return j, qty

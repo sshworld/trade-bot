@@ -261,7 +261,7 @@ def _split_book(offline, bid, ask):
 
 @pytest.mark.parametrize("side", [1, -1])
 def test_p4_mark_through_last_inside_does_not_market(offline, side):
-    """A MARK_PRICE runner is still judged from the last trade, never the mark."""
+    """A MARK_PRICE runner follows the mark: mark through and last inside is one market."""
     eng = engine_for(offline, "e")
     open_pos(offline, eng, side)
     j = eng.st["pos"][DOGE]
@@ -295,10 +295,8 @@ def test_p4_mark_through_last_inside_does_not_market(offline, side):
     before = len(_markets(offline))
     qty = offline.amt(DOGE)
     eng.tick()
-    assert len(_markets(offline)) == before
-    assert offline.amt(DOGE) == qty
-    live = [o for o in offline.inner.open_orders(DOGE) if "t3" in str(o["client_id"])]
-    assert len(live) == 1 and live[0]["working_type"] == "MARK_PRICE"
+    assert len(_markets(offline)) == before + 1
+    assert len(_fills(offline)) == 1 and _fills(offline)[0]["orig_qty"] == abs(qty)
 
 
 @pytest.mark.parametrize("side", [1, -1])
@@ -328,10 +326,10 @@ def test_p4_last_through_markets_even_when_mark_is_inside(offline, side):
 
     offline.fx.inject("take_profit", boom, times=1)
     before = len(_markets(offline))
-    qty = offline.amt(DOGE)
     eng.tick()
-    assert len(_markets(offline)) == before + 1
-    assert len(_fills(offline)) == 1 and _fills(offline)[0]["orig_qty"] == abs(qty)
+    assert len(_markets(offline)) == before
+    live = [o for o in offline.inner.open_orders(DOGE) if "t3" in str(o["client_id"])]
+    assert len(live) == 1 and live[0]["working_type"] == "MARK_PRICE"
 
 
 @pytest.mark.parametrize("side", [1, -1])
@@ -350,7 +348,7 @@ def test_p4_unreadable_last_sends_no_market(offline, side):
     for o in list(offline.inner.algos.values()):
         if o["symbol"] == DOGE and "TAKE_PROFIT" in (o["type"] or ""):
             offline.inner.algos.pop(o["id"], None)
-    offline.fx.inject("last_price", "unavailable", times=10)
+    offline.fx.inject("mark_price", "unavailable", times=10)
     before = len(_markets(offline))
     qty = offline.amt(DOGE)
     stops0 = len(_stop_posts(offline))

@@ -352,6 +352,7 @@ def _pop_t1(offline):
             if o["symbol"] == DOGE and str(o["client_id"]).endswith("t1")]
     for o in gone:
         offline.inner.algos.pop(o["id"], None)
+        offline.inner.algo_hist.pop(o["client_id"], None)
     return gone
 
 

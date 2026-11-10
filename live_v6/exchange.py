@@ -403,7 +403,9 @@ class BinanceREST:
                 return None
             raise
         oid = str(a.get("actualOrderId") or "")
-        out = {"status": a.get("algoStatus"), "order_id": oid or None, "executed_qty": Decimal(0), "avg_price": Decimal(0)}
+        out = {"status": a.get("algoStatus"), "id": str(a.get("algoId") or "") or None,
+               "order_id": oid or None, "executed_qty": Decimal(0), "avg_price": Decimal(0),
+               "kind": "algo", "client_id": client_id}
         if oid and oid != "0":
             o = _norm_order(self._req("GET", "/fapi/v1/order", {"symbol": symbol, "orderId": oid}, critical=True))
             out.update(executed_qty=o["executed_qty"], avg_price=o["avg_price"], order_status=o["status"])

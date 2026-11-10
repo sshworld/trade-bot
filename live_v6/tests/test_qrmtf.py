@@ -49,7 +49,9 @@ def set_market(b, sym, big, mid, fast, now, px=0.15, n=None):
 
 class Clock:
     def __init__(self):
-        self.t = (time.time() // 60) * 60 + 5.0      # 5 s after a minute boundary
+        # 2026-06-10 12:07:05 UTC. Mid 15m/30m/1h window, so +60s cannot cross
+        # a :15/:30/:45/:00 boundary (:14/:29/:44/:59 were the flake).
+        self.t = 1781093225.0
 
     def __call__(self):
         return self.t
