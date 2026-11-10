@@ -2707,6 +2707,70 @@ class V6Engine:
         self.check_halts(daily=False)   # daily-loss check runs at the end of reconcile
         return "flat", Decimal(0)
 
+    def _verified_close_sl(self, orders, close_side) -> bool:
+        """A closePosition STOP on the closing side. A reduce-only qty stop does not count: Binance cancels it while flat,
+        and it does not track a position that grew after a partial fill."""
+        return any((o.get("type") or "").startswith("STOP") and o.get("close_position") and o.get("side") == close_side
+                   for o in orders)
+
+    def _verified_covering_tp(self, orders, close_side, qty: Decimal) -> bool:
+        return any(o.get("type") == "TAKE_PROFIT_MARKET" and o.get("reduce_only") and not o.get("close_position")
+                   and o.get("side") == close_side and D(o.get("qty") or 0) >= qty for o in orders)
+
+    def _cover_pending_fill(self, sym, amt, row, orders):
+        """Live exchange qty, no journal, unresolved entry intent. Place a closePosition SL and a covering TP
+        from the exchange entry. Leave the intent in place (get_order is still down) and do not send another entry."""
+        it = next((x for x in self.st["intents"].values() if isinstance(x, dict) and x.get("sym") == sym), None)
+        if not it:
+            return
+        side = int(it.get("side") or 1)
+        if (amt > 0) != (side > 0):
+            return
+        entry = D((row or {}).get("entry") or 0)
+        if entry <= 0:
+            entry = D(it.get("limit_px") or it.get("ref") or 0)
+        cs = "SELL" if side > 0 else "BUY"
+        if entry <= 0:
+            it["unprotected"] = it.get("unprotected") or self.clock()
+            self.save()
+            return
+        stop_px = self._stop_at(sym, entry, side, D(it.get("stop_dist") or 0))
+        if not self._verified_close_sl(orders, cs):
+            seq = int(it.get("stop_seq") or 0)
+            it["stop_seq"] = seq + 1
+            self.save()
+            placed = f"{it['cid']}s{seq}"
+            try:
+                self.x("stop", sym, cs, stop_px, placed)
+            except OrderRejected as e:
+                if e.code == -4130:
+                    self._cancel_stops_except(sym, placed)
+                    try:
+                        self.x("stop", sym, cs, stop_px, placed)
+                    except ExchangeError as e2:
+                        log.error("%s pending-fill stop retry: %s", sym, e2)
+                else:
+                    log.error("%s pending-fill stop rejected: %s", sym, e)
+            except ExchangeError as e:
+                log.error("%s pending-fill stop: %s", sym, e)
+        scratch = {"cid": it["cid"], "side": side, "entry_px": str(entry), "qty": str(abs(amt)),
+                   "stop_px": str(stop_px), "stop_dist": str(it.get("stop_dist") or 0)}
+        if self.cfg.take_profit and not self._verified_covering_tp(orders, cs, abs(amt)):
+            if self.cfg.exit_mode == "full_tp_pct":
+                self._arm_full_tp(sym, scratch, abs(amt))
+            else:
+                self._place_tps(sym, scratch)
+        try:
+            now = self.x("open_orders", sym)
+        except ExchangeError:
+            now = orders
+        tp_ok = (not self.cfg.take_profit) or self._verified_covering_tp(now, cs, abs(amt))
+        if self._verified_close_sl(now, cs) and tp_ok:
+            it.pop("unprotected", None)
+        else:
+            it["unprotected"] = it.get("unprotected") or self.clock()
+        self.save()
+
     # ───────────────────────── reconcile (exchange → local) ─────────────────────────
     def reconcile(self):
         if self.st["intents"]:
@@ -2787,7 +2851,10 @@ class V6Engine:
                 continue
             if j is None:
                 if any(it.get("sym") == sym for it in self.st["intents"].values()):
-                    mismatch.append(f"{sym} 진입 결과 확인 중 {amt}")     # our own unresolved entry (pre-arm protects it)
+                    mismatch.append(f"{sym} 진입 결과 확인 중 {amt}")
+                    # The exchange position is the audit, not the journal. A pending intent whose fill
+                    # landed while get_order is down has no journal and no pre-arm left to protect it.
+                    self._cover_pending_fill(sym, amt, pos.get(sym) if isinstance(pos, dict) else {}, orders)
                     continue
                 # TA condition 1 (2026-10-26): an orphan pre-arm (entry definitively rejected, its cancel failed, no intent) is the BOT's own
                 # order protecting nothing. It must never count as protection of a position the bot does not own, and it is cancelled
@@ -3357,4 +3424,5 @@ class V6Engine:
         return (self.started and not self.meta.get("halted") and self.clock() - self._last_ok_reconcile <= 3 * self.cfg.reconcile_s
                 and BAR_STALE not in self.blocks
                 and not any(j.get("unprotected") for j in self.st["pos"].values())
-                and not any(u.get("unprotected") for u in self.st["unknown"].values()))
+                and not any(u.get("unprotected") for u in self.st["unknown"].values())
+                and not any(isinstance(it, dict) and it.get("unprotected") for it in self.st["intents"].values()))

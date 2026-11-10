@@ -152,7 +152,9 @@ is still open. One position or one resting entry per symbol. While that limit re
 engine keeps a Binance countdown cancel (`POST /fapi/v1/countdownCancelAll`, 120s, refreshed about every 30s) so a
 dead process cannot leave the limit up. A reduce-only qty stop is not rested under the limit: the exchange cancels
 those within about a second when there is no position. On any fill the countdown is set to 0 after the SL and TP
-are on the book. A partial fill keeps the remainder of the limit working, places a closePosition SL, and resizes
+are on the book. If the fill lands while the order lookup is down, there is no journal yet and the pending
+intent does not skip protection: reconcile audits the exchange position and places a closePosition SL and a
+covering TP anyway. The intent stays until the lookup succeeds. A partial fill keeps the remainder of the limit working, places a closePosition SL, and resizes
 the reduce-only TP to the live position (`journal["tp"]` stays set while the position exists). On the fill:
 full-qty `TAKE_PROFIT_MARKET` at
 `entry*1.020` (`CONTRACT_PRICE`) and `STOP_MARKET` at `entry*0.9925` (`MARK_PRICE`), both tick-rounded toward entry.

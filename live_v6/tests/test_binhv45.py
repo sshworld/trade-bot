@@ -576,6 +576,57 @@ def test_upgrade_stop_does_not_adopt_a_foreign_close_position(offline):
     assert all(o["client_id"] != "v6ETHa1794310340s0" for o in offline.inner.open_orders(DOGE))
 
 
+def test_market_fill_with_order_lookup_down_still_gets_sl_and_tp(offline):
+    """Market fill lands, the response is lost, get_order stays down: no journal, intent kept,
+    and the live position still receives a closePosition SL and a covering TP. Long only."""
+    from live_v6.exchange import ExchangeUnavailable
+
+    eng = _eng(offline)
+    offline.inner.set_price(DOGE, D("0.151"))
+    sent = {"filled": False}
+
+    def lost(fn, *a, **kw):
+        fn(*a, **kw)
+        sent["filled"] = True
+        raise ExchangeUnavailable("response lost")
+
+    offline.fx.inject("market", lost, times=1)
+    offline.fx.inject("get_order", "unavailable", times=100, match=lambda *a: sent["filled"])
+    n_market = sum(1 for c in offline.fx.calls if c[0] == "market")
+    assert eng.enter(DOGE, D("0.151") * D("0.0075"), eng.now_ms()) is False
+    assert sent["filled"] and offline.amt(DOGE) > 0 and DOGE not in eng.st["pos"] and eng.st["intents"]
+    eng.reconcile()
+    _assert_covered(offline, eng)
+    assert sum(1 for c in offline.fx.calls if c[0] == "market") == n_market + 1
+    eng.reconcile()
+    _assert_covered(offline, eng)
+
+
+def test_limit_fill_with_order_lookup_down_still_gets_sl_and_tp(offline):
+    """BinHV45 limit fills while get_order stays down. The pending intent must not skip SL/TP."""
+    eng = _eng(offline)
+    offline.inner.set_price(DOGE, D("0.151"))
+    assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"))
+    cid = next(iter(eng.st["intents"]))
+    offline.inner.fill_limit(cid)
+    offline.fx.inject("get_order", "unavailable", times=100)
+    eng.reconcile()
+    _assert_covered(offline, eng)
+    assert cid in eng.st["intents"]
+    eng.reconcile()
+    _assert_covered(offline, eng)
+
+
+def _assert_covered(b, eng):
+    assert DOGE not in eng.st["pos"] and eng.st["intents"]
+    amt = abs(b.amt(DOGE))
+    assert amt > 0
+    stops = [o for o in _stops(b) if o["close_position"]]
+    tps = _tps(b)
+    assert len(stops) == 1
+    assert len(tps) == 1 and tps[0]["reduce_only"] and tps[0]["qty"] >= amt
+
+
 def test_prefix_v6_does_not_own_v6t_orders(offline):
     eng = _eng(offline)
     assert eng.cfg.cid_prefix == "v6"
