@@ -142,6 +142,9 @@ class Settings:
     # live_v6/tools/clear_peak_halt.py (service stopped; audit-logged; optional peak reset to the current wallet)
     peak_dd_guard: float | None = None
     peak_dd_init: float = 0.0           # peak floor at first run (live: real max seen, 132.88 USDT wallet 11/02)
+    # user 2026-11-13: > 0 → a peak_dd halt clears itself this long after the trigger, the peak rebased to the wallet then
+    # (same audit entry as tools/clear_peak_halt.py --reset-peak, by "auto"); 0 = team-only clear (old behaviour)
+    peak_dd_release_s: float = 0.0
     max_hold_s: float = 0               # > 0: reduceOnly market close after this long (24 h live)
     # live 2026-10-30 15:07 KST SOLUSDT: set 10x echoed, symbolConfig still 20x right after → entry skipped; re-read
     # symbolConfig up to lev_confirm_reads times (lev_confirm_wait_s apart) while it shows the wrong value
@@ -309,6 +312,18 @@ class V6Engine:
             return
         eq = D(self.meta["equity"])                  # trigger: equity (wallet + uPnL) < peak × guard
         w = D(self.meta.get("wallet") or self.meta["equity"])
+        pd = self.meta.get("peak_dd")
+        rel = self.cfg.peak_dd_release_s
+        if pd and rel and self.now_ms() - int(pd["t_ms"]) >= rel * 1000:   # user 2026-11-13: auto-clear after 24 h
+            ent = {"t_ms": self.now_ms(), "by": f"auto {rel / 3600:g}h", "cleared": pd, "equity": str(eq),
+                   "peak_before": self.meta.get("peak_equity"), "reset_peak": True, "peak_after": str(w)}
+            self.meta.pop("peak_dd")
+            self.meta["peak_equity"] = str(w)
+            self.meta.setdefault("peak_dd_clears", []).append(ent)
+            del self.meta["peak_dd_clears"][:-50]
+            self.save()
+            self.notify(f"✅ 고점 차단 해제 — {rel / 3600:g}시간 경과 · 신규 진입 재개 · 새 고점 {w:.2f} "
+                        f"(차단 시각 {kst(int(pd['t_ms']))})", kind="resume")
         pk = max(D(self.meta.get("peak_equity") or str(self.cfg.peak_dd_init)), w)   # TA 2026-11-04: peak = WALLET only
         if self.meta.get("peak_equity") is None or pk != D(self.meta["peak_equity"]):
             self.meta["peak_equity"] = str(pk)
@@ -318,7 +333,9 @@ class V6Engine:
             self.meta["peak_dd"] = {"t_ms": self.now_ms(), "equity": str(eq), "peak": str(pk), "line": str(line)}
             self.save()
             self.alert(f"고점 대비 -{(1 - D(str(g))) * 100:.0f}% 도달: 자산 {eq:.2f} < {line:.2f} (고점 {pk:.2f} × {g})",
-                       "신규 진입 중단 · 보유 포지션 손절/익절 유지 · 해제는 팀(TA 판단 후 Developer): live_v6/tools/clear_peak_halt.py")
+                       "신규 진입 중단 · 보유 포지션 손절/익절 유지 · "
+                       + (f"{self.cfg.peak_dd_release_s / 3600:g}시간 뒤 자동 해제" if self.cfg.peak_dd_release_s
+                          else "해제는 팀(TA 판단 후 Developer): live_v6/tools/clear_peak_halt.py"))
 
     def skip(self, sym, reason, detail="", signal_px=None, signal_ms=None):
         day = datetime.fromtimestamp(self.now_ms() / 1000, KST).strftime("%Y-%m-%d")
