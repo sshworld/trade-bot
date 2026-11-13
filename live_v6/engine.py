@@ -314,16 +314,24 @@ class V6Engine:
         w = D(self.meta.get("wallet") or self.meta["equity"])
         pd = self.meta.get("peak_dd")
         rel = self.cfg.peak_dd_release_s
-        if pd and rel and self.now_ms() - int(pd["t_ms"]) >= rel * 1000:   # user 2026-11-13: auto-clear after 24 h
-            ent = {"t_ms": self.now_ms(), "by": f"auto {rel / 3600:g}h", "cleared": pd, "equity": str(eq),
-                   "peak_before": self.meta.get("peak_equity"), "reset_peak": True, "peak_after": str(w)}
-            self.meta.pop("peak_dd")
-            self.meta["peak_equity"] = str(w)
-            self.meta.setdefault("peak_dd_clears", []).append(ent)
-            del self.meta["peak_dd_clears"][:-50]
-            self.save()
-            self.notify(f"✅ 고점 차단 해제 — {rel / 3600:g}시간 경과 · 신규 진입 재개 · 새 고점 {w:.2f} "
-                        f"(차단 시각 {kst(int(pd['t_ms']))})", kind="resume")
+        if pd and rel:                                   # user 2026-11-13: auto-clear 24 h after the trigger
+            try:
+                t0 = int(pd["t_ms"])
+            except (KeyError, TypeError, ValueError):    # unreadable trigger time: restart the 24 h, never crash the
+                pd["t_ms"] = t0 = self.now_ms()          # halt checks (the daily −10 % check runs after this one)
+                self.save()
+            # still ≥ 20 % under the wallet (open positions in deep loss): stay blocked until that recovers
+            if self.now_ms() - t0 >= rel * 1000 and eq >= w * D(str(g)):
+                ent = {"t_ms": self.now_ms(), "by": f"auto {rel / 3600:g}h", "cleared": pd, "equity": str(eq),
+                       "peak_before": self.meta.get("peak_equity"), "reset_peak": True, "peak_after": str(w)}
+                self.meta.pop("peak_dd")
+                self.meta["peak_equity"] = str(w)
+                self.meta.setdefault("peak_dd_clears", []).append(ent)
+                del self.meta["peak_dd_clears"][:-50]
+                self.save()
+                go = "신규 진입 재개" if self.entries_allowed() else "다른 중단이 남아 있어 진입은 아직 막힘"
+                self.notify(f"✅ 고점 차단 해제 — {rel / 3600:g}시간 경과 · 새 고점 {w:.2f} · {go} "
+                            f"(차단 시각 {kst(t0)})", kind="resume")
         pk = max(D(self.meta.get("peak_equity") or str(self.cfg.peak_dd_init)), w)   # TA 2026-11-04: peak = WALLET only
         if self.meta.get("peak_equity") is None or pk != D(self.meta["peak_equity"]):
             self.meta["peak_equity"] = str(pk)

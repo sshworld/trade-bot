@@ -469,3 +469,48 @@ def test_live_qrmtf_releases_after_24h_default_off():
     from live_v6.engine import Settings
     assert live_settings("qrmtf").peak_dd_release_s == 24 * 3600
     assert Settings().peak_dd_release_s == 0
+
+
+def test_peak_dd_not_released_while_equity_still_20pct_under_wallet(offline, tmp_path):
+    # open positions in deep loss at the 24 h mark: no release (no 재개 + 🚨 pair), released once equity recovers
+    t0 = 1_800_000_000.0
+    eng = _released_engine(offline, tmp_path, t0)
+    n = len(eng.tg.sent)
+    eng.clock = lambda: t0 + 24 * 3600
+    eng.meta["equity"] = "110"                          # wallet 150, equity < 0.80 × 150
+    eng._peak_guard()
+    assert eng.meta.get("peak_dd") and D(eng.meta["peak_equity"]) == D("200")
+    assert not [m for m in eng.tg.sent[n:] if "고점" in m]
+    eng.meta["equity"] = "150"
+    eng._peak_guard()
+    assert not eng.meta.get("peak_dd") and D(eng.meta["peak_equity"]) == D("150")
+
+
+def test_unreadable_trigger_time_restarts_the_24h_and_daily_check_still_runs(offline, tmp_path):
+    t0 = 1_800_000_000.0
+    for bad in (None, "x"):
+        eng = _released_engine(offline, tmp_path, t0)
+        eng.meta["peak_dd"]["t_ms"] = bad
+        called = []
+        eng.check_daily_halt = lambda: called.append(1)
+        eng.check_halts()
+        assert called and eng.meta["peak_dd"]["t_ms"] == int(t0 * 1000) and eng.meta.get("peak_dd")
+        eng.clock = lambda: t0 + 24 * 3600
+        eng._peak_guard()
+        assert not eng.meta.get("peak_dd")
+        offline.inner.wallet = D("200")
+    eng = _released_engine(offline, tmp_path, t0)
+    del eng.meta["peak_dd"]["t_ms"]
+    eng._peak_guard()
+    assert eng.meta["peak_dd"]["t_ms"] == int(t0 * 1000)
+
+
+def test_release_notice_says_entries_still_blocked_when_another_halt_is_on(offline, tmp_path):
+    t0 = 1_800_000_000.0
+    eng = _released_engine(offline, tmp_path, t0)
+    eng.meta["halted"] = "daily_loss test"
+    n = len(eng.tg.sent)
+    eng.clock = lambda: t0 + 24 * 3600
+    eng._peak_guard()
+    (m,) = [x for x in eng.tg.sent[n:] if "고점 차단 해제" in x]
+    assert "아직 막힘" in m and "신규 진입 재개" not in m and not eng.entries_allowed()
