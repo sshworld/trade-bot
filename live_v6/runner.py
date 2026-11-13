@@ -67,7 +67,8 @@ def live_settings(name: str, **kw) -> Settings:
                        max_hold_s=24 * 3600, bar_delay_s=3,
                        peak_dd_guard=0.80, peak_dd_init=132.88,   # TA 2026-11-03: BE entry ± 0.15 %, peak-DD entry guard
                        peak_dd_release_s=24 * 3600,   # user 2026-11-13: peak-DD halt clears itself after 24 h
-                       halt_fraction=None, daily_loss_halt=0.10, startup_leverage=10,   # user 2026-10-30: -25 % total halt removed → daily -10 %, 24 h
+                       halt_fraction=None, daily_loss_halt=0.10, startup_leverage=10,
+                       daily_halt_s=0, daily_day_offset_s=9 * 3600, daily_halt_flatten=False,   # user 2026-11-13: KST day, -10 % → no new entries till 00:00 KST   # user 2026-10-30: -25 % total halt removed → daily -10 %, 24 h
                        bar_stale_s=180.0), **kw)   # bar_stale 180 s: 1m cadence, 3 missed minutes → block new entries
     return Settings(**kw)
 

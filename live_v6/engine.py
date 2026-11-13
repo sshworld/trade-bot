@@ -100,7 +100,10 @@ class Settings:
     halt_fraction: float | None = 0.75  # §8e-2 / §8c L3(a): flatten all + halt when strategy equity ≤ halt_fraction × C0 (None = off)
     daily_loss_halt: float | None = None  # qrmtf (user 2026-10-30): equity (incl. unrealised, transfers excluded) ≤ (1 − x) ×
                                           # equity at 00:00 UTC → flatten all + cancel orders + no new entries for daily_halt_s
-    daily_halt_s: float = 24 * 3600.0     # daily-loss halt length from the trigger time, then auto-resume (persisted)
+    daily_halt_s: float = 24 * 3600.0     # daily-loss halt length from the trigger time, then auto-resume (persisted);
+                                          # 0 = until the next day start (user 2026-11-13)
+    daily_day_offset_s: int = 0           # day start = 00:00 UTC + this offset back (9 h → 00:00 KST, user 2026-11-13)
+    daily_halt_flatten: bool = True       # False: the daily halt only blocks NEW entries, open positions keep SL / TP
     pf_review: float = 0.8
     pf_review_after: int = 30
     ledger_tol_pct: float = 0.5
@@ -2590,6 +2593,13 @@ class V6Engine:
         adj = D(self.meta["equity"]) - (D(self.meta.get("net_transfers", "0")) - D(self.meta.get("dl_tr", "0")))
         return adj, D(b) * (1 - D(str(self.cfg.daily_loss_halt)))
 
+    def _day_start_ms(self, now) -> int:
+        off = int(self.cfg.daily_day_offset_s) * 1000
+        return (now + off) // 86_400_000 * 86_400_000 - off
+
+    def _day_label(self) -> str:
+        return "00:00 KST" if self.cfg.daily_day_offset_s == 9 * 3600 else "00:00 UTC"
+
     def check_daily_halt(self):
         # daily-loss halt (user 2026-10-30): equity ≤ (1 − daily_loss_halt) × equity at 00:00 UTC → close all, 24 h no entries
         if not self.cfg.daily_loss_halt or self.meta.get("equity") is None:
@@ -2601,14 +2611,17 @@ class V6Engine:
             if str(self.meta.get("halted") or "").startswith("daily_loss"):
                 self.meta.pop("halted")
             self.save()
-            self.notify(f"✅ 일일 손실 중단 해제 — 24시간 경과 · 신규 진입 재개 (중단 시각 {kst(int(dh['trigger_ms']))})",
+            why = "24시간 경과" if self.cfg.daily_halt_s else f"새 날 {self._day_label()}"
+            self.notify(f"✅ 일일 손실 중단 해제 — {why} · 신규 진입 재개 (중단 시각 {kst(int(dh['trigger_ms']))})",
                         kind="resume")
-        day = datetime.fromtimestamp(now / 1000, timezone.utc).strftime("%Y-%m-%d")
-        if self.meta.get("dl_day") != day:               # 00:00 UTC (09:00 KST): new baseline = equity now
+        d0 = self._day_start_ms(now)
+        day = datetime.fromtimestamp((d0 + int(self.cfg.daily_day_offset_s) * 1000) / 1000, timezone.utc).strftime("%Y-%m-%d")
+        if self.cfg.daily_day_offset_s:
+            day += f"+{int(self.cfg.daily_day_offset_s) // 3600}h"   # a UTC-day key from an older build ≠ this → rebase once
+        if self.meta.get("dl_day") != day:               # day start (00:00 UTC, or 00:00 KST): new baseline = equity now
             base = D(self.meta["equity"])
             if self.meta.get("dl_day") is None:          # first start mid-day: back out today's realised income (one
                 try:                                     # income read; uPnL of positions open at 00:00 is not known)
-                    d0 = int(datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
                     base -= sum((r["amount"] for r in self.x("income", None, None, d0) if r["type"] != "TRANSFER"), D(0))
                 except ExchangeError as e:
                     log.warning("daily halt: income read failed, baseline = equity now: %s", e)
@@ -2630,8 +2643,8 @@ class V6Engine:
 
     def _daily_halt_trigger(self, now, adj, line):
         base, pct = D(self.meta["dl_base"]), int(round(self.cfg.daily_loss_halt * 100))
-        until = now + int(self.cfg.daily_halt_s * 1000)
-        reason = f"daily_loss: 자산 {adj:.2f} ≤ {line:.2f} (00:00 UTC {base:.2f} −{pct}%)"
+        until = now + int(self.cfg.daily_halt_s * 1000) if self.cfg.daily_halt_s else self._day_start_ms(now) + 86_400_000
+        reason = f"daily_loss: 자산 {adj:.2f} ≤ {line:.2f} ({self._day_label()} {base:.2f} −{pct}%)"
         upnl, marks = {}, dict(self.marks)
         if self.st["pos"] and not marks:
             try:
@@ -2650,14 +2663,18 @@ class V6Engine:
                                      "trigger_time_kst": kst(now), "resume_time_kst": kst(until), "day_start_equity": str(base),
                                      "equity_at_trigger": str(adj), "line": str(line),
                                      "positions": sorted(self.st["pos"]), "code_commit": self.events.commit})
-        for sym in list(self.st["pos"]):                 # state-file positions only (TA R4: unknown ones keep their stop)
-            self.close(sym, "daily_loss_halt")           # reduceOnly MARKET; _after_flat cancels the bot orders → 0 residual
-        self.alert(f"일일 손실 −{pct}% — 전 포지션 청산 · 24시간 신규 진입 중단",
+        if self.cfg.daily_halt_flatten:
+            for sym in list(self.st["pos"]):             # state-file positions only (TA R4: unknown ones keep their stop)
+                self.close(sym, "daily_loss_halt")       # reduceOnly MARKET; _after_flat cancels the bot orders → 0 residual
+        what = "전 포지션 청산" if self.cfg.daily_halt_flatten else "보유 포지션 손절/익절 유지"
+        till = "24시간" if self.cfg.daily_halt_s == 24 * 3600 else ("다음 " + self._day_label() + "까지" if not self.cfg.daily_halt_s
+                                                                  else f"{self.cfg.daily_halt_s / 3600:g}시간")
+        self.alert(f"일일 손실 −{pct}% — {what} · {till} 신규 진입 중단",
                    f"자산 {adj:.2f} ≤ {line:.2f} (오늘 시작 {base:.2f}) · 재개 {kst(until)}\n" + self._daily_halt_lines(now, upnl))
 
     def _daily_halt_lines(self, now, upnl) -> str:
         # one line per trade of the UTC day (incl. the ones just closed) + per position still open: coin, side, PnL, entry scores
-        d0 = now // 86_400_000 * 86_400_000
+        d0 = self._day_start_ms(now)
         fn = getattr(self.strategy, "entry_scores", None)
         def tside(t):    # trade recs carry no side (fixed schema): gross = side × (exit − entry) × qty
             mv = D(t["exit_px"]) - D(t["entry_px"])
