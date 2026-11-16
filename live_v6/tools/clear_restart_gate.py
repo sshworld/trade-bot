@@ -1,8 +1,9 @@
 """Reset the BinHV45 restart-gate anchor and clear a gate halt. Operator tool, not the user.
 
 The engine sets meta.restart_gate_anchor once, on the first binhv45 start, and never moves it.
-A halt_on_negative halt (meta.restart_gate) stays across process restarts until this tool runs.
-`python -m live_v6 resume` does not clear it.
+A halt_on_negative halt (meta.restart_gate, after 30 trades) and the -5% hard stop (meta.loss_halt)
+stay across process restarts until this tool runs. A quantity-mismatch latch (meta.qty_guard) is cleared
+here too. `python -m live_v6 resume` does not clear any of them.
 
   sudo systemctl stop live_v6-live
   sudo python3 /opt/tradebot/app/current/live_v6/tools/clear_restart_gate.py --by "Developer (TA ok <date>)"
@@ -36,10 +37,13 @@ def unit_active(unit):
 
 def clear(st, by, now_ms):
     m = st.setdefault("meta", {})
-    if not m.get("restart_gate_anchor") and not m.get("restart_gate"):
+    if not m.get("restart_gate_anchor") and not m.get("restart_gate") and not m.get("loss_halt") and not m.get("qty_guard"):
         return None
     ent = {"t_ms": now_ms, "by": by, "sudo_user": os.environ.get("SUDO_USER") or getpass.getuser(),
-           "anchor_before": m.get("restart_gate_anchor"), "halt": m.pop("restart_gate", None)}
+           "anchor_before": m.get("restart_gate_anchor"), "halt": m.pop("restart_gate", None),
+           "loss_halt": m.pop("loss_halt", None), "qty_guard": m.pop("qty_guard", None)}
+    m.pop("loss_halt_alerted", None)
+    m.pop("qty_guard_alerted", None)
     m["restart_gate_anchor"] = {"t_ms": now_ms, "strategy": "binhv45", "reset_by": by}
     ent["anchor_after"] = m["restart_gate_anchor"]
     m.setdefault("restart_gate_clears", []).append(ent)

@@ -353,18 +353,26 @@ def test_lock30_alerts_once_and_stays_at_3x(offline):
     assert len([m for m in eng.tg.sent if "30거래" in m and "3배" in m]) == 1
 
 
+def _losing(anc, n, net="-0.01"):
+    return [{"net": net, "fees": "0.01", "closed_ms": anc + i, "strategy": "binhv45"} for i in range(1, n + 1)]
+
+
 def test_halt_on_negative_blocks_new_entries(offline):
+    """The locked gate waits for 30 binhv45 trades. 29 losers do not block; the 30th negative net does.
+    That sum is far above -5% of the start wallet, so the hard stop stays quiet."""
     eng = _eng(offline, restart_gate_mode="halt_on_negative")
     anc = eng.meta["restart_gate_anchor"]["t_ms"]
-    eng.meta["trades"] = [{"net": "-0.01", "fees": "0.01", "closed_ms": anc + 1, "strategy": "binhv45"}]
+    eng.meta["trades"] = _losing(anc, 29)
+    assert eng._restart_gate_block() is False and "restart_gate" not in eng.blocks and "loss_halt" not in eng.blocks
+    eng.meta["trades"] = _losing(anc, 30)
     offline.inner.set_price(DOGE, D("0.151"))
     assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15")) is False
-    assert not eng.st["intents"] and "restart_gate" in eng.blocks
+    assert not eng.st["intents"] and "restart_gate" in eng.blocks and "loss_halt" not in eng.blocks
 
 
 def test_live_default_halts_on_negative_net_since_restart(offline):
     """Default gate. Losses already in the journal at process start do not count.
-    A loss closed after start halts new entries once; the open position keeps its SL and TP."""
+    The open position keeps its SL and TP when the 30-trade check later blocks a new entry."""
     assert live_settings("binhv45").restart_gate_mode == "halt_on_negative"
     prior = _eng(offline)
     prior.meta["trades"] = [{"net": "-50", "fees": "1", "closed_ms": 1}]
@@ -379,7 +387,10 @@ def test_live_default_halts_on_negative_net_since_restart(offline):
     sl = [o["id"] for o in offline.inner.open_orders(DOGE) if o["type"] == "STOP_MARKET"]
     tp = [o["id"] for o in offline.inner.open_orders(DOGE) if o["type"] == "TAKE_PROFIT_MARKET"]
     assert sl and tp
-    restarted.meta["trades"] = list(restarted.meta["trades"]) + [{"net": "-0.40", "fees": "0.05", "closed_ms": restarted.now_ms()}]
+    anc = restarted.meta["restart_gate_anchor"]["t_ms"]
+    restarted.meta["trades"] = list(restarted.meta["trades"]) + _losing(anc, 29)
+    assert restarted._restart_gate_block() is False
+    restarted.meta["trades"].append({"net": "-0.01", "fees": "0.01", "closed_ms": restarted.now_ms(), "strategy": "binhv45"})
     offline.inner.set_price("SOLUSDT", D("150.5"))
     assert restarted.enter("SOLUSDT", D("150") * D("0.0075"), restarted.now_ms() + 1000, limit_px=D("150")) is False
     assert "restart_gate" in restarted.blocks and "SOLUSDT" not in restarted.st["intents"]
@@ -394,8 +405,7 @@ def test_live_default_halts_on_negative_net_since_restart(offline):
 def test_restart_after_a_losing_trade_stays_halted(offline):
     eng = _eng(offline)
     anc = eng.meta["restart_gate_anchor"]["t_ms"]
-    eng.meta.setdefault("trades", []).append(
-        {"net": "-1.5", "fees": "0.2", "closed_ms": anc + 5, "strategy": "binhv45"})
+    eng.meta.setdefault("trades", []).extend(_losing(anc, 30))
     offline.inner.set_price(DOGE, D("0.151"))
     assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15")) is False
     assert eng.meta.get("restart_gate")
@@ -433,8 +443,7 @@ def test_operator_tool_resets_the_anchor_and_clears_the_halt(offline):
     from live_v6.tools.clear_restart_gate import clear
     eng = _eng(offline)
     anc = eng.meta["restart_gate_anchor"]["t_ms"]
-    eng.meta.setdefault("trades", []).append(
-        {"net": "-2", "fees": "0.1", "closed_ms": anc + 5, "strategy": "binhv45"})
+    eng.meta.setdefault("trades", []).extend(_losing(anc, 30))
     offline.inner.set_price(DOGE, D("0.151"))
     assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15")) is False
     ent = clear(eng.st, "ops", anc + 10_000)
@@ -474,8 +483,9 @@ def test_qrmtf_and_both_exit_modes_stay_selectable():
     assert q.exit_mode == "full_tp_pct" and q.tp_pct == 0.002 and q.enable_short and q.sizing.max_leverage == 10
     assert live_settings("qrmtf", exit_mode="r").exit_mode == "r"
     assert h.exit_mode == "full_tp_pct" and h.tp_pct == 0.020 and h.sl_pct == 0.0075
-    assert h.restart_gate_mode == "halt_on_negative" and h.restart_gate_n == 30
+    assert h.restart_gate_mode == "halt_on_negative" and h.restart_gate_n == 30 and h.loss_halt_pct == 0.05
     assert live_settings("binhv45", restart_gate_mode="lock30").restart_gate_mode == "lock30"
+    assert live_settings("binhv45", loss_halt_pct=0).loss_halt_pct == 0
     assert h.enable_short is False and h.sizing.risk_pct == 1.0 and h.sizing.max_leverage == 3
     assert h.startup_leverage == 3 and h.daily_loss_halt == 0.10 and h.max_hold_s == 24 * 3600
     assert h.symbols == ("BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT")
@@ -750,6 +760,154 @@ def test_prefix_v6_does_not_own_v6t_orders(offline):
                                 "working_type": "MARK_PRICE"}
     eng.reconcile()
     assert any(o["client_id"] == "v6tDOGE1700000000s0" for o in offline.inner.open_orders(DOGE))
+
+
+def _loss_alerts(eng):
+    return [m for m in eng.tg.sent if "누적 손실" in m]
+
+
+def test_loss_halt_at_5pct_on_trade_5_blocks_and_survives_restart(offline):
+    """-5% of the wallet recorded at strategy start halts on trade 5, before the 30-trade gate.
+    The open position keeps its exchange SL and TP. Restart stays halted and does not alert again."""
+    eng, _j = _filled(offline)
+    sl = [o["id"] for o in _stops(offline)]
+    tp = [o["id"] for o in _tps(offline)]
+    anc = eng.meta["restart_gate_anchor"]["t_ms"]
+    line = D(eng.meta["start_wallet"]) * D("0.05")
+    eng.meta["trades"] = [{"net": "0", "fees": "0", "closed_ms": anc + i, "strategy": "binhv45"} for i in range(1, 5)]
+    eng.meta["trades"].append({"net": str(-line), "fees": "0.01", "closed_ms": anc + 5, "strategy": "binhv45"})
+    offline.inner.set_price("SOLUSDT", D("150.5"))
+    assert eng.enter("SOLUSDT", D("150") * D("0.0075"), eng.now_ms(), limit_px=D("150")) is False
+    assert "loss_halt" in eng.blocks and "restart_gate" not in eng.blocks
+    assert eng.meta["loss_halt"]["n"] == 5
+    assert [o["id"] for o in _stops(offline)] == sl and [o["id"] for o in _tps(offline)] == tp
+    assert len(_loss_alerts(eng)) == 1
+    assert eng.enter("SOLUSDT", D("150") * D("0.0075"), eng.now_ms() + 1000, limit_px=D("149")) is False
+    assert len(_loss_alerts(eng)) == 1
+    eng.save()
+    eng2 = _eng(offline)
+    assert eng2.meta.get("loss_halt") and eng2.meta.get("loss_halt_alerted")
+    offline.inner.set_price("SOLUSDT", D("150.5"))
+    assert eng2.enter("SOLUSDT", D("150") * D("0.0075"), eng2.now_ms(), limit_px=D("150")) is False
+    assert "loss_halt" in eng2.blocks and not _loss_alerts(eng2)
+    eng2.resume()
+    assert eng2.meta.get("loss_halt")
+    assert eng2.enter("SOLUSDT", D("150") * D("0.0075"), eng2.now_ms() + 1000, limit_px=D("149")) is False
+    assert not _loss_alerts(eng2)
+
+
+def test_loss_halt_at_4_9pct_does_not_block(offline):
+    eng = _eng(offline)
+    anc = eng.meta["restart_gate_anchor"]["t_ms"]
+    almost = D(eng.meta["start_wallet"]) * D("0.049")
+    eng.meta["trades"] = [{"net": "0", "fees": "0", "closed_ms": anc + i, "strategy": "binhv45"} for i in range(1, 5)]
+    eng.meta["trades"].append({"net": str(-almost), "fees": "0.01", "closed_ms": anc + 5, "strategy": "binhv45"})
+    offline.inner.set_price(DOGE, D("0.151"))
+    assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"))
+    assert "loss_halt" not in eng.blocks and "restart_gate" not in eng.blocks
+
+
+def test_loss_halt_explicit_zero_disables_it(offline):
+    eng = _eng(offline, loss_halt_pct=0)
+    anc = eng.meta["restart_gate_anchor"]["t_ms"]
+    line = D(eng.meta["start_wallet"]) * D("0.05")
+    eng.meta["trades"] = [{"net": str(-line), "fees": "0.01", "closed_ms": anc + 1, "strategy": "binhv45"}]
+    offline.inner.set_price(DOGE, D("0.151"))
+    assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"))
+    assert "loss_halt" not in eng.blocks
+
+
+def _qty_alerts(eng):
+    return [m for m in eng.tg.sent if "수량 불일치" in m]
+
+
+def test_manual_partial_close_after_tp1_halts_once(offline):
+    from .test_qrmtf import _tp1_then_be, legacy_engine, open_pos
+    eng = legacy_engine(offline)
+    open_pos(offline, eng)
+    j = _tp1_then_be(offline, eng, 1)
+    qty = D(j["qty"])
+    sl = [o["id"] for o in _stops(offline)]
+    cut = (qty / 2).quantize(D("1"))
+    assert cut > 0 and cut < qty and sl
+    offline.inner._fill(DOGE, -cut, D(j["entry_px"]), "phone-partial")
+    before = len(eng.meta.get("trades") or [])
+    for _ in range(6):
+        eng.reconcile()
+    assert DOGE in eng.st["pos"] and D(eng.st["pos"][DOGE]["qty"]) == qty
+    assert len(eng.meta.get("trades") or []) == before
+    assert "qty_guard" in eng.blocks and len(_qty_alerts(eng)) == 1
+    assert [o["id"] for o in _stops(offline)] == sl
+    offline.inner.set_price("SOLUSDT", D("150.5"))
+    assert eng.enter("SOLUSDT", D("150") * D("0.008"), eng.now_ms(), limit_px=D("150")) is False
+
+
+def test_manual_full_close_halts_once_and_books_nothing(offline):
+    eng, j = _filled(offline)
+    qty = offline.amt(DOGE)
+    before = len(eng.meta.get("trades") or [])
+    offline.inner._fill(DOGE, -qty, D(j["entry_px"]), "phone-full")
+    for _ in range(6):
+        eng.reconcile()
+    assert DOGE in eng.st["pos"]
+    assert len(eng.meta.get("trades") or []) == before
+    assert "qty_guard" in eng.blocks and len(_qty_alerts(eng)) == 1
+    offline.inner.set_price("SOLUSDT", D("150.5"))
+    assert eng.enter("SOLUSDT", D("150") * D("0.0075"), eng.now_ms(), limit_px=D("150")) is False
+
+
+def test_manual_extra_open_halts_once_and_keeps_the_stop(offline):
+    eng, j = _filled(offline)
+    qty = D(j["qty"])
+    sl = [o["id"] for o in _stops(offline) if o["close_position"]]
+    offline.inner._fill(DOGE, qty, D(j["entry_px"]), "phone-add", add=True)
+    before = len(eng.meta.get("trades") or [])
+    for _ in range(6):
+        eng.reconcile()
+    assert D(eng.st["pos"][DOGE]["qty"]) == qty and offline.amt(DOGE) == qty * 2
+    assert len(eng.meta.get("trades") or []) == before
+    assert "qty_guard" in eng.blocks and len(_qty_alerts(eng)) == 1
+    assert any(o["id"] == sl[0] and o["close_position"] for o in _stops(offline))
+    offline.inner.set_price("SOLUSDT", D("150.5"))
+    assert eng.enter("SOLUSDT", D("150") * D("0.0075"), eng.now_ms(), limit_px=D("150")) is False
+
+
+def test_ensure_stop_keeps_a_foreign_close_position_tp_and_alerts_once(offline):
+    eng, j = _filled(offline)
+    for o in _stops(offline):
+        offline.inner.cancel(DOGE, o)
+    offline.inner.stop(DOGE, "SELL", D("0.10"), "v6ETHa1s0")
+    offline.inner.algos["cptp"] = {
+        "kind": "algo", "id": "cptp", "client_id": "v6ETHa1closep-tp", "symbol": DOGE,
+        "type": "TAKE_PROFIT_MARKET", "side": "SELL", "stop_price": D("1"),
+        "close_position": True, "reduce_only": True, "qty": D(0), "working_type": "CONTRACT_PRICE",
+    }
+    eng.reconcile()
+    ids = {o["client_id"] for o in offline.inner.open_orders(DOGE)}
+    assert "v6ETHa1closep-tp" in ids and "v6ETHa1s0" not in ids
+    ours = [o for o in _stops(offline) if o["close_position"] and str(o["client_id"]).startswith(j["cid"] + "s")]
+    assert len(ours) == 1
+    alerts = [m for m in eng.tg.sent if "다른 전량 손절 취소" in m]
+    assert len(alerts) == 1
+    eng.reconcile()
+    assert len([m for m in eng.tg.sent if "다른 전량 손절 취소" in m]) == 1
+
+
+def test_second_reconcile_keeps_an_equivalent_own_stop(offline):
+    eng = _eng(offline)
+    offline.inner.set_price(DOGE, D("0.151"))
+    assert eng.enter(DOGE, D("0.15") * D("0.0075"), eng.now_ms(), limit_px=D("0.15"))
+    cid = next(iter(eng.st["intents"]))
+    offline.inner.fill_limit(cid)
+    offline.fx.inject("get_order", "unavailable", times=40)
+    eng.reconcile()
+    st = [o for o in _stops(offline) if o["close_position"]]
+    assert len(st) == 1
+    kept = (st[0]["id"], st[0]["client_id"], st[0]["stop_price"])
+    eng.reconcile()
+    st2 = [o for o in _stops(offline) if o["close_position"]]
+    assert len(st2) == 1
+    assert (st2[0]["id"], st2[0]["client_id"], st2[0]["stop_price"]) == kept
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────

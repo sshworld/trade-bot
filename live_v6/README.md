@@ -155,19 +155,28 @@ those within about a second when there is no position. On a fill the countdown i
 stop. If the fill lands while the order lookup is down, there is no journal yet and the pending
 intent does not skip protection: reconcile audits the exchange position and places a closePosition SL and a
 covering TP anyway. A foreign closePosition stop is
-cancelled (one alert) and replaced with this entry's `{cid}sN` stop. `-4130` is a second closePosition stop,
+cancelled (one alert) and replaced with this entry's `{cid}sN` stop. A closePosition take-profit is left in place.
+An own closePosition stop already at the intended price and side is kept, not cancel-and-replaced. `-4130` is a second closePosition stop,
 not a closePosition take-profit: the engine cancels the other stop and retries, and does not market-close
 while any closePosition stop is still on the symbol. The intent stays until the lookup succeeds. A partial fill keeps the remainder of the limit working, places a closePosition SL, and resizes
 the reduce-only TP to the live position (`journal["tp"]` stays set while the position exists). On the fill:
 full-qty `TAKE_PROFIT_MARKET` at
 `entry*1.020` (`CONTRACT_PRICE`) and `STOP_MARKET` at `entry*0.9925` (`MARK_PRICE`), both tick-rounded toward entry.
 Risk 1% of equity at that 0.75% stop (notional ≈ 1.333× equity), leverage fixed at 3x and never raised. `restart_gate_mode`
-`halt_on_negative` (default) blocks new entries once the net after fees of binhv45 trades closed since
-`meta.restart_gate_anchor` (set on the first binhv45 start, kept across restarts) is negative. One alert.
-The halt stays, including after a restart, until `live_v6/tools/clear_restart_gate.py` moves the anchor forward.
-The open position keeps its SL and TP. qrmtf trades, and anything closed before the anchor, are not counted.
-`lock30` stays selectable: after 30 binhv45 trades since the anchor, if their net is negative, one alert and stay at 3x. Daily −10% halt and the peak-drawdown latch are unchanged
-(`clear_peak_halt.py` is still the only clear). Rollback to the previous entry: `LIVE_V6_STRATEGY=qrmtf`.
+`halt_on_negative` (default) blocks new entries only after the first 30 binhv45 trades since
+`meta.restart_gate_anchor` (set on the first binhv45 start, kept across restarts) when their net after fees is negative.
+It does not block on the first losing trade. One alert. The halt stays, including after a restart, until
+`live_v6/tools/clear_restart_gate.py` moves the anchor forward.
+Separately, `loss_halt_pct=0.05` (default on; `0` or `None` turns it off) blocks new entries as soon as the net after
+fees of binhv45 trades reaches −5% of `meta.start_wallet` (the wallet recorded at strategy start), at any trade count,
+including before 30. One alert. `meta.loss_halt` stays across restarts until the same clear tool. The open position
+keeps its exchange SL and TP and closes normally. The daily −10% halt is unchanged.
+A fill whose quantity the journal cannot reconcile (a manual partial close, a manual full close, or a manual extra
+open) latches `meta.qty_guard`: new entries stop, one alert, nothing unreconcilable is booked, and any remaining
+position keeps or receives an exchange stop. The same clear tool releases it. qrmtf trades, and anything closed
+before the anchor, are not counted.
+`lock30` stays selectable: after 30 binhv45 trades since the anchor, if their net is negative, one alert and stay at 3x. The peak-drawdown latch is unchanged
+(`clear_peak_halt.py` is still the only clear for that latch). Rollback to the previous entry: `LIVE_V6_STRATEGY=qrmtf`.
 
 **Live exit (TA lock, qrmtf `exit_mode="full_tp_pct"`, `tp_pct=0.002`):** one reduce-only TAKE_PROFIT_MARKET for the full
 quantity at entry×(1±0.002), workingType CONTRACT_PRICE. Rounded to the tick toward entry (an exact half-tick goes

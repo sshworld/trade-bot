@@ -155,6 +155,9 @@ class Settings:
     countdown_refresh_s: float = 30.0   # engine loop refreshes the timer; the exchange cancels open orders if it lapses
     restart_gate_mode: str = "off"      # off | lock30 (stay 3x, alert if net<0 after N) | halt_on_negative
     restart_gate_n: int = 30
+    # BinHV45 hard stop, on unless set to 0/None. Cumulative net after fees <= -pct × start_wallet
+    # blocks new entries at any trade count. The 30-trade halt_on_negative check is separate.
+    loss_halt_pct: float | None = 0.05
     be_offset: float = 0.001            # after TP1: SL → be ± be_offset (live 0.15 %, TA 2026-11-03), safe-side tick
     be_fee: float | None = None         # None: be = entry; f: be = fee-inclusive breakeven entry·(1±f)/(1∓f) (E: f = 0.0005)
     # E chandelier (TA 2026-11-04, replay variant E): from entry, SL = tighter(SL, best ∓ trail_atr_k·ATR14) where ATR14 =
@@ -427,6 +430,8 @@ class V6Engine:
             self.blocks.pop(STARTUP, None)
             self.started = True
             self._restart_gate_block()                  # a persisted gate halt survives the restart
+            self._loss_halt_block()
+            self._qty_guard_block()
             self.notify(f"▶️ live_v6 시작 · {self.ex!r} · 포지션 {self._open_position_count()}개"
                          + (f" · 기록 없는 포지션 {','.join(self.st['unknown'])}" if self.st["unknown"] else "") + " · "
                          f"{'중단 상태: ' + self.meta['halted'] if self.meta.get('halted') else '진입 가능' if self.entries_allowed() else '진입 차단: ' + ','.join(self.blocks)}")
@@ -1094,10 +1099,19 @@ class V6Engine:
                 out.append(t)
         return out
 
+    def _binhv_closed(self):
+        """Completed binhv45 trades since the persisted anchor, when one is set."""
+        anc = self.meta.get("restart_gate_anchor")
+        if isinstance(anc, dict) and anc.get("t_ms"):
+            return self._trades_since_anchor(anc)
+        return [t for t in (self.meta.get("trades") or [])
+                if t.get("strategy") in (None, "", "binhv45") and t.get("closed_ms") is not None]
+
     def _restart_gate_block(self) -> bool:
         """True → this entry must not be sent. lock30 never blocks and never raises leverage; it alerts once.
-        halt_on_negative sums binhv45 net after fees since the persisted anchor, across restarts.
-        Once halted, meta.restart_gate stays until the operator tool clears it. One alert (block() dedupes)."""
+        halt_on_negative sums binhv45 net after fees since the persisted anchor and blocks only once that
+        count reaches restart_gate_n (30). It does not block on the first losing trade. Once halted,
+        meta.restart_gate stays until the operator tool clears it. One alert (block() dedupes)."""
         mode = self.cfg.restart_gate_mode or "off"
         if mode == "off":
             return False
@@ -1110,7 +1124,7 @@ class V6Engine:
             t for t in (self.meta.get("trades") or []) if t.get("closed_ms") is not None]
         nets = [D(t.get("net") or 0) for t in trades]
         n, cum = len(nets), sum(nets, Decimal(0))
-        if mode == "halt_on_negative" and n > 0 and cum < 0:
+        if mode == "halt_on_negative" and n >= int(self.cfg.restart_gate_n) and cum < 0:
             self.meta["restart_gate"] = {"t_ms": self.now_ms(), "net": str(cum), "n": n,
                                          "anchor": None if anc is None else anc.get("t_ms")}
             self.save()
@@ -1123,8 +1137,92 @@ class V6Engine:
             self.alert("30거래 순손익 음수 — 레버리지 3배 유지, TA 재판단", f"{n}건 · 순손익 {cum}")
         return False
 
+    def _loss_halt_block(self) -> bool:
+        """BinHV45 only. Net after fees of binhv45 trades <= -loss_halt_pct × the wallet recorded at strategy
+        start (meta.start_wallet) blocks new entries at any count, including before 30. 0 or None disables it.
+        The daily -10% halt is a different check. One alert. meta.loss_halt stays across restarts."""
+        pct = self.cfg.loss_halt_pct
+        if pct is None or D(str(pct)) <= 0 or getattr(self.strategy, "name", "") != "binhv45":
+            return False
+        hit = self.meta.get("loss_halt")
+        if not hit:
+            base = self.meta.get("start_wallet")
+            if base is None:
+                return False
+            trades = self._binhv_closed()
+            cum = sum((D(t.get("net") or 0) for t in trades), Decimal(0))
+            line = D(str(base)) * D(str(pct))
+            if cum > -line:
+                return False
+            hit = {"t_ms": self.now_ms(), "net": str(cum), "base": str(base), "n": len(trades), "line": str(line)}
+            self.meta["loss_halt"] = hit
+            self.save()
+        self.blocks["loss_halt"] = str(hit.get("net", ""))
+        if not self.meta.get("loss_halt_alerted"):
+            self.meta["loss_halt_alerted"] = True
+            self.save()
+            shown = (D(str(pct)) * 100).normalize()
+            self.alert(f"누적 손실 -{shown}% — 신규 진입 중단",
+                       f"순손익 {hit.get('net')} · 시작 잔고 {hit.get('base')} · {hit.get('n')}건")
+        return True
+
+    def _qty_guard_block(self) -> bool:
+        """A persisted quantity mismatch keeps new entries off after a restart. No second alert."""
+        g = self.meta.get("qty_guard")
+        if not g:
+            return False
+        self.blocks["qty_guard"] = str(g.get("why", ""))
+        return True
+
+    def _trip_qty_guard(self, sym, why):
+        """Stop new entries. One alert for the life of the latch. Does not close a position or rewrite its journal."""
+        g = self.meta.get("qty_guard")
+        if not g:
+            g = {"t_ms": self.now_ms(), "sym": sym, "why": why}
+            self.meta["qty_guard"] = g
+            self.save()
+        self.blocks["qty_guard"] = str(g.get("why") or why)
+        if not self.meta.get("qty_guard_alerted"):
+            self.meta["qty_guard_alerted"] = True
+            self.save()
+            self.alert("수량 불일치 — 신규 진입 중단", why)
+
+    def _entry_explains(self, sym, j, amt) -> bool:
+        """True when this trade's own entry order has executed exactly the live position."""
+        try:
+            ent = self.x("get_order", sym, j["cid"])
+        except ExchangeError:
+            return False
+        return isinstance(ent, dict) and D(ent.get("executed_qty") or 0) == abs(amt)
+
+    def _foreign_qty(self, sym, j) -> Decimal:
+        """Fill qty on this symbol since the entry that is not this trade's entry or its own SL/TP/close orders."""
+        opened = int(j.get("opened_ms", self.now_ms()))
+        try:
+            rows = self.x("user_trades", sym, opened - 60_000)
+        except ExchangeError:
+            return Decimal(0)
+        return self._unowned_qty(j, self._dedupe_trade_ids(rows), self._own_exit_order_ids(sym, j))
+
+    @staticmethod
+    def _unowned_qty(j, fills, own) -> Decimal:
+        eid = str(j.get("entry_order_id") or "")
+        q = Decimal(0)
+        for f in fills:
+            oid = str(f.get("order_id") or "")
+            if not oid or oid in own or (eid and oid == eid):
+                continue
+            q += D(f.get("qty") or 0)
+        return q
+
     def _enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None, side: int = 1,
                limit_px: Decimal | None = None) -> bool:
+        if self._loss_halt_block():
+            self.skip(sym, "loss_halt", "cumulative net after fees <= -loss_halt_pct of start wallet")
+            return False
+        if self._qty_guard_block():
+            self.skip(sym, "qty_guard", "fill qty does not match the journal")
+            return False
         if self._restart_gate_block():
             self.skip(sym, "restart_gate", "cumulative net after fees < 0")
             return False
@@ -1983,7 +2081,11 @@ class V6Engine:
                 self._cancel_stops_except(sym, prot.get("client_id"), oo)
                 return "ok"
             for o in list(oo):
-                if o.get("close_position") and o.get("side") == side and not self._owns(o.get("client_id"), sym):
+                # -4130 is a second closePosition STOP. A closePosition take-profit is not cancelled here.
+                if ((o.get("type") or "").startswith("STOP") and o.get("close_position")
+                        and o.get("side") == side and not self._owns(o.get("client_id"), sym)):
+                    self._alert_once(sym, "stale_sl", "다른 전량 손절 취소 — 우리 손절을 등록",
+                                     f"{sym} {o.get('client_id')} @ {o.get('stop_price')}")
                     self._cancel_quiet(sym, o)
                     oo.remove(o)
         j = self.st["pos"].get(sym)
@@ -1993,7 +2095,9 @@ class V6Engine:
             if j is not None:
                 j["stop_seq"] = seq + 1
                 self.save()
-            has_cp = oo is None or any(o["close_position"] and o["side"] == side for o in oo)
+            has_cp = oo is None or any(
+                o.get("close_position") and o.get("side") == side and (o.get("type") or "").startswith("STOP")
+                for o in oo)
             try:                                              # one closePosition per side → overlap with a qty stop
                 self.x("stop", sym, side, stop_px, f"{cid_base}s{seq}", **({"qty": abs(amt)} if has_cp else {}))
             except WouldTrigger:
@@ -2637,7 +2741,14 @@ class V6Engine:
                 raw_exit = [f for f in fills if str(f.get("order_id")) in own]
                 want = self._opened_qty(j, entry_fills)
                 got = self._merge_exit_fills(raw_exit, stream)
-                if got and not any(not self._fill_id(f) for f in got) and sum((f["qty"] for f in got), Decimal(0)) == want:
+                got_qty = sum((f["qty"] for f in got), Decimal(0))
+                # A phone-app order that closed the whole size is not this trade's exit. Do not book it.
+                # Returning flat (journal still open) lets the flat branch cancel our leftover orders.
+                if self._unowned_qty(j, fills, own) >= want > 0 and got_qty != want:
+                    why = f"{sym} 미확인 체결 · 열린 {want.normalize():f} · 봇 청산 {got_qty.normalize():f} · 손익 기록 안 함"
+                    self._trip_qty_guard(sym, why)
+                    return "flat", Decimal(0)
+                if got and not any(not self._fill_id(f) for f in got) and got_qty == want:
                     break
             fund = self.x("income", sym, "FUNDING_FEE", opened)
         except ExchangeError as e:
@@ -2817,12 +2928,21 @@ class V6Engine:
         stop_px = self._stop_at(sym, entry, side, D(it.get("stop_dist") or 0))
         # Disarm first so a pending countdown cannot cancel the reduce-only TP we are about to place.
         self._countdown(sym, 0)
-        self._drop_other_close_stops(sym, cs, "")
         try:
             oo = self.x("open_orders", sym)
         except ExchangeError:
             oo = orders
-        if not self._verified_close_sl(oo, cs, it["cid"]):
+        keep = next((o for o in oo if self._is_our_stop_id(o.get("client_id"), it["cid"])
+                     and (o.get("type") or "").startswith("STOP") and o.get("close_position")
+                     and o.get("side") == cs and D(o.get("stop_price") or 0) == stop_px), None)
+        # An own closePosition stop already at this price stays. Cancelling it to place the same one is a naked window.
+        self._drop_other_close_stops(sym, cs, keep.get("client_id") if keep else None)
+        if keep is None:
+            try:
+                oo = self.x("open_orders", sym)
+            except ExchangeError:
+                oo = orders
+        if keep is None and not self._verified_close_sl(oo, cs, it["cid"]):
             seq = int(it.get("stop_seq") or 0)
             it["stop_seq"] = seq + 1
             self.save()
@@ -2857,7 +2977,7 @@ class V6Engine:
         except ExchangeError:
             now = orders
         tp_ok = (not self.cfg.take_profit) or self._verified_covering_tp(now, cs, abs(amt))
-        if self._verified_close_sl(now, cs) and tp_ok:
+        if self._verified_close_sl(now, cs, it["cid"]) and tp_ok:
             it.pop("unprotected", None)
         else:
             it["unprotected"] = it.get("unprotected") or self.clock()
@@ -2968,6 +3088,12 @@ class V6Engine:
                 j.update(tp1_done=True, qty=str(abs(amt)))  # TP1 filled (partial close) — expected, not a mismatch
                 self.save()
                 self.notify(f"🔵 {sym} TP1 체결 → 남은 수량 {abs(amt)} · 손절을 본절로 이동", kind="exit")
+            if D(j["qty"]) != abs(amt) and self._foreign_qty(sym, j) > 0 and not self._entry_explains(sym, j, amt):
+                why = f"{sym} 수량 불일치 로컬 {j['qty']} / 거래소 {amt} · 손익 기록 안 함"
+                self._trip_qty_guard(sym, why)
+                if not self.find_stop(amt, orders):
+                    self.protect(sym, amt, D(j["stop_px"]), j["cid"])
+                continue                                    # do not adopt a qty this journal cannot reconcile
             if D(j["qty"]) != abs(amt):
                 mismatch.append(f"{sym} 수량 불일치 로컬 {j['qty']} / 거래소 {amt}")
                 if abs(amt) > D(j.get("entry_qty") or 0):
@@ -2994,8 +3120,10 @@ class V6Engine:
             if mine and self.find_stop(amt, [mine]):
                 prot = mine                                     # the moved (BE) stop is the bot's stop, not an old one
             if not prot:
-                for o in orders:                            # a stale closePosition (not ours) must not block or replace 0.75%
+                for o in orders:                            # a stale closePosition STOP (not ours) must not block 0.75%
                     if (o.get("type") or "").startswith("STOP") and not self._owns(o.get("client_id"), sym):
+                        self._alert_once(sym, "stale_sl", "다른 전량 손절 취소 — 우리 손절을 등록",
+                                         f"{sym} {o.get('client_id')} @ {o.get('stop_price')}")
                         self._cancel_quiet(sym, o)
                 self._alert_once(sym, "sl", "손절 주문 없음 — 재등록 시도", f"{sym} {amt} · 손절 {stp}")
                 use = amt
