@@ -1,0 +1,14 @@
+# /etc/systemd/system/tradebot-ci-confirm.service — v2: grant the rollback marker (.ci_verified / .citest_verified_v2)
+# to a CI-deployed release ≥ 30 min after its restart, if the same process is still up, healthy, Traceback-free and
+# every open position has an exchange stop (soft failures retried until 60 min, then the pending marker is revoked).
+# Read-only towards the bots: reads state + journal, runs verify-stops (GET only), writes marker files under the app
+# roots, may send a Telegram note. Never starts, stops or restarts a bot unit; never places or cancels orders.
+[Unit]
+Description=tradebot CI: confirm pending deploy markers 30 min after a CI restart (v2)
+
+[Service]
+Type=oneshot
+ExecStart=-/opt/tradebot/ci/ci_deploy.sh confirm live
+ExecStart=-/opt/tradebot/ci/ci_deploy.sh confirm testnet
+StandardOutput=append:/var/log/tradebot/ci-confirm.log
+StandardError=append:/var/log/tradebot/ci-confirm.log

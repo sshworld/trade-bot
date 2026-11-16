@@ -194,3 +194,61 @@ def test_first_baseline_backs_out_todays_realised_income(offline):
                                   "tran_id": "yesterday"})      # yesterday: not counted
     eng = _eng(offline, t)
     assert eng.meta["dl_day"] == "2026-10-30" and D(eng.meta["dl_base"]) == 1000
+
+
+# ───────────── user 2026-11-13: day = 00:00 KST, −10 % → new entries stop till the next 00:00 KST, positions kept ─────────────
+KST_CFG = dict(daily_halt_s=0, daily_day_offset_s=9 * 3600, daily_halt_flatten=False)
+
+
+def test_kst_day_baseline_rolls_at_0000_kst_not_0900(offline):
+    t = [datetime(2026, 10, 30, 14, 59, 0, tzinfo=timezone.utc).timestamp()]   # 23:59 KST 10/30
+    eng = _eng(offline, t, **KST_CFG)
+    assert eng.meta["dl_day"] == "2026-10-30+9h"
+    _lose(offline, 60, t)
+    eng.reconcile()
+    t[0] += 120                                                          # 00:01 KST 10/31 → new day
+    eng.reconcile()
+    assert eng.meta["dl_day"] == "2026-10-31+9h" and D(eng.meta["dl_base"]) == 940
+    t[0] += 9 * 3600                                                     # 09:01 KST: no second rebase
+    _lose(offline, 40, t)
+    eng.reconcile()
+    assert eng.meta["dl_day"] == "2026-10-31+9h" and D(eng.meta["dl_base"]) == 940
+
+
+def test_kst_halt_keeps_positions_blocks_entries_until_next_0000_kst(offline):
+    t = [datetime(2026, 10, 30, 3, 0, tzinfo=timezone.utc).timestamp()]      # 12:00 KST
+    eng = _eng(offline, t, **KST_CFG)
+    assert eng.enter(DOGE, offline.stop_dist(DOGE), int(t[0] * 1000) // 60000 * 60000)
+    orders = sorted(o["clientOrderId"] if "clientOrderId" in o else o.get("client_id") for o in offline.inner.open_orders(DOGE))
+    _lose(offline, 100, t)
+    eng.reconcile()
+    dh = eng.meta["daily_halt"]
+    assert not eng.entries_allowed() and DOGE in eng.st["pos"] and offline.amt(DOGE) != 0   # position kept
+    assert sorted(o["clientOrderId"] if "clientOrderId" in o else o.get("client_id") for o in offline.inner.open_orders(DOGE)) == orders
+    nxt = datetime(2026, 10, 30, 15, 0, tzinfo=timezone.utc).timestamp() * 1000           # 00:00 KST 10/31
+    assert dh["until_ms"] == nxt
+    (a,) = _alerts(eng)
+    assert "보유 포지션 손절/익절 유지" in a and "다음 00:00 KST까지" in a and "청산" not in a.split("\n")[0]
+    t[0] = nxt / 1000 - 1
+    eng.reconcile()
+    assert not eng.entries_allowed()
+    t[0] = nxt / 1000
+    eng.reconcile()
+    assert eng.entries_allowed() and "daily_halt" not in eng.meta
+    assert sum(1 for m in eng.tg.sent if m.startswith("✅ 일일 손실 중단 해제") and "새 날 00:00 KST" in m) == 1
+    assert eng.meta["dl_day"] == "2026-10-31+9h"
+
+
+def test_kst_old_utc_day_key_rebases_once_after_deploy(offline):
+    t = [datetime(2026, 10, 30, 3, 0, tzinfo=timezone.utc).timestamp()]
+    eng = _eng(offline, t)                                               # older build: UTC key
+    assert eng.meta["dl_day"] == "2026-10-30"
+    eng2 = _eng(offline, t, **KST_CFG)
+    eng2.reconcile()
+    assert eng2.meta["dl_day"] == "2026-10-30+9h"
+
+
+def test_live_qrmtf_uses_kst_day_entry_only_halt():
+    from live_v6.runner import live_settings
+    c = live_settings("qrmtf")
+    assert (c.daily_loss_halt, c.daily_halt_s, c.daily_day_offset_s, c.daily_halt_flatten) == (0.10, 0, 9 * 3600, False)

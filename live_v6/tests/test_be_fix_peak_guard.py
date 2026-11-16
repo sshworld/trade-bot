@@ -400,3 +400,117 @@ def test_long_tp1_fill_places_exactly_one_be_stop_sell_mark_reduceonly_old_cance
     assert (m, path, crit) == ("POST", "/fapi/v1/algoOrder", True)
     assert p["side"] == "SELL" and p["type"] == "STOP_MARKET" and p["workingType"] == "MARK_PRICE"
     assert p["reduceOnly"] == "true" and "closePosition" not in p and D(p["triggerPrice"]) == tgt and D(p["quantity"]) == amt
+
+
+# ───────────────────────── user 2026-11-13: peak_dd clears itself after 24 h ─────────────────────────
+def _released_engine(offline, tmp_path, t0):
+    from live_v6.store import JsonStore
+    offline.inner.wallet = D("200")
+    eng = _guard_engine(offline, peak_dd_release_s=24 * 3600)
+    eng.clock = lambda: t0
+    eng.store = JsonStore(tmp_path / "mainnet.json")
+    eng.reconcile()
+    offline.inner.wallet = D("150")
+    eng.reconcile()
+    assert eng.meta.get("peak_dd") and not eng.entries_allowed()
+    return eng
+
+
+def test_peak_dd_stays_blocked_before_24h(offline, tmp_path):
+    t0 = 1_800_000_000.0
+    eng = _released_engine(offline, tmp_path, t0)
+    eng.clock = lambda: t0 + 24 * 3600 - 1
+    eng.reconcile()
+    assert eng.meta.get("peak_dd") and not eng.entries_allowed()
+    assert D(eng.meta["peak_equity"]) == D("200")
+
+
+def test_peak_dd_clears_after_24h_peak_rebased_to_wallet_one_notice_audited(offline, tmp_path):
+    t0 = 1_800_000_000.0
+    eng = _released_engine(offline, tmp_path, t0)
+    n = len(eng.tg.sent)
+    eng.clock = lambda: t0 + 24 * 3600
+    eng.reconcile()
+    eng.reconcile()
+    assert not eng.meta.get("peak_dd") and eng.entries_allowed()
+    assert D(eng.meta["peak_equity"]) == D(eng.meta["wallet"]) == D("150")
+    new = eng.tg.sent[n:]
+    assert sum("고점 차단 해제" in m for m in new) == 1 and not [m for m in new if "고점 대비" in m]
+    (a,) = eng.meta["peak_dd_clears"]
+    assert a["by"] == "auto 24h" and a["reset_peak"] and D(a["peak_before"]) == D("200") and D(a["peak_after"]) == D("150")
+    eng2 = _guard_engine(offline, peak_dd_release_s=24 * 3600)   # restart on the saved file keeps the cleared state
+    eng2.store = eng.store
+    eng2.st = eng2.store.load()
+    assert not eng2.meta.get("peak_dd") and D(eng2.meta["peak_equity"]) == D("150")
+
+
+def test_peak_dd_set_by_an_older_build_clears_on_first_reconcile(offline, tmp_path):
+    # deploy onto the live state: peak_dd set days ago with no release → cleared at the first reconcile
+    t0 = 1_800_000_000.0
+    eng = _released_engine(offline, tmp_path, t0)
+    eng.meta["peak_dd"]["t_ms"] = int((t0 - 7 * 86400) * 1000)
+    eng.save()
+    eng.reconcile()
+    assert not eng.meta.get("peak_dd") and eng.entries_allowed()
+
+
+def test_peak_dd_triggers_again_after_release_if_equity_drops_20pct_from_new_peak(offline, tmp_path):
+    t0 = 1_800_000_000.0
+    eng = _released_engine(offline, tmp_path, t0)
+    eng.clock = lambda: t0 + 24 * 3600
+    eng.reconcile()
+    assert eng.entries_allowed()
+    offline.inner.wallet = D("119")                       # < 0.80 × 150
+    eng.reconcile()
+    assert eng.meta.get("peak_dd") and not eng.entries_allowed() and D(eng.meta["peak_dd"]["peak"]) == D("150")
+
+
+def test_live_qrmtf_releases_after_24h_default_off():
+    from live_v6.engine import Settings
+    assert live_settings("qrmtf").peak_dd_release_s == 24 * 3600
+    assert Settings().peak_dd_release_s == 0
+
+
+def test_peak_dd_not_released_while_equity_still_20pct_under_wallet(offline, tmp_path):
+    # open positions in deep loss at the 24 h mark: no release (no 재개 + 🚨 pair), released once equity recovers
+    t0 = 1_800_000_000.0
+    eng = _released_engine(offline, tmp_path, t0)
+    n = len(eng.tg.sent)
+    eng.clock = lambda: t0 + 24 * 3600
+    eng.meta["equity"] = "110"                          # wallet 150, equity < 0.80 × 150
+    eng._peak_guard()
+    assert eng.meta.get("peak_dd") and D(eng.meta["peak_equity"]) == D("200")
+    assert not [m for m in eng.tg.sent[n:] if "고점" in m]
+    eng.meta["equity"] = "150"
+    eng._peak_guard()
+    assert not eng.meta.get("peak_dd") and D(eng.meta["peak_equity"]) == D("150")
+
+
+def test_unreadable_trigger_time_restarts_the_24h_and_daily_check_still_runs(offline, tmp_path):
+    t0 = 1_800_000_000.0
+    for bad in (None, "x"):
+        eng = _released_engine(offline, tmp_path, t0)
+        eng.meta["peak_dd"]["t_ms"] = bad
+        called = []
+        eng.check_daily_halt = lambda: called.append(1)
+        eng.check_halts()
+        assert called and eng.meta["peak_dd"]["t_ms"] == int(t0 * 1000) and eng.meta.get("peak_dd")
+        eng.clock = lambda: t0 + 24 * 3600
+        eng._peak_guard()
+        assert not eng.meta.get("peak_dd")
+        offline.inner.wallet = D("200")
+    eng = _released_engine(offline, tmp_path, t0)
+    del eng.meta["peak_dd"]["t_ms"]
+    eng._peak_guard()
+    assert eng.meta["peak_dd"]["t_ms"] == int(t0 * 1000)
+
+
+def test_release_notice_says_entries_still_blocked_when_another_halt_is_on(offline, tmp_path):
+    t0 = 1_800_000_000.0
+    eng = _released_engine(offline, tmp_path, t0)
+    eng.meta["halted"] = "daily_loss test"
+    n = len(eng.tg.sent)
+    eng.clock = lambda: t0 + 24 * 3600
+    eng._peak_guard()
+    (m,) = [x for x in eng.tg.sent[n:] if "고점 차단 해제" in x]
+    assert "아직 막힘" in m and "신규 진입 재개" not in m and not eng.entries_allowed()

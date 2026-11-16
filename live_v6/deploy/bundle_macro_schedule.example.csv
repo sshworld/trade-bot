@@ -1,0 +1,7 @@
+# bundle_v5 component M — US macro release schedule (maintained by hand; copy, fill in, point LIVE_V6_BUNDLE_SCHEDULE at it)
+# Same columns as the research file lab/p49_macro_proxy/events.csv; only kind and event_utc are read (event_id optional).
+# event_utc = official release time in UTC, ISO 8601 (e.g. 08:30 ET in winter = 13:30 UTC). Sources used by the research:
+#   NFP / CPI: https://www.bls.gov/schedule/   FOMC: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+# kind = NFP | CPI | FOMC (the research set: 08:30 ET releases, FOMC statement 14:00 ET).
+# No rows are pre-filled on purpose: dates must come from the official calendars.
+kind,event_utc,event_id

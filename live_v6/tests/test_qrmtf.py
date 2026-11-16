@@ -184,7 +184,7 @@ def test_live_settings_qrmtf():
     assert (c.sizing.risk_pct, c.sizing.portfolio_risk_cap, c.sizing.margin_cap, c.sizing.max_leverage) == (4.0, 0.12, 0.25, 10)
     assert c.max_positions == 3 and c.enable_short and c.take_profit and c.max_hold_s == 24 * 3600
     assert (c.tp1_r, c.tp1_frac, c.tp2_r, c.be_offset, c.be_fee, c.trail_atr_k) == (1.0, 0.5, None, 0.0015, 0.0005, 2.0)   # E
-    assert c.startup_leverage == 10 and c.halt_fraction is None and c.daily_loss_halt == 0.10 and c.daily_halt_s == 24 * 3600   # -25 % total halt removed
+    assert c.startup_leverage == 10 and c.halt_fraction is None and c.daily_loss_halt == 0.10 and c.daily_halt_s == 0   # -25 % total halt removed; user 2026-11-13: till 00:00 KST
     assert c.bar_stale_s == 180.0
 
 
@@ -332,6 +332,8 @@ def test_short_history_tf_contributes_zero(offline):
 
 def test_rest_weight_per_minute_steady_state(offline):
     clk = Clock()
+    clk.t = clk.t // 900 * 900 + 5.0     # start on a 15m boundary: the +1 min step below must not close a 15m / 30m / 1h bar
+                                         # (started at minute 14 of a quarter it did → 15m refetched → ~1 in 15 runs failed)
     eng, strat = mtf_engine(offline, clk)
     for s in eng.cfg.symbols:
         set_market(offline, s, "up", "down", "up", int(clk.t * 1000), px=0.15)
