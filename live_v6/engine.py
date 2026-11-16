@@ -58,7 +58,7 @@ REASON_KO = {"stop_loss": "손절", "signal_exit": "M20 채널 청산", "model_s
              "sl_failed": "손절 등록 실패 정리", "stop_lost_breach": "손절 주문 소실 후 손절가 돌파 정리", "emergency": "비상 전체 정리", "dust_entry": "소액 부분 체결 정리",
              "time_exit": "24시간 보유 청산", "take_profit": "익절", "be_stop": "1차 익절 후 본절", "be_stop_breach": "본절 손절가 돌파 정리",
              "trail_stop": "추적 손절", "trail_stop_breach": "추적 손절가 돌파 정리",
-             "daily_loss_halt": "일일 손실 한도 전체 정리"}
+             "daily_loss_halt": "일일 손실 한도 전체 정리", "manual_close": "수동 개입 정리"}
 
 # entry-blocking reasons (transient; cleared automatically when the condition clears)
 UNKNOWN_POS = "unknown_position"                    # per-coin entry block (st["unknown"]), never a global block
@@ -154,6 +154,15 @@ class Settings:
     lev_confirm_reads: int = 5
     lev_confirm_wait_s: float = 1.0
     startup_leverage: int | None = None  # set this leverage at startup on every flat coin (qrmtf live: 10)
+    # user 2026-11-13 (manual trade on a bot coin → the bot sold against it): a fill that no order of the open trade
+    # made, or a position the journal cannot explain (other side / bigger / back after flat) → that coin goes to
+    # MANUAL MODE (meta.manual, survives restarts): journal booked from the exchange fills (bot + manual) and closed,
+    # the bot's SL/TP on that coin cancelled, no bot order of any kind on it. Released once the exchange position
+    # has read 0 for manual_release_s in a row.
+    manual_release_s: float = 1800.0
+    # a flat journal held on a fill gap (close_held / reconcile_pending) is re-read with exponential backoff
+    # (reconcile_s × 2^n, at most this long), not every 5 s reconcile; a user-stream fill on that coin re-reads at once
+    hold_backoff_max_s: float = 300.0
 
 
 LOG_INTENT_KEYS = ("signal_px", "path", "risk_pct_used", "order_ms", "prearm_ms", "open_risk_after", "same_side_open")
@@ -164,6 +173,7 @@ EXIT_KIND = {"stop_loss": "exchange_close", "be_stop": "exchange_close", "trail_
 # ≈ 1 minute) the "still unconfirmed" alert fires again. The journal stays open and the symbol stays blocked.
 # A close is never committed on this timer.
 CLOSE_HOLD_MAX = 12
+MANUAL_BOOK_TRIES = 6       # manual-mode booking: re-reads (backoff) while closing fills are short of the opened qty
 
 
 class V6Engine:
@@ -372,12 +382,14 @@ class V6Engine:
     # ───────────────────────── startup ─────────────────────────
     def startup(self):
         self.blocks[STARTUP] = "startup"
+        for m in (self.meta.get("manual") or {}).values():
+            m["flat_since_ms"] = None                       # downtime is not "continuously flat": timer restarts
         try:
             self.load_rules()
             self.resolve_intents()
             self.reconcile()
             for s in self.cfg.symbols:
-                if s not in self.st["pos"] and s not in self.st["unknown"]:
+                if s not in self.st["pos"] and s not in self.st["unknown"] and not self.in_manual(s):
                     self.pace()
                     self.ensure_isolated(s)
             self.startup_leverage()
@@ -392,7 +404,8 @@ class V6Engine:
             self.blocks.pop(STARTUP, None)
             self.started = True
             self.notify(f"▶️ live_v6 시작 · {self.ex!r} · 포지션 {self._open_position_count()}개"
-                         + (f" · 기록 없는 포지션 {','.join(self.st['unknown'])}" if self.st["unknown"] else "") + " · "
+                         + (f" · 기록 없는 포지션 {','.join(self.st['unknown'])}" if self.st["unknown"] else "")
+                         + (f" · 수동 모드 {','.join(self.meta['manual'])}" if self.meta.get("manual") else "") + " · "
                          f"{'중단 상태: ' + self.meta['halted'] if self.meta.get('halted') else '진입 가능' if self.entries_allowed() else '진입 차단: ' + ','.join(self.blocks)}")
         except ExchangeError as e:
             log.error("startup failed, entries stay blocked: %s", e)
@@ -411,7 +424,8 @@ class V6Engine:
             return
         for s in self.cfg.symbols:
             row = pos.get(s)
-            if row is None or self._row_amt(pos, s) != 0 or s in self.st["pos"] or s in self.st["unknown"]:
+            if (row is None or self._row_amt(pos, s) != 0 or s in self.st["pos"] or s in self.st["unknown"]
+                    or self.in_manual(s)):
                 log.info("startup leverage %s: position open or unknown, left at %sx", s, None if row is None else row.get("leverage"))
                 continue
             was = pos.get(s, {}).get("leverage")
@@ -603,11 +617,15 @@ class V6Engine:
                     self.lost_stop_breach(ev.sym, ev.price)  # no exchange stop + price through it → reduceOnly close
                 elif self.ban_left() > 0:
                     pass                                    # 418: no REST at all; the exchange stop protects
-                elif (j and not j.get("closing") and thru(D(j["stop_px"]))
+                elif (j and not j.get("closing") and not j.get("close_held") and thru(D(j["stop_px"]))
                         and now - self._breach_seen.get(ev.sym, -1e18) >= self.cfg.reconcile_s):
                     self._breach_seen[ev.sym] = now                 # at most one REST check per symbol per 5 s
                     self.breach_check(ev.sym, ev.price, "mark stream")
         elif isinstance(ev, (OrderUpdate, AccountUpdate)):
+            if isinstance(ev, OrderUpdate) and ev.raw.get("x") == "TRADE":
+                jh = self.st["pos"].get(ev.sym)
+                if jh and jh.get("hold_next_ms"):
+                    jh["hold_next_ms"] = 0                  # D: a new fill on a held coin → re-read at once
             self.stop_monitor(ev)                           # TA: stop CANCELED/EXPIRED → replace now (no REST read)
             self._note_exit_order(ev)
             self._dirty = True                              # fills / position change → reconcile from REST now
@@ -687,8 +705,9 @@ class V6Engine:
         sym, status = raw.get("s"), str(raw.get("X") or "")
         cid = str(raw.get("caid") or raw.get("c") or "")
         j = self.st["pos"].get(sym)
-        if status not in self.STOP_GONE or not j or j.get("closing") or not cid.startswith(j["cid"]):
-            return
+        if (status not in self.STOP_GONE or not j or j.get("closing") or j.get("close_held")
+                or not cid.startswith(j["cid"])):
+            return                                          # close_held: the bot read this coin flat → not its position
         if cid[len(j["cid"]):][:1] not in ("p", "s"):        # p = pre-arm, s<n> = protective stop; x<n> = exits
             return
         if self._own_cancels.pop(cid, None) is not None:
@@ -709,6 +728,10 @@ class V6Engine:
             self._queued.setdefault(sym, "stop")
             return False
         lost = j["stop_lost"]
+        if j.get("close_held"):                             # read flat already: whatever is there is not the bot's
+            return False
+        # no REST read before the replacement (TA: replace at once). A hand close + reopen racing this event gets the
+        # stop for a moment; the reconcile this event triggers sees the new entry price → manual mode cancels it.
         seq = int(j.get("stop_seq", 0))
         j["stop_seq"] = seq + 1
         self.save()
@@ -755,6 +778,8 @@ class V6Engine:
                 self.replace_lost_stop(sym)
 
     def breach_check(self, sym, mark, source):
+        if self.st["pos"].get(sym) is None or self.in_manual(sym):
+            return
         self.sleep(self.cfg.breach_grace_s)                 # give the exchange stop a moment to fire
         try:
             amt_now = self._row_amt(self.x("positions", self.cfg.symbols), sym)
@@ -765,6 +790,9 @@ class V6Engine:
                 return
         except ExchangeError:
             return                                          # REST reconcile retries in ≤5 s
+        j = self.st["pos"].get(sym)
+        if j is None or self._foreign_guard(sym, j, amt_now):
+            return                                          # C: not this journal's position → never market-closed
         self.alert("손절가 돌파인데 거래소 손절 미작동 — 이 포지션만 정리",
                    f"{sym} mark {mark} vs 손절 {self.st['pos'][sym]['stop_px']} ({source}) · 다른 포지션 유지")
         self.close(sym, "stop_breach")                      # §8c L1: only THAT position (reduceOnly MARKET)
@@ -888,6 +916,9 @@ class V6Engine:
                 self.skip(sym, "peak_dd", str(self.meta["peak_dd"]))
             else:
                 self.skip(sym, "safety_block", str(self.meta.get("halted") or self.blocks))
+            return False
+        if self.in_manual(sym):                             # manual mode: no bot entry on this coin
+            self.skip(sym, "manual_mode", str(self.meta["manual"][sym].get("why")))
             return False
         if sym in self.st["unknown"]:                       # TA R4: entries blocked for THIS coin only
             self.skip(sym, UNKNOWN_POS, f"exchange position {self.st['unknown'][sym].get('amt')} not in the state file")
@@ -1348,7 +1379,9 @@ class V6Engine:
                 self._dirty = True
                 return False
         if "tp1" in filled and not j.get("tp1_done") and amt != 0:
-            j.update(tp1_done=True, qty=str(abs(amt)))           # TP1 filled (status FINISHED + executedQty)
+            # expected remainder = before − TP1 fill; a smaller exchange amount is an extra (manual?) reduction that the
+            # decrease check in reconcile must still see, so it is not folded into the journal qty here
+            j.update(tp1_done=True, qty=str(max(abs(amt), D(j["qty"]) - filled["tp1"])))
             self.save()
             self.notify(f"🔵 {sym} TP1 체결 {filled['tp1']} → 남은 수량 {abs(amt)} · 손절을 본절로 이동", kind="exit")
         return amt, orders, filled
@@ -1544,7 +1577,7 @@ class V6Engine:
             log.error("%s stop not confirmed (exchange unavailable) — reconcile retries", sym)
             return False
         self.alert("손절 등록 실패 — 이 포지션만 정리", f"{sym} {amt} · 손절 {stop_px} · {r} · 다른 포지션 유지")
-        if not self.close(sym, f"sl_failed ({r})"):
+        if not self.close(sym, f"sl_failed ({r})") and not self.in_manual(sym) and sym in self.st["pos"]:
             self.emergency_flatten_all(f"unprotected {sym}")
         return False
 
@@ -1553,7 +1586,7 @@ class V6Engine:
         """Close the WHOLE position with reduceOnly MARKET orders until the exchange shows flat. The protective stop stays
         until flat is confirmed. A remainder (partial fill) is always closed in ONE order (no dust chunks)."""
         j = self.st["pos"].get(sym)
-        if j is None:                                       # TA R4: never market-close a position the state file
+        if j is None or self.in_manual(sym):                # TA R4: never market-close a position the state file
             log.critical("close(%s, %s) refused: not in the state file (unknown positions are never closed by the bot)",
                          sym, reason)                       # does not hold — whatever the caller
             return False
@@ -1566,12 +1599,15 @@ class V6Engine:
             return False
         for attempt in range(self.cfg.exit_attempts):
             try:
-                amt = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+                p0 = self.x("positions", self.cfg.symbols)
+                amt = self._row_amt(p0, sym)
                 if amt is None:
                     raise ExchangeError(f"{sym} missing from positions")
                 if amt == 0:
                     self._after_flat(sym, j.get("close_reason", reason))
                     return True
+                if not self._close_allowed(sym, j, amt, (p0.get(sym) or {}).get("entry")):
+                    return False
                 seq = int(j.get("exit_seq", 0))
                 j["exit_seq"] = seq + 1
                 if not j.get("exit_ref"):
@@ -1581,12 +1617,15 @@ class V6Engine:
                         pass
                 self.save()
                 self.submit_market(sym, "SELL" if amt > 0 else "BUY", abs(amt), f"{j['cid']}x{seq}", reduce_only=True)
-                amt2 = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+                p2 = self.x("positions", self.cfg.symbols)
+                amt2 = self._row_amt(p2, sym)
                 if amt2 is None:
                     raise ExchangeError(f"{sym} missing from positions")
                 if amt2 == 0:
                     self._after_flat(sym, j.get("close_reason", reason))
                     return True
+                if not self._close_allowed(sym, j, amt2, (p2.get(sym) or {}).get("entry")):
+                    return False
                 log.warning("%s exit left %s → closing the remainder in one order", sym, amt2)
             except ExchangeError as e:
                 log.error("%s exit attempt %d failed: %s", sym, attempt + 1, e)
@@ -1596,6 +1635,20 @@ class V6Engine:
         self.save()
         if n == 1 or n % self.cfg.exit_alert_every == 0:
             self.alert(f"청산 미완료 — 계속 재시도 ({sym})", f"사유 {reason} · 거래소 손절 유지 · {n}회째")
+        return False
+
+    def _close_allowed(self, sym, j, amt, entry=None) -> bool:
+        """C: a market close only for a position on the journal's side and no bigger than the journal qty. Other side
+        → manual mode; bigger → only after reconcile judged it (foreign fill → manual mode, else qty updated)."""
+        side = 1 if int(j.get("side", 1)) > 0 else -1
+        moved = (entry is not None and D(entry) > 0 and j.get("pos_entry") is not None
+                 and D(j["pos_entry"]) != D(entry))          # closed and reopened by hand between two reads
+        if (amt > 0) == (side > 0) and abs(amt) <= D(j["qty"]) and not moved:
+            return True
+        log.critical("%s close refused: exchange %s @%s vs journal %s %s @%s", sym, amt, entry, side, j.get("qty"),
+                     j.get("pos_entry"))
+        self._foreign_guard(sym, j, amt, entry)
+        self._dirty = True
         return False
 
     def _after_flat(self, sym, reason):
@@ -1633,6 +1686,246 @@ class V6Engine:
                 self._foreign_seen.add((sym, str(o["id"])))
                 self.alert(f"봇이 걸지 않은 주문 있음 — {sym} 포지션 0 · 자동 취소 안 함",
                            f"{o.get('type')} {o.get('side')} {o['client_id']} · 확인 후 직접 정리")
+
+    # ───────────────────────── manual trades on a bot coin (user 2026-11-13) ─────────────────────────
+    def in_manual(self, sym) -> bool:
+        return sym in (self.meta.get("manual") or {})
+
+    def _trade_t0(self, j, rows) -> int:
+        """Earliest time a fill can belong to THIS trade: its entry order's first fill (rows of an earlier trade on the
+        same coin are older), else the journal time."""
+        eid = str(j.get("entry_order_id") or "")
+        ts = [int(f.get("time") or 0) for f in rows if eid and str(f.get("order_id")) == eid]
+        return min(ts) if ts else int(j.get("entry_fill_ms") or j.get("opened_ms") or 0)
+
+    def _foreign_rows(self, sym, j, *, closing: bool, with_own: bool = False):
+        """Fills on `sym` since this trade's entry that no order of this trade made. closing=False: opening-side
+        fills only (the bot's only opening order is the entry, so no own-id lookup). closing=True: every fill that is
+        not the entry and not one of the trade's SL / TP / close orders. None = cannot tell (read failed, an own
+        order id unresolved, or no entry order id to tell the entry apart) → the caller must not act on it."""
+        none = (None, Decimal(0)) if with_own else None
+        eid = str(j.get("entry_order_id") or "")
+        if not eid:
+            return none
+        try:
+            rows = self._dedupe_trade_ids(self.x("user_trades", sym, int(j.get("opened_ms") or self.now_ms()) - 60_000))
+        except ExchangeError as e:
+            log.error("%s foreign-fill check: user_trades failed: %s", sym, e)
+            return none
+        t0 = self._trade_t0(j, rows)
+        rows = [f for f in rows if str(f.get("order_id")) != eid and int(f.get("time") or 0) >= t0]
+        if not closing:
+            return [f for f in rows if f.get("side") == ("BUY" if int(j.get("side", 1)) > 0 else "SELL")]
+        problems: list = []
+        own = self._own_exit_order_ids(sym, j, problems)
+        if problems:
+            log.error("%s foreign-fill check: own order ids unresolved (%s) → not judged", sym, problems[:3])
+            return none
+        ext = [f for f in rows if str(f.get("order_id")) not in own]
+        if not with_own:
+            return ext
+        cs = self._cs(j)
+        return ext, sum((D(f["qty"]) for f in rows if str(f.get("order_id")) in own and f.get("side") == cs), Decimal(0))
+
+    def _foreign_guard(self, sym, j, amt, entry=None):
+        """Nonzero exchange position on a journaled coin. None = it is this journal's position; 'manual' = taken
+        over (manual mode); 'skip' = cannot tell this round → leave the coin alone (no close, no stop), retry.
+        `entry` = the exchange position's entry price: it never changes on a reduction, so a different value than
+        first seen means the position was closed and reopened (or added to) by an order the bot did not send."""
+        side = 1 if int(j.get("side", 1)) > 0 else -1
+        if (amt > 0) != (side > 0):                         # a reduceOnly bot order can never flip a position
+            self._manual_takeover(sym, "거래소 포지션 방향이 봇 기록과 반대",
+                                  f"기록 {'롱' if side > 0 else '숏'} {j.get('qty')} / 거래소 {amt}")
+            return "manual"
+        held = j.get("close_held") or j.get("reconcile_pending")
+        moved = False
+        if entry is not None and D(entry) > 0:
+            if j.get("pos_entry") is None:
+                j["pos_entry"] = str(entry)                 # first exchange read of this position
+                self.save()
+            elif D(j["pos_entry"]) != D(entry):
+                moved = True
+        if abs(amt) > D(j["qty"]) or held or moved:         # the bot never adds; a held journal was read flat
+            if moved and not (abs(amt) > D(j["qty"]) or held) and self.now_ms() < int(j.get("mv_next_ms") or 0):
+                return "skip"
+            ext = self._foreign_rows(sym, j, closing=False)
+            if ext is None:
+                return "skip"
+            if not ext and moved and not (abs(amt) > D(j["qty"]) or held):
+                if int(j.get("mv_n") or 0) < 6:                 # fill not indexed yet? look again with backoff
+                    self._backoff(j, "mv_n", "mv_next_ms")
+                    self.save()
+                    return "skip"
+                log.warning("%s exchange entry %s != %s but no foreign fill after retries → accepted", sym, entry, j["pos_entry"])
+                j["pos_entry"] = str(entry)
+                j.pop("mv_n", None)
+                j.pop("mv_next_ms", None)
+                self.save()
+            if ext:
+                self._manual_takeover(sym, "봇 기록상 0이던 포지션이 다시 열림" if held else "봇 진입 주문이 아닌 체결로 포지션 변경",
+                                      f"기록 {j.get('qty')} / 거래소 {amt} · " + self._rows_txt(ext))
+                return "manual"
+        return None
+
+    @staticmethod
+    def _rows_txt(rows) -> str:
+        return "외부 체결 " + ", ".join(f"{f.get('side')} {D(f['qty']).normalize():f}@{D(f['price']).normalize():f}"
+                                     for f in rows[:5]) + (f" 외 {len(rows) - 5}건" if len(rows) > 5 else "")
+
+    def _manual_takeover(self, sym, why, detail="", *, flat=False):
+        """The bot gives up `sym`: journal off st['pos'] at once (kept in meta.manual until booked), model told the
+        trade is gone, bot SL / TP on the coin cancelled, one 🚨 (detected) + one 🔒 (locked). Idempotent."""
+        man = self.meta.setdefault("manual", {})
+        if sym in man:
+            return
+        now = self.now_ms()
+        j = self.st["pos"].pop(sym, None)
+        man[sym] = {"t_ms": now, "why": why, "detail": str(detail)[:300], "flat_since_ms": None,
+                    "journal": j, "booked": j is None, "book_n": 0, "book_next_ms": 0}
+        self._queued.pop(sym, None)
+        self._breach_seen.pop(sym, None)
+        self.st["unknown"].pop(sym, None)                   # manual mode replaces the unknown-position handling
+        if j is not None:
+            try:
+                if self.strategy.on_live_closed(sym, j.get("model_entry_open"), "manual_close", now, self):
+                    self.st["strategy"] = self.strategy.state
+            except Exception as e:  # noqa: BLE001  the takeover itself must not fail on a model hook
+                log.error("%s on_live_closed (manual) failed: %r", sym, e)
+        self.save()
+        log.critical("%s manual mode: %s | %s", sym, why, detail)
+        self.alert(f"수동 거래 감지 — {sym} · {why}", detail or "-")
+        n, failed = self._manual_cancel_bot_orders(sym)
+        if flat:
+            self._residual_watch(sym, failed, [])           # TA R3 count of a failing cancel on a flat coin
+        mins = self.cfg.manual_release_s / 60
+        self.notify(f"🔒 수동 모드 잠금 — {sym} · 봇은 이 코인에 진입·청산·손절·익절 주문을 내지 않음\n"
+                    f"봇 보호주문 {n}개 취소" + (f" · 취소 실패 {len(failed)}개 (대조 루프가 재시도)" if failed else "")
+                    + (" · 남은 포지션은 직접 관리" if j is not None else "")
+                    + f"\n거래소 포지션 0이 {mins:g}분 이어지면 자동 해제", kind="manual")
+        if j is not None:
+            self._manual_book_safe(sym)
+
+    def _manual_book_safe(self, sym):
+        """_manual_book that never breaks the reconcile loop: an unexpected error is logged and retried with backoff."""
+        try:
+            self._manual_book(sym)
+        except Exception:  # noqa: BLE001  accounting only; the lock and the cancels are already done
+            log.exception("%s manual booking failed (retried with backoff)", sym)
+            m = (self.meta.get("manual") or {}).get(sym)
+            if m is None:
+                return
+            cid = (m.get("journal") or {}).get("cid")
+            if cid and any(t.get("cid") == cid and t.get("reason") == "manual_close" for t in self.meta.get("trades", [])):
+                m.update(booked=True, journal=None, booked_cid=cid)   # the record is in; only a later step failed
+            else:
+                self._backoff(m, "book_n", "book_next_ms")
+            self.save()
+
+    def _manual_cancel_bot_orders(self, sym, orders=None) -> tuple[int, list]:
+        """Cancel the bot's own reducing orders (SL / TP / pre-arm) on a manual coin. Non-bot orders are never touched."""
+        if orders is None:
+            try:
+                orders = self.x("open_orders", sym)
+            except ExchangeError as e:
+                log.error("%s manual mode: open orders read failed (retried by reconcile): %s", sym, e)
+                return 0, [("open_orders", e)]
+        pending = tuple(f"{c}p" for c in self.st["intents"])
+        n, failed = 0, []
+        for o in orders:
+            c = str(o.get("client_id") or "")
+            if c.startswith(self.cfg.cid_prefix) and (o.get("close_position") or o.get("reduce_only")) and c not in pending:
+                try:
+                    self.x("cancel", sym, o)
+                    n += 1
+                except ExchangeError as e:
+                    failed.append((c, e))
+                    log.error("%s manual mode: cancel %s failed (retried): %s", sym, c, e)
+        return n, failed
+
+    def _manual_book(self, sym) -> bool:
+        """Book the taken-over journal from the exchange fills: the closing-side fills since the entry (bot AND manual)
+        in time order up to the opened qty. Read failure → retried with backoff while the coin stays manual."""
+        m = (self.meta.get("manual") or {}).get(sym)
+        if not m or m.get("booked") or not m.get("journal"):
+            return True
+        j = m["journal"]
+        opened = int(j.get("opened_ms") or self.now_ms())
+        try:
+            rows = self._dedupe_trade_ids(self.x("user_trades", sym, opened - 60_000))
+            fund = self.x("income", sym, "FUNDING_FEE", opened)
+        except ExchangeError as e:
+            self._backoff(m, "book_n", "book_next_ms")
+            self.save()
+            log.error("%s manual booking: fill read failed (retried): %s", sym, e)
+            return False
+        eid = str(j.get("entry_order_id") or "")
+        entry_fills = [self._as_fill(f) for f in self._entry_fills(j, rows, opened)]
+        t0 = self._trade_t0(j, rows)
+        cs = self._cs(j)
+        want = self._opened_qty(j, entry_fills)
+        stream = [f for f in j.get("stream_fills") or [] if f.get("side") in (None, cs)]
+        cand = self._merge_exit_fills([f for f in rows if f.get("side") == cs and str(f.get("order_id")) != eid
+                                       and int(f.get("time") or 0) >= t0], stream)
+        cand = [f for f in cand if int(f.get("time") or 0) >= t0 and str(f.get("order_id")) != eid]
+        cand.sort(key=lambda f: f["time"])
+        exits, need = [], want
+        for f in cand:                                      # up to the opened qty: a later manual round trip is not this trade
+            if need <= 0:
+                break
+            if f["qty"] > need:
+                k = need / f["qty"]
+                f = dict(f, qty=need, commission=f["commission"] * k)   # flip fill: rp is the closed part already
+            exits.append(f)
+            need -= f["qty"]
+        if need > 0 and int(m.get("book_n") or 0) < MANUAL_BOOK_TRIES:
+            self._backoff(m, "book_n", "book_next_ms")      # closing fills short of the opened qty: maybe not indexed
+            self.save()                                     # yet (or the rest is still his) → retry, then book as is
+            log.warning("%s manual booking: exit fills %s < opened %s → retry", sym, want - need, want)
+            return False
+        own = self._own_exit_order_ids(sym, j)
+        ext_q = sum((f["qty"] for f in exits if str(f["order_id"]) not in own), Decimal(0))
+        self._book_close(sym, j, "manual_close", want, entry_fills, exits, fund, opened, model_hook=False,
+                         extra={"external": True, "external_qty": f"{ext_q.normalize():f}", "manual_why": m.get("why"),
+                                "exit_qty": f"{(want - need).normalize():f}", "qty_short": need > 0})
+        m.update(booked=True, journal=None, booked_cid=j.get("cid"))
+        self.save()
+        return True
+
+    def _backoff(self, d, n_key, next_key):
+        n = int(d.get(n_key) or 0) + 1
+        d[n_key] = n
+        wait = min(self.cfg.reconcile_s * (2 ** min(n, 20)), max(self.cfg.hold_backoff_max_s, self.cfg.reconcile_s))
+        d[next_key] = self.now_ms() + int(wait * 1000)
+        return wait
+
+    def _manual_tick(self, sym, amt, orders):
+        """Reconcile step of a manual coin: no bot order except cancelling the bot's own leftovers, booking retried,
+        release after manual_release_s of a 0 position."""
+        m = self.meta["manual"][sym]
+        _n, failed = self._manual_cancel_bot_orders(sym, orders)
+        if amt == 0:
+            self._residual_watch(sym, failed, [])           # TA R3 (alerts only); the user's own orders: no alert
+        if not m.get("booked") and self.now_ms() >= int(m.get("book_next_ms") or 0):
+            self._manual_book_safe(sym)
+        if amt != 0:
+            if m.get("flat_since_ms") is not None:
+                m["flat_since_ms"] = None
+                self.save()
+            return
+        if m.get("flat_since_ms") is None:
+            m["flat_since_ms"] = self.now_ms()
+            self.save()
+        if self.now_ms() - int(m["flat_since_ms"]) < self.cfg.manual_release_s * 1000:
+            return
+        self.meta["manual"].pop(sym, None)
+        if not m.get("booked") and m.get("journal"):
+            ub = self.meta.setdefault("manual_unbooked", [])
+            ub.append({"sym": sym, "t_ms": self.now_ms(), "journal": m["journal"]})
+            del ub[:-50]
+        self.save()
+        self.notify(f"✅ 수동 모드 해제 — {sym} 거래소 포지션 0이 {self.cfg.manual_release_s / 60:g}분 유지 · "
+                    f"이 코인 봇 매매 재개" + (" · 수동 개입 거래 기록 미완료 (meta.manual_unbooked)"
+                                          if not m.get("booked") and m.get("journal") else ""), kind="resume")
 
     def emergency_flatten_all(self, reason):
         """§8c L3 only: equity ≤ halt_fraction × C0 (−25 %), a position that stays unprotected after L1, or API dead > 5 min with an
@@ -1921,8 +2214,10 @@ class V6Engine:
             return []
         return [f for f in fills if str(f.get("order_id")) == str(eid)]
 
-    def _own_exit_order_ids(self, sym, j) -> set[str]:
-        """Exchange order ids of THIS trade's SL / TP / close orders. Not a time window."""
+    def _own_exit_order_ids(self, sym, j, problems: list | None = None) -> set[str]:
+        """Exchange order ids of THIS trade's SL / TP / close orders. Not a time window. `problems` (optional) collects
+        lookups that failed or a filled conditional order whose resulting order id is not known yet: the id set is
+        then incomplete, so a fill outside it is not proof of a foreign order."""
         ids = set()
         base = str(j.get("cid") or "")
 
@@ -1952,14 +2247,25 @@ class V6Engine:
         for c in cids:
             try:
                 st = self.x("algo_order", sym, c)
-            except ExchangeError:
+            except ExchangeError as e:
                 st = None
-            if isinstance(st, dict) and st.get("order_id") not in (None, "", "None"):
+                if problems is not None:
+                    problems.append(f"algo {c}: {str(e)[:60]}")
+            if isinstance(st, dict) and st.get("order_id") not in (None, "", "None", "0", 0):
                 ids.add(str(st["order_id"]))
+            elif problems is not None and isinstance(st, dict) and (
+                    D(st.get("executed_qty") or 0) > 0 or str(st.get("status") or "") in ("TRIGGERED", "FINISHED", "TRIGGERING")):
+                problems.append(f"algo {c}: fired, order id unknown")
+            elif (problems is not None and st is None and c == f"{cid}t1" and j.get("tp1_done")
+                  and not any(str(o.get("client_id") or "") == c
+                              for o in (j.get("exit_orders") or []) + (j.get("stream_fills") or []))):
+                problems.append(f"algo {c}: TP1 filled per journal, order not found")   # its fill cannot be told apart
             try:
                 od = self.x("get_order", sym, c)
-            except ExchangeError:
+            except ExchangeError as e:
                 od = None
+                if problems is not None:
+                    problems.append(f"order {c}: {str(e)[:60]}")
             if isinstance(od, dict) and od.get("id") not in (None, "", "None"):
                 ids.add(str(od["id"]))
         return ids
@@ -1995,6 +2301,7 @@ class V6Engine:
         """Fills are not safe to book (missing trade id, or this trade's own orders over-filled). Stay open."""
         j["close_held"] = True
         j["reconcile_pending"] = True
+        self._backoff(j, "hold_backoff_n", "hold_next_ms")
         j.setdefault("close_reason", reason)
         n = int(j.get("pending_n") or 0) + 1
         j["pending_n"] = n
@@ -2075,6 +2382,8 @@ class V6Engine:
         """
         j["close_held"] = True
         j.setdefault("close_reason", reason)                 # halt / signal / time_exit survive the next reconcile
+        if not fetch_failed:                                 # D: a gap that persists → next re-read later and later
+            self._backoff(j, "hold_backoff_n", "hold_next_ms")   # (a failed read is cheap and retried as before)
         if fetch_failed:
             log.error("%s close record held: fill read failed (exit %s, opened %s)", sym, closed_qty, opened_qty)
         else:
@@ -2108,8 +2417,9 @@ class V6Engine:
             return "unknown", None
         if amt != 0:
             return "open", amt
-        fund, entry_fills, raw_exit = [], [], []
-        own = self._own_exit_order_ids(sym, j)
+        fund, entry_fills, raw_exit, fills = [], [], [], []
+        problems: list = []
+        own = self._own_exit_order_ids(sym, j, problems)
         stream = [f for f in (j.get("stream_fills") or []) if str(f.get("order_id")) in own]
         # the closing fill can lag userTrades (live SOL 2026-11-01). The first attempt re-reads query_retries times;
         # once the journal is already held, one poll per reconcile so other symbols are not stalled on the sleeps.
@@ -2150,9 +2460,26 @@ class V6Engine:
                                f"이 거래 주문 체결 {closed_qty.normalize():f} > 열린 {want.normalize():f} · 손익 기록 안 함")
             return "flat", Decimal(0)
         if closed_qty < want:
+            # user 2026-11-13: the rest was closed by an order the bot did not send (a manual close) → manual mode,
+            # booked from the exchange fills, instead of holding the journal open forever
+            eid = str(j.get("entry_order_id") or "")
+            if eid and not problems:
+                t0 = self._trade_t0(j, fills)
+                ext = [f for f in fills if str(f.get("order_id")) not in own and str(f.get("order_id")) != eid
+                       and int(f.get("time") or 0) >= t0]
+                if ext:
+                    self._manual_takeover(sym, "봇 주문이 아닌 체결로 청산됨",
+                                          f"열린 {want.normalize():f} · 봇 청산 {closed_qty.normalize():f} · " + self._rows_txt(ext),
+                                          flat=True)
+                    return "flat", Decimal(0)
             self._hold_close(sym, j, want, closed_qty, reason)   # stays open; the bound only re-alerts
             return "flat", Decimal(0)
         self.st["pos"].pop(sym, None)
+        self._book_close(sym, j, reason, want, entry_fills, exit_fills, fund, opened)
+        return "flat", Decimal(0)
+
+    def _book_close(self, sym, j, reason, want, entry_fills, exit_fills, fund, opened, *, model_hook=True, extra=None):
+        """Trade record + 🔵/🔴 + trade log line of a closed journal (already off st['pos'])."""
         gross = sum((f["realized_pnl"] for f in exit_fills), Decimal(0))
         fees = sum((f["commission"] for f in entry_fills + exit_fills), Decimal(0))
         funding = sum((r["amount"] for r in fund), Decimal(0))
@@ -2202,9 +2529,12 @@ class V6Engine:
                "actual_risk_pct": str((self._loss_to_stop(eq, e0, stop0, int(j.get("side", 1))) / w0 * 100)
                                       .quantize(Decimal("0.0001"))) if w0 > 0 else None,
                "exit_legs": exit_legs, "exit_px_avg": str(xpx)}       # exit_px = exit_px_avg (qty-weighted, kept for old readers)
+        if extra:
+            rec.update(extra)
+            rec["source"] = "exchange+manual"
         rec["outcome"] = REASON_KO.get(reason.split(" ")[0], reason)   # TA: TP1 then the BE stop = "1차 익절 후 본절"
         t_x = max((f["time"] for f in exit_fills), default=self.now_ms())
-        if reason.split(" ")[0] not in MODEL_EXITS:              # exchange stop / safety close, not a model exit
+        if model_hook and reason.split(" ")[0] not in MODEL_EXITS:   # exchange stop / safety close, not a model exit
             if self.strategy.on_live_closed(sym, j.get("model_entry_open"), reason, t_x, self):
                 rec["model_closed"] = "stop_out"
                 self.st["strategy"] = self.strategy.state
@@ -2228,9 +2558,9 @@ class V6Engine:
                      + (" (" + " / ".join(f"{x['qty']}@{x['price']}" for x in exit_legs) + ")" if len(exit_legs) > 1 else "")
                      + f" · 손절 {j['stop_px']}\n"
                      + "\n".join(leg_lines + [f"• 진입 수수료 {efee:.4f}"]), kind="exit", event_ms=t_x)
-        self._emit("trades", lambda: dict(self._trade_line(j, rec, entry_fills, exit_fills, t_x), outcome=rec["outcome"]))
+        self._emit("trades", lambda: dict(self._trade_line(j, rec, entry_fills, exit_fills, t_x), outcome=rec["outcome"],
+                                          **({"external": True, "external_qty": rec.get("external_qty")} if extra else {})))
         self.check_halts(daily=False)   # daily-loss check runs at the end of reconcile
-        return "flat", Decimal(0)
 
     # ───────────────────────── reconcile (exchange → local) ─────────────────────────
     def reconcile(self):
@@ -2264,6 +2594,13 @@ class V6Engine:
                 continue                                 # unknown: keep the journal in risk, do not cancel SL/TP
             j = self.st["pos"].get(sym)
             orders = self.x("open_orders", sym)
+            if self.in_manual(sym):                             # manual mode: no bot order on this coin at all
+                self._manual_tick(sym, amt, orders)
+                continue
+            if j and amt != 0:                                  # C: other side / bigger / back after flat → not ours
+                g = self._foreign_guard(sym, j, amt, (pos.get(sym) or {}).get("entry"))
+                if g:
+                    continue
             filled = None
             if j and amt != 0:                                  # exit order missing → its exchange status decides
                 r = self._exit_fills(sym, j, amt, orders)
@@ -2276,10 +2613,20 @@ class V6Engine:
                     except (ExchangeError, KeyError):
                         marks.pop(sym, None)
             if amt == 0 and j:
-                # record_close re-reads. A newer nonzero, or a failed read, replaces this snapshot: do not cancel.
-                verdict, fresh = self.record_close(sym, j.get("close_reason") or j.get("exit_fill") or "stop_loss")
+                if ((j.get("close_held") or j.get("reconcile_pending"))
+                        and self.now_ms() < int(j.get("hold_next_ms") or 0)):
+                    # D: held journal (already read flat), backoff not over → no fill re-read this round; the flat
+                    # branch below still retries cancelling the bot's leftover SL / TP from this snapshot
+                    verdict, fresh = "flat", Decimal(0)
+                else:
+                    # record_close re-reads. A newer nonzero, or a failed read, replaces this snapshot: do not cancel.
+                    verdict, fresh = self.record_close(sym, j.get("close_reason") or j.get("exit_fill") or "stop_loss")
+                if self.in_manual(sym):
+                    continue                                    # taken over by record_close (manual close)
                 if verdict == "open":
                     amt = fresh
+                    if self._foreign_guard(sym, j, amt):
+                        continue
                 elif verdict != "flat":
                     side = 1 if int(j.get("side", 1)) > 0 else -1
                     amt = D(j.get("qty") or 0) * side or Decimal(side)
@@ -2325,9 +2672,27 @@ class V6Engine:
                 mismatch.append(f"{sym} 방향 불일치 로컬 {j.get('side', 1)} / 거래소 {amt}")
             if filled is None and j.get("tp") and not j.get("tp1_done") and abs(amt) < D(j["qty"]) and not any(
                     o["client_id"] == f"{j['cid']}t1" for o in orders):   # fallback only: order status unreadable
-                j.update(tp1_done=True, qty=str(abs(amt)))  # TP1 filled (partial close) — expected, not a mismatch
+                q1 = D((j.get("tp") or {}).get("q1") or 0)   # TP1 filled (partial close) — expected, not a mismatch
+                j.update(tp1_done=True, qty=str(max(abs(amt), D(j["qty"]) - q1) if q1 > 0 else abs(amt)))
                 self.save()
                 self.notify(f"🔵 {sym} TP1 체결 → 남은 수량 {abs(amt)} · 손절을 본절로 이동", kind="exit")
+            if abs(amt) < D(j["qty"]):                          # smaller, not our TP1: a manual partial close?
+                if self.now_ms() < int(j.get("dec_next_ms") or 0):
+                    continue                                    # judged inconclusive recently: retry later, qty kept
+                ext, own_q = self._foreign_rows(sym, j, closing=True, with_own=True)
+                if ext:
+                    self._manual_takeover(sym, "봇 주문이 아닌 체결로 포지션 감소",
+                                          f"기록 {j['qty']} / 거래소 {amt} · " + self._rows_txt(ext))
+                    continue
+                need = self._opened_qty(j, []) - abs(amt)
+                if ext is None or own_q < need:                 # not explained by the bot's own fills (yet): do not
+                    self._backoff(j, "dec_n", "dec_next_ms")    # fold the gap into the journal, look again later
+                    self.save()
+                    log.error("%s position %s < journal %s, own exit fills %s < %s → not judged yet (exchange stop kept)",
+                              sym, amt, j["qty"], own_q, need)
+                    continue
+                j.pop("dec_n", None)
+                j.pop("dec_next_ms", None)
             if D(j["qty"]) != abs(amt):
                 mismatch.append(f"{sym} 수량 불일치 로컬 {j['qty']} / 거래소 {amt}")
                 j["qty"] = str(abs(amt))                       # exchange wins
@@ -2733,6 +3098,7 @@ class V6Engine:
             self.notify(f"💓 작동 중 · 잔고 {D(self.meta.get('wallet', '0')):.2f} USDT · 포지션 {self._open_position_count()}개"
                          + (f" · 기록 없는 포지션 {','.join(self.st['unknown'])}" if self.st["unknown"] else "")
                          + (f" · 청산 미확정 {','.join(sorted(held))}" if held else "")
+                         + (f" · 수동 모드 {','.join(sorted(self.meta['manual']))}" if self.meta.get("manual") else "")
                          + (f" · 진입 보류: {','.join(self.blocks)}" if self.blocks else "")
                          + (f" · 중단: {self.meta['halted']}" if self.meta.get("halted") else ""))
             self.save()

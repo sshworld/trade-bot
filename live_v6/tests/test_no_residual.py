@@ -43,8 +43,10 @@ def assert_no_residual(b, eng, sym, *, journal=True):
     if journal:
         assert sym not in eng.st["pos"] and not eng.st["intents"]
     else:
-        # a hand fill is not this trade's order, so the journal stays unconfirmed and is not booked
-        assert sym in eng.st["pos"] and not eng.meta.get("trades")
+        # user 2026-11-13: a hand fill is not this trade's order → manual mode: the journal is booked from the exchange
+        # fills (bot + manual, flagged external) and closed, and the coin is locked for the bot
+        assert sym not in eng.st["pos"] and eng.in_manual(sym)
+        assert [t for t in eng.meta.get("trades", []) if t["sym"] == sym][-1]["reason"] == "manual_close"
 
 
 def _stop_px(eng, sym=DOGE):
