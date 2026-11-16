@@ -25,12 +25,13 @@ modulo it uses (5-minute trailing cadence) is invariant under that shift (T0 % 5
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
 
 KST_DAY_OFFSET = 900            # 00:00 KST = 15:00 UTC = minute 900 of the UTC day
 GN = ("M", "D", "R", "H")
 SLOTS = 7
-RISK_MULT = 6.0                 # p116 L6 risk multiplier
+RISK_MULT = float(os.getenv("LIVE_V6_BUNDLE_RISK_MULT", "6.0"))   # p116 L6 risk multiplier; env lowers it for a first live run
 EXIT_REASON = {1: "stop", 3: "time", 4: "period_end"}
 HOLD_MIN = {0: 4320, 2: 2880, 3: 10080}   # D: until meta `last` (24 h or settlement − 30 min)
 
