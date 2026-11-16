@@ -1,0 +1,12 @@
+# /etc/systemd/system/tradebot-ci-confirm.timer — v2: every 5 min (was: 5 min after each 4h close, H7-T era).
+# `confirm` is a no-op unless a pending marker exists and ≥ 30 min have passed since that restart.
+[Unit]
+Description=tradebot CI: confirm pending deploy markers (every 5 min, v2)
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=false
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

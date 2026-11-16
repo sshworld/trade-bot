@@ -1,0 +1,76 @@
+# main → test → LIVE deploy (v2). A merge (push) to main IS the approval (성헌 2026-11-16): no reviewer, no ta-pass tag.
+# test: offline pytest, no secrets. deploy: GitHub Environment `live` (deployment branch policy: main only, no required
+# reviewer) holds VPS_SSH_KEY; the key only runs the VPS forced command `/opt/tradebot/ci/ci_deploy_entry.sh live`,
+# which runs ci_deploy.sh DETACHED (systemd-run) — the runner just uploads `git archive` and polls the job.
+# Binance / Telegram secrets never leave the VPS. The VPS side (installed by hand, never by a deploy) only swaps a symlink
+# and restarts the unit when no entry is in flight; it never places / cancels orders or touches exchange stops; a failed
+# verification rolls back to the last marked release or stops the bot (positions + exchange stops stay). See
+# live_v6/deploy/ci/INSTALL_CI_V2.md. Actions are pinned to commit SHAs.
+name: deploy-live
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'full 40-char commit sha on main to deploy (default: head of main)'
+        required: false
+      dry_run:
+        description: 'dry run: upload + import check + pre-checks on the VPS, change nothing'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: tradebot-deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      LIVE_V6_FORBID_MAINNET: '1'
+      LIVE_V6_REQUIRE_PYLINT: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.inputs.sha || github.sha }}
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r live_v6/requirements-dev.txt
+      - name: offline test suite (FakeExchange only; no testnet, no slow replay)
+        run: python -m pytest live_v6/tests -m "not testnet and not slow" -q -p no:cacheprovider
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: live
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: resolve the commit (must be on main)
+        id: r
+        env:
+          IN_SHA: ${{ github.event.inputs.sha }}
+          REF_SHA: ${{ github.sha }}
+        run: |
+          SHA="${IN_SHA:-$REF_SHA}"
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::bad sha"; exit 1; }
+          git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::$SHA is not on main"; exit 1; }
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+      - name: deploy to LIVE (detached on the VPS, polled here)
+        env:
+          SHA: ${{ steps.r.outputs.sha }}
+          BEFORE: ${{ github.event.before }}
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: bash live_v6/deploy/ci/gh_ssh_deploy.sh
