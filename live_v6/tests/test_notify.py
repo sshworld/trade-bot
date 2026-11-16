@@ -111,6 +111,10 @@ def test_daily_settlement_and_heartbeat():
     assert "DOGEUSDT M20 채널 청산" in s and "min_notional 1" in s and "보유: 없음" in s
     eng.tick()
     assert sum(m.startswith("📊") for m in tg.sent) == 1     # once per day
+    # Measure the next cadence from this instant. The jump to midnight is sometimes
+    # shorter than heartbeat_s (evening KST) and sometimes longer, so the raw gap
+    # from the first heartbeat is not a stable half-interval.
+    eng.meta["heartbeat_at"] = clk.t
     n_hb = sum(m.startswith("💓") for m in tg.sent)
     clk.t += eng.cfg.heartbeat_s / 2
     eng.tick()

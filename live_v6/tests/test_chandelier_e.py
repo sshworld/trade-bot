@@ -56,12 +56,14 @@ def minute(clk, j, k):
 
 
 def e_engine(b, clk, **kw):
+    kw.setdefault("exit_mode", "r")          # these cases stay on the R/E path; live default is full_tp_pct
     return exit_engine(b, clock=clk, **kw)
 
 
 def test_live_settings_are_e():
     s = live_settings("qrmtf")
-    assert s.trail_atr_k == 2.0 and s.be_fee == 0.0005 and s.be_offset == 0.0015 and s.tp2_r is None
+    assert s.exit_mode == "full_tp_pct" and s.tp_pct == 0.002
+    assert s.trail_atr_k == 2.0 and s.be_fee == 0.0005 and s.be_offset == 0.0015 and s.tp2_r is None  # r-mode only
     assert s.take_profit and s.tp1_r == 1.0 and s.tp1_frac == 0.5 and s.max_hold_s == 24 * 3600
 
 

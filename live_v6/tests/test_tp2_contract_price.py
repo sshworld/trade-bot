@@ -44,7 +44,7 @@ def test_restart_replaces_missing_tp2_on_contract_price_once(offline):
     eng = exit_engine(offline)
     open_pos(offline, eng, side=-1)
     t2 = _algos(offline, DOGE)["t2"]
-    offline.inner.algos.pop(t2["id"])                          # TP2 gone while the bot was down (cancelled by hand)
+    offline.inner.cancel(DOGE, t2)                             # TP2 gone while the bot was down (cancelled by hand)
     exit_engine(offline).reconcile()                           # restart
     eng3 = exit_engine(offline)
     eng3.reconcile()
@@ -70,7 +70,7 @@ def test_restart_replaces_missing_tp1_on_contract_price_once(offline):
     eng = exit_engine(offline)
     open_pos(offline, eng, side=1)
     t1 = _algos(offline, DOGE)["t1"]
-    offline.inner.algos.pop(t1["id"])                          # TP1 gone while the bot was down, price never reached it
+    offline.inner.cancel(DOGE, t1)                             # TP1 gone while the bot was down, price never reached it
     eng2 = exit_engine(offline)
     eng2.reconcile()
     eng2.reconcile()

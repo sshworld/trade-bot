@@ -169,13 +169,35 @@ def test_new_stop_confirmed_before_old_cancelled(backend):
     for o in backend.stops(DOGE):                                # replace with an insufficient qty stop of ours
         backend.inner.cancel(DOGE, o)
     backend.fx.clear()
-    backend.inner.stop(DOGE, "SELL", Decimal(eng.st["pos"][DOGE]["stop_px"]), f"v6tsmall{unique_T()}", qty=eng.rules[DOGE].step_size)
+    j = eng.st["pos"][DOGE]
+    backend.inner.stop(DOGE, "SELL", Decimal(j["stop_px"]), f"{j['cid']}s9", qty=eng.rules[DOGE].step_size)
     for m in ("stop", "cancel"):
         backend.fx.inject(m, (lambda name: lambda fn, *a, **kw: (seq.append(name), fn(*a, **kw))[1])(m), times=99)
     eng.reconcile()
     assert seq[:2] == ["stop", "cancel"], seq
     backend.assert_safe()
     assert close_orders(backend) == 0
+
+
+def test_market_entry_is_protected_if_the_flat_prearm_is_already_gone(offline):
+    """Market entries still send a reduce-only stop in the same call, before the market order. That stop does
+    not survive on Binance while the symbol is flat, and the fill does not depend on it: the closePosition
+    stop placed after the fill is the protection."""
+    eng = ready(offline)
+
+    def drop_flat(fn, s, side, trigger, cid, qty=None):
+        o = fn(s, side, trigger, cid, qty=qty)
+        if qty is not None and s not in offline.inner.pos:
+            offline.inner.algos.pop(o["id"], None)
+            offline.inner._algo_end(o, "CANCELED")
+        return o
+
+    offline.fx.inject("stop", drop_flat, times=1)
+    assert eng.enter(DOGE, offline.stop_dist(), unique_T())
+    st = offline.stops(DOGE)
+    assert len(st) == 1 and st[0]["close_position"]
+    assert not any(str(o["client_id"]).endswith("p") for o in st)
+    offline.assert_safe()
 
 
 def test_restart_with_stop_removed(backend):
