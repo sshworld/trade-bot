@@ -70,6 +70,15 @@ def live_settings(name: str, **kw) -> Settings:
                        halt_fraction=None, daily_loss_halt=0.10, startup_leverage=10,
                        daily_halt_s=0, daily_day_offset_s=9 * 3600, daily_halt_flatten=False,   # user 2026-11-13: KST day, -10 % → no new entries till 00:00 KST   # user 2026-10-30: -25 % total halt removed → daily -10 %, 24 h
                        bar_stale_s=180.0), **kw)   # bar_stale 180 s: 1m cadence, 3 missed minutes → block new entries
+    if name == "bundle_v5":
+        # bundle_v5: the strategy's own book sizes / stops / trails (fixed intents); the engine keeps the owner guards
+        # (KST-day −10 % no new entries, peak −20 % 24 h) and the order safety machinery. No TP, no engine trail/time exit.
+        kw = dict(dict(symbols=("BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT"), max_positions=7,
+                       enable_short=True, take_profit=False, trail_atr_k=0.0, max_hold_s=0,
+                       peak_dd_guard=0.80, peak_dd_release_s=24 * 3600, halt_fraction=None, daily_loss_halt=0.10,
+                       daily_halt_s=0, daily_day_offset_s=9 * 3600, daily_halt_flatten=False, bar_delay_s=3, bar_stale_s=180.0,
+                       entry_mode=os.getenv("LIVE_V6_ENTRY_MODE", "market"),
+                       postonly_timeout_s=float(os.getenv("LIVE_V6_POSTONLY_TIMEOUT_S", "300"))), **kw)
     return Settings(**kw)
 
 
@@ -88,6 +97,8 @@ def build(network: str | None = None):
         from .strategies.qrmtf import QRMTF as Strat
     elif name == "h7t":
         from .strategies.h7t import H7T as Strat
+    elif name == "bundle_v5":
+        from .strategies.bundle_v5 import BundleV5 as Strat
     elif name == "v6_h7":
         from .strategies.v6_h7 import V6H7 as Strat
         cfg.bar_stale_s = max(cfg.bar_stale_s, cfg.funding_wait_s + 120)   # bar close may legitimately wait for funding
@@ -147,6 +158,12 @@ def setup_logging():
 
 def run(network=None):
     setup_logging()
+    if os.getenv("LIVE_V6_PAPER") == "1":               # paper: public data only, no keys, no engine, no order client
+        if os.getenv("LIVE_V6_STRATEGY") != "bundle_v5":
+            raise SystemExit("LIVE_V6_PAPER=1 is implemented for LIVE_V6_STRATEGY=bundle_v5 only")
+        from .bundle_paper import run_paper
+        run_paper()
+        return
     rest, eng = build(network)
     q: queue.Queue = queue.Queue()
     ws = ws_base_for(rest.base_url)

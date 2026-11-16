@@ -91,6 +91,8 @@ class FakeExchange:
         return self.price[s]
 
     def book(self, s):
+        if s in getattr(self, "books", {}):                # tests: explicit bid / ask (post-only entries)
+            return dict(self.books[s])
         return {"bid": self.price[s], "ask": self.price[s]}
 
     def klines(self, s, interval, limit):
@@ -100,7 +102,10 @@ class FakeExchange:
         return []
 
     def open_orders(self, s):
-        return [dict(o) for o in self.algos.values() if o["symbol"] == s]
+        return [dict(o) for o in self.algos.values() if o["symbol"] == s] + [
+            {"kind": "std", "id": o["id"], "client_id": o["client_id"], "symbol": s, "type": "LIMIT", "side": o["side"],
+             "stop_price": Decimal(0), "close_position": False, "reduce_only": False}
+            for o in self.orders.values() if o["symbol"] == s and o["status"] in ("NEW", "PARTIALLY_FILLED")]
 
     def get_order(self, s, cid):
         return dict(self.orders[cid]) if cid in self.orders else None
@@ -228,6 +233,53 @@ class FakeExchange:
     def cancel(self, s, o):
         if self.algos.pop(o["id"], None) is not None:
             self._algo_end(o, "CANCELED")
+            return
+        for x in self.orders.values():                    # resting LIMIT entry
+            if x["id"] == o["id"] and x["status"] in ("NEW", "PARTIALLY_FILLED"):
+                x["status"] = "CANCELED"
+
+    def limit_postonly(self, s, side, qty, price, cid):
+        """LIMIT GTX: rejected (-5022) when it would cross the book (book(s) bid/ask), else rests as NEW.
+        Tests fill it with fill_limit(); `gtx_reject` = number of next submissions to refuse regardless."""
+        if cid in self.orders:
+            raise OrderRejected(-4116, "ClientOrderId is duplicated.")
+        price = Decimal(price)
+        bk = self.book(s)
+        if getattr(self, "gtx_reject", 0) > 0 or (side == "BUY" and price >= bk["ask"] and bk["ask"] != bk["bid"]) or \
+                (side == "SELL" and price <= bk["bid"] and bk["ask"] != bk["bid"]):
+            self.gtx_reject = max(0, getattr(self, "gtx_reject", 0) - 1)
+            self.accepted[cid] = self.accepted.get(cid, 0) + 1
+            raise OrderRejected(-5022, "Due to the order could not be executed as maker, the Post Only order will be rejected.")
+        oid = str(next(self._id))
+        self.accepted[cid] = self.accepted.get(cid, 0) + 1
+        self.orders[cid] = {"id": oid, "client_id": cid, "status": "NEW", "avg_price": Decimal(0), "executed_qty": Decimal(0),
+                            "orig_qty": Decimal(qty), "update_time": 0, "symbol": s, "side": side, "reduce_only": False,
+                            "price": price, "type": "LIMIT"}
+        return dict(self.orders[cid])
+
+    def fill_limit(self, cid, q):
+        """Test helper: the resting LIMIT order `cid` gets a (partial) fill of q at its price (position grows)."""
+        o = self.orders[cid]
+        assert o["status"] in ("NEW", "PARTIALLY_FILLED"), o["status"]
+        q = min(Decimal(q), o["orig_qty"] - o["executed_qty"])
+        s, px = o["symbol"], o["price"]
+        signed = q if o["side"] == "BUY" else -q
+        p = self.pos.get(s)
+        if p is None:
+            self._fill(s, signed, px, o["id"])
+        else:                                             # same-side add of the same entry order (averaging allowed)
+            fee = q * px * Decimal("0.0005")
+            self.wallet -= fee
+            amt = p["amt"] + signed
+            p["entry"] = (p["entry"] * abs(p["amt"]) + px * q) / abs(amt)
+            p["amt"] = amt
+            p["margin"] = abs(amt) * p["entry"] / self.lev[s]
+            self.fills.append({"symbol": s, "order_id": o["id"], "trade_id": str(next(self._id)), "side": o["side"],
+                               "price": px, "qty": q, "commission": fee, "realized_pnl": Decimal(0), "time": int(time.time() * 1000)})
+        tot = o["executed_qty"] + q
+        o["avg_price"] = (o["avg_price"] * o["executed_qty"] + px * q) / tot
+        o["executed_qty"] = tot
+        o["status"] = "FILLED" if tot == o["orig_qty"] else "PARTIALLY_FILLED"
 
     # test helpers
     def set_price(self, s, px):

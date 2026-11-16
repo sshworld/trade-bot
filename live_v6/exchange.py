@@ -343,6 +343,13 @@ class BinanceREST:
             p["reduceOnly"] = "true"
         return _norm_order(self._req("POST", "/fapi/v1/order", p, critical=bool(reduce_only)))   # closes: protective
 
+    def limit_postonly(self, symbol, side, qty, price, client_id) -> dict:
+        """LIMIT GTX (post-only) entry. Binance refuses an order that would take liquidity (-5022) or answers EXPIRED;
+        both reach the caller (OrderRejected / status EXPIRED with nothing filled)."""
+        p = {"symbol": symbol, "side": side, "type": "LIMIT", "timeInForce": "GTX", "quantity": fmt(qty),
+             "price": fmt(price), "newClientOrderId": client_id, "newOrderRespType": "RESULT"}
+        return _norm_order(self._req("POST", "/fapi/v1/order", p))
+
     def stop(self, symbol, side, trigger, client_id, qty=None) -> dict:
         """Exchange-side STOP_MARKET on MARK_PRICE. Default closePosition=true (closes exactly the live qty, whatever it
         becomes). With `qty`: reduceOnly quantity stop — used only as the overlapping replacement while an existing

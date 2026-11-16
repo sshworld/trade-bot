@@ -39,7 +39,7 @@ from .strategies.base import DataNotReady
 from .exchange import ExchangeError, ExchangeUnavailable, OrderRejected, WouldTrigger, rules_from_info
 from .notify import Notifier
 from .rules import D, SymbolRules, stop_price
-from .sizing import TAKER_FEE, SizingParams, size_entry
+from .sizing import TAKER_FEE, Sized, SizingParams, precheck_order, size_entry
 from .tradelog import kst
 
 log = logging.getLogger("live_v6.engine")
@@ -149,6 +149,8 @@ class Settings:
     # (same audit entry as tools/clear_peak_halt.py --reset-peak, by "auto"); 0 = team-only clear (old behaviour)
     peak_dd_release_s: float = 0.0
     max_hold_s: float = 0               # > 0: reduceOnly market close after this long (24 h live)
+    entry_mode: str = "market"          # "market" | "postonly_timeout" (bundle_v5 option, user 2026-11-16): post-only
+    postonly_timeout_s: float = 300     # LIMIT GTX at the entry-side best quote; unfilled rest cancelled after this
     # live 2026-10-30 15:07 KST SOLUSDT: set 10x echoed, symbolConfig still 20x right after → entry skipped; re-read
     # symbolConfig up to lev_confirm_reads times (lev_confirm_wait_s apart) while it shows the wrong value
     lev_confirm_reads: int = 5
@@ -174,6 +176,11 @@ EXIT_KIND = {"stop_loss": "exchange_close", "be_stop": "exchange_close", "trail_
 # A close is never committed on this timer.
 CLOSE_HOLD_MAX = 12
 MANUAL_BOOK_TRIES = 6       # manual-mode booking: re-reads (backoff) while closing fills are short of the opened qty
+
+
+def _tick_near(px: Decimal, tick: Decimal) -> Decimal:
+    """Nearest tick multiple (bundle_v5 prices are already tick-rounded floats, e.g. 0.044320000000000005)."""
+    return (px / tick).to_integral_value() * tick
 
 
 class V6Engine:
@@ -452,6 +459,8 @@ class V6Engine:
     def resolve_intents(self):
         """An entry intent survives a crash between 'order sent' and 'position journaled': resolve it by client id."""
         for cid, it in list(self.st["intents"].items()):
+            if it.get("pending"):                           # post-only entry: poll_postonly resolves it (cancel at timeout)
+                continue
             try:
                 o = self.x("get_order", it["sym"], cid)
             except ExchangeUnavailable:
@@ -588,9 +597,16 @@ class V6Engine:
                 if self.now_ms() - t > max_age * 1000:
                     self.skip(sym, "late", f"signal {(self.now_ms() - t) / 1000:.1f}s old > {max_age}s",
                               signal_px=it.get("signal_px"), signal_ms=it.get("model_id") or t)
+                    if it.get("fixed") is not None:
+                        self._entry_failed(sym, {"bundle_cid": it.get("cid")}, "late")
                     continue
-                self.enter(sym, it["stop_dist"], t, model_id=it.get("model_id"), signal_px=it.get("signal_px"),
-                           side=int(it.get("side", 1)))
+                self._ef_done = False
+                ok = self.enter(sym, it["stop_dist"], t, model_id=it.get("model_id"), signal_px=it.get("signal_px"),
+                                side=int(it.get("side", 1)), fixed=it.get("fixed"), bundle_cid=it.get("cid"))
+                if not ok and it.get("fixed") is not None and not self._pending_postonly(sym) and not self._ef_done:
+                    self._entry_failed(sym, {"bundle_cid": it.get("cid")}, "not_entered")
+            elif it["type"] == "stop":                      # bundle_v5: strategy-owned trailing stop (tighten only)
+                self.move_stop(sym, D(str(it["stop_px"])))
 
     # ───────────────────────── stream events ─────────────────────────
     def on_event(self, ev):
@@ -898,16 +914,54 @@ class V6Engine:
             return None
         return sz, acct, ref
 
-    def enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None, side: int = 1) -> bool:
-        """Entry flow (`_enter`); remembers the signal so a skip on the way is logged with its signal price."""
+    def enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None, side: int = 1, fixed=None,
+              bundle_cid=None) -> bool:
+        """Entry flow (`_enter`); remembers the signal so a skip on the way is logged with its signal price.
+        fixed (bundle_v5): {"qty", "stop_px", "lev"} decided by the strategy's own book — the engine does not size,
+        only validates the order against the exchange filters (precheck_order) and executes it with the same
+        pre-arm → fill → closePosition stop → manual-mode / direction / backoff machinery as every other entry."""
         self._sig = (sym, signal_px, model_id or T)
         self._sig_side = side
         try:
-            return self._enter(sym, stop_dist, T, model_id=model_id, signal_px=signal_px, side=side)
+            return self._enter(sym, stop_dist, T, model_id=model_id, signal_px=signal_px, side=side, fixed=fixed,
+                               bundle_cid=bundle_cid)
         finally:
             self._sig, self._sig_side = None, 1
 
-    def _enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None, side: int = 1) -> bool:
+    def _size(self, sym, stop_dist, book, side, fixed, fixed_lev=None):
+        if fixed is None:
+            return self._size_fresh(sym, stop_dist, book, fixed_lev=fixed_lev, side=side)
+        return self._size_fixed(sym, fixed, side)
+
+    def _size_fixed(self, sym, fixed: dict, side: int):
+        """bundle_v5: quantity / absolute stop / leverage come from the strategy; read the exchange NOW and refuse an
+        order the exchange would reject (step, minQty/minNotional, PERCENT_PRICE, stop side, bracket, margin)."""
+        try:
+            rules = SymbolRules.from_exchange_info(self.x("exchange_info"), sym)
+            brk = self.x("brackets", sym)
+            bk = self.x("book", sym)
+            ref, bid = (D(bk["ask"]), D(bk["bid"])) if side > 0 else (D(bk["bid"]), D(bk["ask"]))
+            mark = D(self.x("mark_price", sym)) if rules.pct_up is not None else None
+            acct = self.x("account")
+        except (ExchangeError, KeyError, ArithmeticError, TypeError, ValueError, AttributeError) as e:
+            self.skip(sym, "filter_read_failed", f"{type(e).__name__}: {str(e)[:100]}")
+            return None
+        self.rules[sym], self.brackets[sym] = rules, brk
+        qty = (D(str(fixed["qty"])) // rules.order_step) * rules.order_step
+        stop_px = _tick_near(D(str(fixed["stop_px"])), rules.tick_size)   # model stop is tick-rounded in float
+        lev = int(fixed["lev"])
+        why, detail = precheck_order(rules, brk, qty, ref, lev, stop_px, D(acct["available"]), side, bid=bid, mark=mark,
+                                     p=self.cfg.sizing)
+        if why:
+            self.skip(sym, why, detail)
+            return None
+        risk = abs(ref - stop_px) * qty
+        return Sized(None, qty=qty, notional=qty * ref, lev=lev, mmr=0.0, stop_px=stop_px, risk_usdt=risk,
+                     risk_frac=0.0, risk_pct_used=0.0, margin=qty * ref / lev, path="bundle", q0=qty, cap_frac=1.0,
+                     cap_label="bundle"), acct, ref
+
+    def _enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None, side: int = 1, fixed=None,
+               bundle_cid=None) -> bool:
         if side < 0 and not self.cfg.enable_short:
             self.skip(sym, "short_disabled", "short entries are off (enable_short=False)")
             return False
@@ -919,6 +973,9 @@ class V6Engine:
             return False
         if self.in_manual(sym):                             # manual mode: no bot entry on this coin
             self.skip(sym, "manual_mode", str(self.meta["manual"][sym].get("why")))
+            return False
+        if self._pending_postonly(sym):                     # a resting post-only entry on this coin is still working
+            self.skip(sym, "entry_pending", "post-only entry order still working")
             return False
         if sym in self.st["unknown"]:                       # TA R4: entries blocked for THIS coin only
             self.skip(sym, UNKNOWN_POS, f"exchange position {self.st['unknown'][sym].get('amt')} not in the state file")
@@ -956,7 +1013,7 @@ class V6Engine:
             return False
         if self._dir_capped(sym, book, side):
             return False
-        got = self._size_fresh(sym, stop_dist, book, side=side)
+        got = self._size(sym, stop_dist, book, side, fixed)
         if got is None:
             return False
         sz, acct, ref = got
@@ -999,7 +1056,7 @@ class V6Engine:
         # SECOND PASS right before the order: price, ATR-based stop distance (as passed in), wallet, available balance,
         # exchangeInfo and brackets are read again and qty / minNotional / margin / bracket are recomputed with the
         # CONFIRMED leverage; nothing computed before the leverage call is reused.
-        got = self._size_fresh(sym, stop_dist, book, fixed_lev=sz.lev, side=side)
+        got = self._size(sym, stop_dist, book, side, fixed, fixed_lev=sz.lev)
         if got is None:
             return False
         sz, acct, ref = got
@@ -1011,6 +1068,9 @@ class V6Engine:
                   "signal_px": str(signal_px) if signal_px is not None else None, "stop_dist": str(stop_dist), "ref": str(ref), "qty": str(sz.qty),
                   "lev": sz.lev, "mmr": sz.mmr, "risk_frac": sz.risk_frac, "risk_pct_used": sz.risk_pct_used,
                   "wallet": str(acct["wallet"]), "path": sz.path, "q0": str(sz.q0), "loss_frac": sz.loss_frac}
+        if fixed is not None:
+            intent["stop_abs"] = str(sz.stop_px)            # bundle_v5: absolute model stop, not fill − distance
+            intent["bundle_cid"] = bundle_cid
         # PRE-ARM: a reduceOnly STOP_MARKET for the planned qty is live on the exchange BEFORE the entry is sent, so
         # there is no instant between fill and stop without exchange-side protection (closePosition stops cannot be
         # placed without a position: -4509). Not confirmed → no entry.
@@ -1024,6 +1084,8 @@ class V6Engine:
                       same_side_open=sum(1 for b in book if b["side"] == side))
         self.st["intents"][cid] = intent
         self.save()                                         # journal the intent BEFORE sending
+        if self.cfg.entry_mode == "postonly_timeout":
+            return self._postonly_start(sym, side, sz, cid, intent, pre)
         try:
             o = self.submit_market(sym, "BUY" if side > 0 else "SELL", sz.qty, cid, reduce_only=False)
         except OrderRejected as e:                          # DEFINITIVE rejection: nothing was opened → undo everything
@@ -1139,6 +1201,8 @@ class V6Engine:
         qty = o["executed_qty"]
         side = int(intent.get("side", 1))
         stp = stop_price(self.rules[sym], fill, side, sd)    # re-placed from the FILL at the same distance (TA)
+        if intent.get("stop_abs"):                           # bundle_v5: the model's absolute stop price
+            stp = D(intent["stop_abs"])
         j = {"cid": intent["cid"], "side": side, "qty": str(qty), "entry_qty": str(qty), "entry_px": str(fill), "stop_px": str(stp),
              "stop_dist": str(sd), "risk_usdt": str(abs(fill - stp) * qty), "risk_frac": intent["risk_frac"],
              "lev": intent["lev"], "mmr": intent["mmr"], "model_entry_open": intent.get("model_id", intent["T"]), "opened_ms": self.now_ms(),
@@ -1456,6 +1520,243 @@ class V6Engine:
                 self._cancel_quiet(sym, o)
         return "ok"
 
+    # ───────────────────────── post-only entry (entry_mode = "postonly_timeout") ─────────────────────────
+    # The reduceOnly pre-arm stop (planned qty) is live BEFORE the limit order is sent, so every partial fill is
+    # protected from its first instant (reduceOnly: it closes at most what is filled). The first fill journals the
+    # position and upgrades to a closePosition stop (covers whatever the filled qty grows to) — new stop confirmed,
+    # then the pre-arm cancelled. Timeout → the rest is cancelled, the filled part is managed; nothing filled →
+    # pre-arm and order cancelled (no orphan). GTX refusal → ONE resubmit at the fresh best quote, then given up.
+    def _pending_postonly(self, sym):
+        return next((cid for cid, it in self.st["intents"].items() if it.get("sym") == sym and it.get("pending")), None)
+
+    def _postonly_px(self, sym, side):
+        bk = self.x("book", sym)
+        return D(bk["bid"]) if side > 0 else D(bk["ask"])
+
+    def _postonly_start(self, sym, side, sz, cid, intent, pre) -> bool:
+        for attempt in range(2):
+            ocid = f"{cid}L{attempt}"
+            try:
+                px = self._postonly_px(sym, side)
+                intent["pending"] = {"ocid": ocid, "price": str(px), "placed_ms": self.now_ms(), "filled": "0",
+                                     "timeout_s": self.cfg.postonly_timeout_s}
+                self.save()                                 # journal the order id BEFORE sending
+                o = self.x("limit_postonly", sym, "BUY" if side > 0 else "SELL", sz.qty, px, ocid)
+            except OrderRejected as e:
+                if e.code == -5022 and attempt == 0:
+                    log.info("%s post-only refused (would take) → one resubmit at the fresh quote", sym)
+                    continue
+                self._postonly_abandon(sym, cid, intent, "postonly_rejected" if e.code == -5022 else "entry_rejected",
+                                       f"{sz.qty} @ {intent['pending'].get('price')}: {str(e)[:120]}")
+                return False
+            except ExchangeError as e:                      # unknown outcome: the order id is journaled → poll decides
+                log.error("%s post-only submit outcome unknown (%s) → resolved by order id", sym, e)
+                return True
+            if o.get("status") == "EXPIRED" and o["executed_qty"] <= 0:   # some venues expire instead of -5022
+                if attempt == 0:
+                    continue
+                self._postonly_abandon(sym, cid, intent, "postonly_rejected", "GTX expired twice")
+                return False
+            intent["pending"]["order_id"] = o["id"]
+            self.save()
+            log.info("%s post-only entry %s %s @ %s (timeout %ss)", sym, ocid, sz.qty, px, self.cfg.postonly_timeout_s)
+            self.poll_postonly(only=cid)                    # a fill already in the response is handled now
+            return True
+        return False
+
+    def _postonly_abandon(self, sym, cid, intent, why, detail):
+        """Nothing filled: cancel the pre-arm (and any order of this entry still open), drop the intent."""
+        try:
+            for o in self.x("open_orders", sym):
+                c = str(o.get("client_id") or "")
+                if c == f"{cid}p" or c.startswith(f"{cid}L"):
+                    self._cancel_quiet(sym, o)
+        except ExchangeError:
+            if intent.get("prearm"):
+                self._cancel_quiet(sym, {"kind": "algo", "id": intent["prearm"], "client_id": f"{cid}p"})
+        self.st["intents"].pop(cid, None)
+        self.save()
+        self.skip(sym, why, detail)
+        self._entry_failed(sym, intent, why)
+
+    def _entry_failed(self, sym, intent, why):
+        self._ef_done = True
+        hook = getattr(self.strategy, "on_entry_failed", None)
+        if hook is not None and sym not in self.st["pos"]:
+            try:
+                hook(sym, intent.get("bundle_cid"), why, self)
+                self.st["strategy"] = self.strategy.state       # the freed slot survives a restart
+                self.save()
+            except Exception:  # noqa: BLE001
+                log.exception("%s on_entry_failed", sym)
+
+    def poll_postonly(self, only=None):
+        for cid, it in list(self.st["intents"].items()):
+            if not it.get("pending") or (only is not None and cid != only):
+                continue
+            try:
+                self._poll_one(cid, it)
+            except ExchangeError as e:
+                log.error("%s post-only poll failed (%s) → next tick (pre-arm / stop stays)", it["sym"], e)
+
+    def _cancel_entry(self, sym, it):
+        """Cancel the resting post-only entry order; True once the exchange shows it no longer working."""
+        pd_ = it["pending"]
+        try:
+            self.x("cancel", sym, {"kind": "std", "id": pd_.get("order_id"), "client_id": pd_["ocid"]})
+        except ExchangeError as e:
+            log.error("%s cancel of the post-only entry failed (%s) → retried", sym, e)
+        o = self.x("get_order", sym, pd_["ocid"])
+        return o, o is None or o["status"] not in ("NEW", "PARTIALLY_FILLED")
+
+    def _poll_one(self, cid, it):
+        sym, pd_ = it["sym"], it["pending"]
+        o = self.x("get_order", sym, pd_["ocid"])
+        if o is None:                                       # never reached the exchange
+            if self.now_ms() - int(pd_["placed_ms"]) >= 5000:
+                self._postonly_abandon(sym, cid, it, "order_absent", f"{pd_['ocid']} not found")
+            return
+        self._postonly_fills(sym, cid, it, o)
+        live = o["status"] in ("NEW", "PARTIALLY_FILLED")
+        handover = None
+        if live:
+            # the position must still be exactly what this entry built: stopped out / reduced / reversed / taken over
+            # by hand → stop adding at once and give the symbol back to reconcile (record_close, manual / foreign guards)
+            j = self.st["pos"].get(sym)
+            amt = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+            side = int(it.get("side", 1))
+            if self.in_manual(sym):
+                handover = "manual_mode"
+            elif j is not None and j.get("closing"):
+                handover = "closing"
+            elif amt is not None and (amt * side < 0 or (D(pd_["filled"]) > 0 and abs(amt) < D(pd_["filled"]))):
+                handover = f"position {amt} < filled {pd_['filled']}"
+            elif self.now_ms() - int(pd_["placed_ms"]) >= float(pd_.get("timeout_s") or self.cfg.postonly_timeout_s) * 1000:
+                handover = "timeout"
+            if handover is None:
+                return
+            o, done = self._cancel_entry(sym, it)
+            if not done:
+                return                                      # cancel not effective yet → next tick (stop stays)
+            if o is not None:
+                self._postonly_fills(sym, cid, it, o)
+        if o is None or o["executed_qty"] <= 0:
+            self._postonly_abandon(sym, cid, it, "postonly_timeout" if handover == "timeout" else "postonly_unfilled",
+                                   f"{pd_['ocid']} {o['status'] if o else '?'} · 0 체결 · 선행 손절 취소")
+            return
+        j = self.st["pos"].get(sym)
+        if not it.get("protected") and not (j is not None and j.get("closing")):
+            return                                          # first-fill protection not confirmed yet → retried next tick
+        self.st["intents"].pop(cid, None)                   # done: the filled part is a normal position from here
+        self.save()
+        if handover in (None, "timeout") and j is not None:  # mismatch / manual: reconcile judges, journal untouched
+            try:
+                amt = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+                if amt and amt * int(j.get("side", 1)) > 0 and abs(amt) != D(j["qty"]):
+                    j["qty"] = j["entry_qty"] = str(abs(amt))
+                    self.save()
+            except ExchangeError:
+                pass
+        if j is not None and j.get("trail_target") and not j.get("closing"):
+            self.move_stop(sym, D(j.pop("trail_target")))   # a trail asked for while the entry was working
+        if j is not None and j.get("closing"):
+            self.close(sym, j.get("close_reason") or "retry")
+        log.info("%s post-only entry done %s (%s)", sym, o["executed_qty"], handover or o["status"])
+
+    def _postonly_fills(self, sym, cid, it, o):
+        pd_ = it["pending"]
+        ex = o["executed_qty"]
+        j = self.st["pos"].get(sym)
+        if ex > D(pd_["filled"]):
+            if j is None:                                   # first fill: journal (stop = model stop) BEFORE anything else
+                j = self._journal_entry(sym, it, o)
+                j["entry_mode"] = "postonly"
+            else:                                           # later fill: the closePosition stop covers it
+                j["qty"] = j["entry_qty"] = str(ex)
+                j["entry_px"] = str(o["avg_price"]) if o["avg_price"] > 0 else j["entry_px"]
+                j["risk_usdt"] = str(abs(D(j["entry_px"]) - D(j["stop_px"])) * ex)
+            pd_["filled"] = str(ex)
+            self.save()
+        if j is None or it.get("protected"):
+            return
+        # first-fill protection (retried every poll until confirmed, also after a restart): closePosition stop at the
+        # model stop, read back, THEN the pre-arm cancelled. Until then the pre-arm (planned qty ≥ any fill) protects.
+        try:
+            oo = self.x("open_orders", sym)
+        except ExchangeError:
+            return
+        if any(x["close_position"] and x["side"] == self._cs(j) for x in oo):
+            it["protected"] = True
+            for x in oo:
+                if str(x.get("client_id") or "") == f"{cid}p":
+                    self._cancel_quiet(sym, x)
+            self.save()
+            return
+        pre = next((x for x in oo if str(x.get("client_id") or "") == f"{cid}p"), None) or \
+            {"kind": "algo", "id": it.get("prearm"), "client_id": f"{cid}p", "stop_price": D(j["stop_px"])}
+        up = self._upgrade_stop(sym, j, pre)
+        if up == "ok":
+            it["protected"] = True
+            self.save()
+            self.notify(f"🟢 {sym} {'롱' if int(j.get('side', 1)) > 0 else '숏'} 지정가(post-only) 체결 {j['qty']} @ {j['entry_px']}"
+                        f" · 손절 {j['stop_px']}", kind="entry")
+            return
+        if up == "rejected":
+            self.alert("진입 체결 후 손절 거절 — 전량 청산", f"{sym} {j['qty']} · 손절 {j['stop_px']} 거절/즉시발동")
+            j["closing"], j["close_reason"] = True, "stop_rejected_after_fill"
+            self.save()
+            return                                          # _poll_one cancels the entry order, then closes
+        log.error("%s post-only first-fill closePosition stop not confirmed → pre-arm keeps protecting, retried", sym)
+
+    def move_stop(self, sym, tgt: Decimal) -> str:
+        """bundle_v5 trailing: the strategy computed a tighter stop on the completed bar → `_replace_stop` (new stop
+        placed and read back BEFORE the old one is cancelled; mark already through → reduceOnly close). Never loosens;
+        refused in manual mode / while closing / without a journal."""
+        j = self.st["pos"].get(sym)
+        if j is None or j.get("closing") or self.in_manual(sym):
+            return "skipped"
+        if self._pending_postonly(sym):                     # entry still filling: the closePosition stop must stay
+            j["trail_target"] = str(tgt)                    # (a qty stop would not cover later fills) → applied after
+            self.save()
+            return "deferred"
+        s = int(j.get("side", 1))
+        if sym in self.rules:
+            tgt = _tick_near(tgt, self.rules[sym].tick_size)
+        if not s * (tgt - D(j["stop_px"])) > 0:
+            return "not_tighter"
+        try:
+            amt = self._row_amt(self.x("positions", self.cfg.symbols), sym)
+        except ExchangeError as e:
+            log.error("%s trail: positions read failed (%s) → old stop kept, retried next minute", sym, e)
+            return "pending"
+        if not amt:
+            return "flat"
+        mk = self.marks.get(sym)
+        if mk is None:
+            try:
+                mk = self.x("mark_price", sym)
+            except ExchangeError:
+                mk = None
+        r = self._replace_stop(sym, j, abs(amt), tgt, mk, "trail")
+        log.info("%s bundle trail stop %s → %s: %s", sym, j.get("stop_px"), tgt, r)
+        return r
+
+    def track_symbols(self, syms) -> list:
+        """bundle_v5: the bundle trades symbols outside the static list (H 52-week-high / D delisting coins). Add them
+        to cfg.symbols (positions / reconcile / orphan cleanup then cover them) and load their filters."""
+        new = [s for s in syms if s not in self.cfg.symbols]
+        if not new:
+            return []
+        self.cfg.symbols = tuple(self.cfg.symbols) + tuple(new)
+        try:
+            info = self.x("exchange_info")
+            self.rules.update(rules_from_info(info, new))
+            for s in new:
+                self.brackets[s] = self.x("brackets", s)
+        except ExchangeError as e:
+            log.error("track_symbols %s: filters not loaded (%s) → the entry path reads them again", new, e)
+        return new
+
     def _trail_atr(self, sym, j) -> Decimal | None:
         """ATR14 (Wilder) of the last CLOSED 1h bar, cached in the journal per hour (one 150-bar read per hour)."""
         h_last = self.now_ms() // 3_600_000 * 3_600_000 - 3_600_000
@@ -1592,6 +1893,20 @@ class V6Engine:
             return False
         if not j.get("closing"):
             j["closing"], j["close_reason"] = True, reason
+            self.save()
+        pc = self._pending_postonly(sym)
+        if pc is not None:                                  # a resting post-only entry must not add after the close:
+            it = self.st["intents"][pc]                     # it is cancelled FIRST; not confirmed → no close yet (the
+            try:                                            # exchange stop stays), poll_postonly retries and closes
+                o, done = self._cancel_entry(sym, it)
+            except ExchangeError as e:
+                log.error("%s close: post-only entry state unknown (%s) → close retried by poll", sym, e)
+                return False
+            if not done:
+                return False
+            if o is not None:
+                self._postonly_fills(sym, pc, it, o)
+            self.st["intents"].pop(pc, None)
             self.save()
         if self.ban_left() > 0:                             # 418: nothing can be sent → queued for the unban tick
             self._queued[sym] = "close"
@@ -2593,6 +2908,8 @@ class V6Engine:
             if amt is None:
                 continue                                 # unknown: keep the journal in risk, do not cancel SL/TP
             j = self.st["pos"].get(sym)
+            if self._pending_postonly(sym):                     # post-only entry still working: poll_postonly owns it
+                continue                                        # (pre-arm / closePosition stop protect every fill)
             orders = self.x("open_orders", sym)
             if self.in_manual(sym):                             # manual mode: no bot order on this coin at all
                 self._manual_tick(sym, amt, orders)
@@ -3156,6 +3473,8 @@ class V6Engine:
         elif RATE_LIMIT in self.blocks:
             self.unblock(RATE_LIMIT)
             self._dirty = True
+        if not backoff and any(it.get("pending") for it in self.st["intents"].values()):
+            self.poll_postonly()                            # post-only entries: fills → stop, timeout → cancel
         if not backoff and (force_reconcile or self._dirty or self.clock() - self._last_reconcile >= self.cfg.reconcile_s):
             self._dirty = False
             self._last_reconcile = self.clock()
