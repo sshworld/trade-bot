@@ -88,6 +88,9 @@ case "$TARGET" in
     BACKUP_DIR=$R/root/ci-backups/testnet ;;
   *) echo "usage: $0 deploy|rollback|status|confirm|adopt live|testnet [sha40 [tarfile]] [--dry-run]" >&2; exit 2 ;;
 esac
+# The unit may point the bot at another state file (LIVE_V6_STATE in a drop-in, e.g. bundle_v5); follow it.
+_unit_state=$(systemctl show "$UNIT" -p Environment --value 2>/dev/null | tr ' ' '\n' | sed -n 's/^LIVE_V6_STATE=//p' | tail -1)
+case "$_unit_state" in /*) STATE=$R$_unit_state ;; esac
 if [ "$SIM_FAIL$SIM_STOPS$SIM_RB_FAIL" != 000 ] && [ "$TARGET" != testnet ]; then echo "CI_SIMULATE_* drills are testnet-only" >&2; exit 2; fi
 
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
