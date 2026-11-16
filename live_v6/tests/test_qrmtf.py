@@ -332,6 +332,8 @@ def test_short_history_tf_contributes_zero(offline):
 
 def test_rest_weight_per_minute_steady_state(offline):
     clk = Clock()
+    clk.t = clk.t // 900 * 900 + 5.0     # start on a 15m boundary: the +1 min step below must not close a 15m / 30m / 1h bar
+                                         # (started at minute 14 of a quarter it did → 15m refetched → ~1 in 15 runs failed)
     eng, strat = mtf_engine(offline, clk)
     for s in eng.cfg.symbols:
         set_market(offline, s, "up", "down", "up", int(clk.t * 1000), px=0.15)
