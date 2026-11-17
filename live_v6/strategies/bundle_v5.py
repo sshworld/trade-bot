@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 
 from .base import DataNotReady, Strategy
 from . import bundle_v5_signals as SG
-from .bundle_v5_core import GN, Book, Cand
+from .bundle_v5_core import FIXED_RISK_MULT, GN, Book, Cand, fixed_fraction_weights
 
 log = logging.getLogger("live_v6.bundle_v5")
 KST = timezone(timedelta(hours=9))
@@ -49,6 +49,59 @@ class BundleConfig:
     delay_s: float = 3.0            # act this long after a minute boundary (bars settle)
     atomic: bool = True             # roll the minute back on DataNotReady (live); replay sets False (speed)
     end: int | None = None          # replay only: research period end (exclusive) → period_end exits
+    risk_pct: tuple | None = None   # fixed-fraction sizing: % of the wallet risked per trade by (M, D, R, H); 0 = off.
+    #                                 None = legacy IV weights x LIVE_V6_BUNDLE_RISK_MULT
+    margin: str = "sleeve"          # "pooled": no per-component margin budget, only the account's free margin
+
+
+def sizing_from_env(env=None) -> dict:
+    """BundleConfig kwargs from the environment. Ratios only - no USDT amount is configured anywhere.
+
+      LIVE_V6_BUNDLE_RISK_PCT="M:2,D:0,R:0,H:9"   % of the wallet risked per trade, all four required, 0 = component off
+      LIVE_V6_BUNDLE_MARGIN=pooled|sleeve          default sleeve (legacy); pooled only together with RISK_PCT
+
+    Anything malformed refuses to start - a variable that is set but empty included: a sizing the operator did not
+    write down must never be picked silently.
+
+    RISK_PCT takes precedence over the legacy LIVE_V6_BUNDLE_RISK_MULT: with RISK_PCT set the multiplier is NOT applied
+    (the book runs at the research multiplier 6 the fractions are defined for). RISK_MULT stays in the unit on
+    purpose: the automatic rollback switches the code only, and a release from before this option ignores RISK_PCT -
+    it must then find its old multiplier instead of the default 6."""
+    env = os.environ if env is None else env
+    out = {}
+    margin = env.get("LIVE_V6_BUNDLE_MARGIN")
+    if margin is not None:
+        margin = margin.strip().lower()
+        if margin not in ("sleeve", "pooled"):
+            raise ValueError(f"LIVE_V6_BUNDLE_MARGIN must be sleeve or pooled: {margin!r}")
+    out["margin"] = margin or "sleeve"
+    raw = env.get("LIVE_V6_BUNDLE_RISK_PCT")
+    if raw is None:
+        if out["margin"] == "pooled":
+            raise ValueError("LIVE_V6_BUNDLE_MARGIN=pooled needs LIVE_V6_BUNDLE_RISK_PCT (pooled is validated with "
+                             "fixed fractions only)")
+        return out
+    got = {}
+    for part in raw.split(","):
+        k, sep, v = part.partition(":")
+        k = k.strip().upper()
+        if not sep or k not in GN or k in got:
+            raise ValueError(f"LIVE_V6_BUNDLE_RISK_PCT: bad or repeated component in {part!r} (need M, D, R, H once each)")
+        try:
+            x = float(v)
+        except ValueError:
+            raise ValueError(f"LIVE_V6_BUNDLE_RISK_PCT: {part!r} is not a number") from None
+        if not math.isfinite(x) or x < 0:
+            raise ValueError(f"LIVE_V6_BUNDLE_RISK_PCT: {part!r} must be a finite number >= 0")
+        got[k] = x
+    if set(got) != set(GN):
+        raise ValueError(f"LIVE_V6_BUNDLE_RISK_PCT needs all of M, D, R, H: {raw!r}")
+    out["risk_pct"] = tuple(got[k] for k in GN)
+    return out
+
+
+WARM_PER_MINUTE = 60     # symbols of daily history built per idle minute after a (re)start (≈ 600 request weight)
+WARM_BUDGET_S = 5.0      # ... and at most this long: the slice runs on the engine's loop
 
 
 class Market:
@@ -74,7 +127,13 @@ class BundleDriver:
         self.m = market
         self.port = port
         self.cfg = cfg or BundleConfig()
+        if weights is None and self.cfg.risk_pct is not None:      # fixed fraction of the wallet per component
+            fixed = fixed_fraction_weights(self.cfg.risk_pct)
+            weights = lambda i: fixed                              # noqa: E731
         self._weights = weights or (lambda i: SG.IV_FIXED)
+        # fixed-fraction weights are defined for the research multiplier 6 (legacy: LIVE_V6_BUNDLE_RISK_MULT)
+        self._book_kw = dict(margin=self.cfg.margin,
+                             risk_mult=FIXED_RISK_MULT if self.cfg.risk_pct is not None else None)
         self._regime_fn = regime                       # replay may inject; default: V5 from BTC daily closes
         self._v5 = {}                                  # decision day → score
         self.macro = macro if macro is not None else (
@@ -84,7 +143,7 @@ class BundleDriver:
             self._macro_at.setdefault(t + 15, []).append((t, kind, eid))
         st = state or {}
         self.book = Book(fee=self.cfg.fee_mult, capital=self.cfg.capital, weights=self._weights, regime=self.regime,
-                         state=st.get("book"), end=self.cfg.end)
+                         state=st.get("book"), end=self.cfg.end, **self._book_kw)
         self.retest = {s: SG.RetestState(d) for s, d in (st.get("retest") or {}).items()}
         self.next_i = st.get("next_i")
         self.d = st.get("d") or {"seen": [], "lifecycle": [], "pending": []}
@@ -93,15 +152,26 @@ class BundleDriver:
         self._lev = {}
         self._atr1h = {}
         self.notes: list = []
+        self._warm = None                              # daily store being built ahead of the evaluation (warm_daily)
+        self._warm_i = None                            # minute of its last slice
+        # what sizes the entries, in words: logged at every start, kept in the state so that a start with a DIFFERENT
+        # sizing than the previous run is reported to the owner (BundleV5.on_start) instead of passing unnoticed
+        self.sizing = (f"고정 비율 {' '.join(f'{n} {r:g}%' for n, r in zip(GN, self.cfg.risk_pct))} · 증거금 {self.cfg.margin}"
+                       if self.cfg.risk_pct is not None else
+                       f"기존 IV 가중치 × 위험배수 {self.book.risk_mult:g} · 증거금 {self.cfg.margin}")
+        self.sizing_was = st.get("sizing")             # None: a state from before this field
+        log.info("bundle sizing: %s%s", self.sizing,
+                 " (LIVE_V6_BUNDLE_RISK_MULT is set but not applied in this mode)"
+                 if self.cfg.risk_pct is not None and os.getenv("LIVE_V6_BUNDLE_RISK_MULT") else "")
 
     # ── persistence ──
     def state_dict(self) -> dict:
         return {"book": self.book.state(), "retest": {s: r.to_dict() for s, r in self.retest.items()},
-                "next_i": self.next_i, "d": self.d}
+                "next_i": self.next_i, "d": self.d, "sizing": self.sizing}
 
     def _restore(self, snap):
         self.book = Book(fee=self.cfg.fee_mult, capital=self.cfg.capital, weights=self._weights, regime=self.regime,
-                         state=snap["book"], end=self.cfg.end)
+                         state=snap["book"], end=self.cfg.end, **self._book_kw)
         self.retest = {s: SG.RetestState(d) for s, d in snap["retest"].items()}
         self.next_i, self.d = snap["next_i"], snap["d"]
 
@@ -219,8 +289,11 @@ class BundleDriver:
 
     # ── raw signals of minute i (research order) ──
     def signals(self, i):
+        # A component whose weight is 0 is off: none of its data is read, so a gap in data nobody uses cannot hold the
+        # minute up (the minute is atomic - a DataNotReady here also postpones every stop update of open positions).
+        w = self._weights(i)
         raw = []
-        for t, kind, eid in self._macro_at.get(i, []):
+        for t, kind, eid in (self._macro_at.get(i, []) if w[0] > 0 else []):
             for sym in SG.M_SYMS:
                 full = {k: self.m.bar(sym, k, k == i) for k in range(t, i + 1)}
                 bars = {k: v for k, v in full.items() if v is not None and v.get("ok", True)}   # research `valid`
@@ -231,7 +304,7 @@ class BundleDriver:
                 self._note(i, "M", sym, sig, why, dict(event=kind, event_id=eid))
                 if sig:
                     raw.append(sig)
-        if i % 5 == 0:
+        if i % 5 == 0 and w[2] > 0:
             for sym in SG.S:
                 feat = self._retest_step(sym, i)
                 if feat is None:
@@ -244,11 +317,12 @@ class BundleDriver:
                 self._note(i, "R", sym, sig, why, dict(feat=list(feat)))
                 if sig:
                     raw.append(sig)
-        if i % 1440 == 0:
+        if i % 1440 == 0 and w[3] > 0:
             sig = self._h_signal(i)
             if sig:
                 raw.append(sig)
-        if self.cfg.d_enabled:
+        # D off still follows the notices while a D position is open: a later futures-delisting notice shortens its hold
+        if self.cfg.d_enabled and (w[1] > 0 or any(s["c"].g == 1 for _, s in self.book.positions())):
             raw += self._d_signals(i)
         out = []
         for x in SG.research_order(raw):
@@ -298,12 +372,56 @@ class BundleDriver:
                     s.add(b["t"], b["h"], b["l"], b["c"], b["qv"])
             self.daily_upto = day
         elif self.daily_upto < day:
+            t0 = time.monotonic()
             rows = self.m.daily_day(day)
             if rows is None:
                 raise DataNotReady(f"daily bars {kst(day)}")
             for sym, b in rows.items():
                 self.daily.setdefault(sym, SG.DailySeries()).add(b["t"], b["h"], b["l"], b["c"], b["qv"])
             self.daily_upto = day
+            # this runs inside the 00:00 UTC evaluation: an entry older than 90 s is refused by the engine
+            log.info("daily store: %s added for %d symbols in %.1f s", kst(day)[:10], len(rows), time.monotonic() - t0)
+
+    def warm_daily(self, n=WARM_PER_MINUTE, budget_s=WARM_BUDGET_S, clock=time.monotonic):
+        """H after a (re)start. The first build of the daily store (≈540 symbols since 2023: three minutes of requests
+        paced under the weight limit) used to happen AT the 00:00 UTC evaluation. That made the minute's entry intent
+        older than the engine's 90 s limit, so the breakout of the first day after every restart was refused as late,
+        and every stop update waited those minutes too. Build the store ahead of time instead: at most `n` symbols
+        and `budget_s` seconds per call, one call per minute (the live strategy calls this in minutes that produced
+        no order; the market refuses a read when the minute's request weight is already high). Only a head start:
+        it never raises, and an unfinished build leaves the blocking load of _ensure_daily in place."""
+        if self.daily_upto is not None or self.next_i is None:
+            self._warm = None
+            return
+        i = self.next_i - 1                              # the minute just processed
+        symbols, bars_of = getattr(self.m, "daily_symbols", None), getattr(self.m, "daily_bars", None)
+        if symbols is None or bars_of is None or self._weights(i)[3] <= 0 or i == self._warm_i:
+            return
+        self._warm_i = i                                 # one slice per minute, however often the caller comes by
+        day = (i // 1440 - 1) * 1440                     # last completed UTC day
+        try:
+            st = self._warm
+            if st is None or st["day"] != day:           # first call, or the UTC day rolled over: start again
+                st = self._warm = {"day": day, "todo": list(symbols()), "series": {}}
+                log.info("daily store warm-up: %d symbols up to %s", len(st["todo"]), kst(day))
+            t0 = clock()
+            for _ in range(n):
+                if not st["todo"] or clock() - t0 > budget_s:
+                    break
+                sym = st["todo"][0]
+                bars = bars_of(sym, day)                 # raises → this symbol is retried at the next call
+                if bars:
+                    s = st["series"][sym] = SG.DailySeries()
+                    for b in bars:
+                        s.add(b["t"], b["h"], b["l"], b["c"], b["qv"])
+                st["todo"].pop(0)
+            if not st["todo"]:
+                self._warm = None
+                if st["series"] and self.daily_upto is None:     # an empty result is never published as "loaded"
+                    self.daily, self.daily_upto = st["series"], day
+                    log.info("daily store warm-up done: %d symbols up to %s", len(self.daily), kst(day))
+        except Exception as e:  # noqa: BLE001
+            log.info("daily store warm-up paused: %r", e)
 
     def _h_signal(self, i):
         day = i - 1440
@@ -584,6 +702,8 @@ class EnginePort:
                 self.intents.append({"type": "stop", "sym": c.sym, "stop_px": a["stop"]})
             elif t == "exit":
                 self.intents.append({"type": "exit", "sym": c.sym, "reason": f"bundle_{a['reason']}"})
+            elif t == "skip":           # live: leave a trace of every signal the book did not take, and why
+                log.info("bundle skip %s %s %s (%s)", kst(i), GN[c.g], c.sym, a["reason"])
 
     def take(self):
         out, self.intents = self.intents, []
@@ -600,7 +720,7 @@ class BundleV5(Strategy):
         super().__init__(state)
         self.market = market
         self.cfg = cfg or BundleConfig(schedule_path=os.getenv("LIVE_V6_BUNDLE_SCHEDULE"),
-                                       d_enabled=os.getenv("LIVE_V6_BUNDLE_D", "1") != "0")
+                                       d_enabled=os.getenv("LIVE_V6_BUNDLE_D", "1") != "0", **sizing_from_env())
         self.port = EnginePort()
         self.drv = None
 
@@ -614,6 +734,12 @@ class BundleV5(Strategy):
 
     def on_start(self, ctx):
         d = self._driver(ctx)
+        if d.sizing_was is not None and d.sizing_was != d.sizing and hasattr(ctx, "notify"):
+            try:
+                ctx.notify(f"⚙️ [쌍끌이] 사이징 설정이 지난 실행과 다릅니다\n이전: {d.sizing_was}\n지금: {d.sizing}\n"
+                           "의도한 변경이 아니면 서비스 환경변수를 확인하세요.", kind="review")
+            except Exception:  # noqa: BLE001
+                log.exception("sizing change notice")
         syms = [s["c"].sym for _, s in d.book.positions()]
         if syms and hasattr(ctx, "track_symbols"):
             ctx.track_symbols(syms)
@@ -628,6 +754,8 @@ class BundleV5(Strategy):
             pass
         d.tick(T + int(d.cfg.delay_s * 1000) + 1)
         intents = self.port.take()
+        if not intents:                                    # no order waits behind this: use the idle minute
+            d.warm_daily()
         new = sorted({it["sym"] for it in intents if it["type"] == "enter"})
         if new and hasattr(ctx, "track_symbols"):
             ctx.track_symbols(new)

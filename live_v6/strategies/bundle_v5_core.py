@@ -32,6 +32,21 @@ KST_DAY_OFFSET = 900            # 00:00 KST = 15:00 UTC = minute 900 of the UTC 
 GN = ("M", "D", "R", "H")
 SLOTS = 7
 RISK_MULT = float(os.getenv("LIVE_V6_BUNDLE_RISK_MULT", "6.0"))   # p116 L6 risk multiplier; env lowers it for a first live run
+if not (math.isfinite(RISK_MULT) and RISK_MULT > 0):   # nan / inf / <= 0 would only fail (or size nothing) at the first entry
+    raise ValueError(f"LIVE_V6_BUNDLE_RISK_MULT must be a finite number > 0: {RISK_MULT!r}")
+BASE_RISK = (.03, .02, .01, .05)   # per-trade base risk coefficient of M, D, R, H in the sizing formulas below
+FIXED_RISK_MULT = 6.0              # the research multiplier those coefficients were defined with
+
+
+def fixed_fraction_weights(risk_pct) -> tuple:
+    """Constant weights for the fixed-fraction sizing (lab k2_fixed_fraction): component g risks risk_pct[g] % of
+    the wallet per trade (before the V5 side factor, caps and lot rounding), 0 = component off.
+    w_g = (r_g / 100) / (BASE_RISK_g * 6) with the book run at risk multiplier 6 makes `capital`, `eqcap` and
+    `totalcap` below read "wallet x r_g" without touching the formulas. Not normalised on purpose."""
+    r = tuple(float(x) for x in risk_pct)
+    if len(r) != 4 or any(not math.isfinite(x) or x < 0 for x in r):
+        raise ValueError(f"risk_pct must be four finite numbers >= 0 (M, D, R, H): {risk_pct!r}")
+    return tuple((x / 100) / (b * FIXED_RISK_MULT) for x, b in zip(r, BASE_RISK))
 EXIT_REASON = {1: "stop", 3: "time", 4: "period_end"}
 HOLD_MIN = {0: 4320, 2: 2880, 3: 10080}   # D: until meta `last` (24 h or settlement − 30 min)
 
@@ -82,11 +97,17 @@ class Book:
     KST-00 equity −10 % → no new entries until the next KST 00; realised-wallet peak −20 % → no new entries for 1440 min,
     then the peak is reset to the wallet."""
 
-    def __init__(self, fee=1.0, capital=106.0, weights=None, regime=None, state=None, end=None):
+    def __init__(self, fee=1.0, capital=106.0, weights=None, regime=None, state=None, end=None,
+                 margin="sleeve", risk_mult=None):
         self.fee = float(fee)
         self.weights = weights            # i → (wM, wD, wR, wH)
         self.regime = regime              # i → V5 score (−5 … +5)
         self.end = end                    # research `hi` (exclusive); None = open-ended (live)
+        if margin not in ("sleeve", "pooled"):
+            raise ValueError(f"margin must be 'sleeve' or 'pooled': {margin!r}")
+        self.margin = margin              # sleeve: per-component margin budget wallet·w[g] (research default);
+        #                                   pooled: only the account's free margin limits an entry (k2)
+        self.risk_mult = RISK_MULT if risk_mult is None else float(risk_mult)
         if state:
             self.__dict__.update(_load(state))
             return
@@ -109,7 +130,8 @@ class Book:
 
     # ── persistence ──
     def state(self) -> dict:
-        d = {k: v for k, v in self.__dict__.items() if k not in ("weights", "regime", "fee", "end")}
+        d = {k: v for k, v in self.__dict__.items()
+             if k not in ("weights", "regime", "fee", "end", "margin", "risk_mult")}   # config is not state
         d["slots"] = [dict(s, c=s["c"].to_dict() if s["c"] is not None else None) for s in self.slots]
         return d
 
@@ -186,6 +208,10 @@ class Book:
             L = c.L
             step = c.step
             tick = c.tick
+            if w[g] == 0:
+                self._skip(g, "disabled")
+                acts.append(dict(type="skip", i=i, cand=c, reason="disabled"))
+                continue
             if self.halt or self.until >= 0:
                 self._skip(g, "halt")
                 acts.append(dict(type="skip", i=i, cand=c, reason="owner_halt"))
@@ -217,13 +243,13 @@ class Book:
                 continue
             a = rows(c, i)
             sleeve_capital = self.wallet * w[g]
-            capital = sleeve_capital * RISK_MULT
-            eqcap = eventeq * w[g] * RISK_MULT
+            capital = sleeve_capital * self.risk_mult
+            eqcap = eventeq * w[g] * self.risk_mult
             avail = max(0., min(self.wallet, eventeq) - used)
-            sav = max(0., min(self.wallet, eventeq) * w[g] - sused)
+            sav = avail if self.margin == "pooled" else max(0., min(self.wallet, eventeq) * w[g] - sused)
             reg = self.regime(i)
             side_factor = 1. + .25 * sd * reg / 5.
-            totalcap = RISK_MULT * max(0., min(self.wallet, eventeq)) * (.06 * w[0] + .02 * w[1] + .02 * w[2] + .05 * w[3])
+            totalcap = self.risk_mult * max(0., min(self.wallet, eventeq)) * (.06 * w[0] + .02 * w[1] + .02 * w[2] + .05 * w[3])
             heldrisk = 0.
             for k in range(SLOTS):
                 s = self.slots[k]

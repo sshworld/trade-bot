@@ -10,6 +10,9 @@ Env:
   LIVE_V6_PAPER_DIR          state / ledger folder (default /var/lib/live_v6/paper)
   LIVE_V6_BUNDLE_SCHEDULE    macro release schedule CSV (kind,event_utc[,event_id]) — maintained by hand
   LIVE_V6_BUNDLE_D           0 = component D off (default on)
+  LIVE_V6_BUNDLE_RISK_PCT    "M:2,D:0,R:0,H:9" = % of the wallet risked per trade by component (0 = off); replaces
+                             the IV weights x LIVE_V6_BUNDLE_RISK_MULT sizing (RISK_MULT is then not applied)
+  LIVE_V6_BUNDLE_MARGIN      pooled = no per-component margin budget (default sleeve)
   LIVE_V6_PAPER_CAPITAL      virtual starting wallet (default 106, the research capital)
   LIVE_V6_PAPER_FEE          fee multiplier (1 = taker 0.05 %, default)
   LIVE_V6_ENTRY_MODE         market (default) | postonly_timeout ; LIVE_V6_POSTONLY_TIMEOUT_S (default 300)
@@ -28,13 +31,15 @@ import httpx
 from .store import JsonStore
 from .strategies import bundle_v5_signals as SG
 from .strategies.base import DataNotReady
-from .strategies.bundle_v5 import BundleConfig, BundleDriver, Market, PaperPort
+from .strategies.bundle_v5 import BundleConfig, BundleDriver, Market, PaperPort, sizing_from_env
 
 log = logging.getLogger("live_v6.bundle_paper")
 FAPI = "https://fapi.binance.com"
 WWW = "https://www.binance.com"
 IV = {5: "5m", 60: "1h", 240: "4h", 1440: "1d"}
 H_START_MS = 1672531200000          # 2023-01-01 UTC: p98's daily history starts here (ATR / 52w-high seeds)
+WARM_WEIGHT_MAX = 1000              # used request weight (1 min, per IP; limit 2400) above which the warm-up waits
+WARM_TIMEOUT_S = 3.0                # per request of the warm-up (the client default is 10 s)
 
 
 class PublicREST:
@@ -47,10 +52,10 @@ class PublicREST:
         self.weight = 0
         self._sleep_until = 0.0
 
-    def _get(self, client, path, params=None):
+    def _get(self, client, path, params=None, timeout=None):
         if self.clock() < self._sleep_until:
             raise DataNotReady(f"rate backoff {path}")
-        r = client.request("GET", path, params=params or {})
+        r = client.request("GET", path, params=params or {}, **({} if timeout is None else {"timeout": timeout}))
         try:
             self.weight = int(r.headers.get("X-MBX-USED-WEIGHT-1M") or self.weight)
         except ValueError:
@@ -62,8 +67,8 @@ class PublicREST:
             raise DataNotReady(f"HTTP {r.status_code} {path}: {r.text[:120]}")
         return r.json()
 
-    def get(self, path, params=None):
-        return self._get(self._c, path, params)
+    def get(self, path, params=None, timeout=None):
+        return self._get(self._c, path, params, timeout)
 
     def www(self, path, params=None):
         return self._get(self._w, path, params)
@@ -223,11 +228,12 @@ class RestMarket(Market):
         return sorted(s["symbol"] for s in self.exchange_info()["symbols"]
                       if s.get("contractType") == "PERPETUAL" and s.get("quoteAsset") == "USDT" and s.get("status") == "TRADING")
 
-    def _daily(self, sym, start_ms, end_day):
+    def _daily(self, sym, start_ms, end_day, timeout=None):
         out = []
         start = start_ms
         while True:
-            rows = self.r.get("/fapi/v1/klines", {"symbol": sym, "interval": "1d", "startTime": start, "limit": 1500})
+            q = {"symbol": sym, "interval": "1d", "startTime": start, "limit": 1500}
+            rows = self.r.get("/fapi/v1/klines", q) if timeout is None else self.r.get("/fapi/v1/klines", q, timeout=timeout)
             out += [dict(t=int(x[0]) // 60000, h=float(x[2]), l=float(x[3]), c=float(x[4]), qv=float(x[7])) for x in rows]
             if len(rows) < 1500:
                 break
@@ -249,6 +255,19 @@ class RestMarket(Market):
             if k % 50 == 0:
                 log.info("daily history %d symbols", k)
         return out
+
+    def daily_symbols(self):
+        """The symbols daily_history() walks (for BundleDriver.warm_daily: the same store, built a slice at a time)."""
+        return self._usdt_perps()
+
+    def daily_bars(self, sym, until_day):
+        """One symbol of daily_history(), for the warm-up. The request weight is per IP and shared with the order
+        path, so unlike daily_history() this never sleeps and never runs the minute's weight up: above
+        WARM_WEIGHT_MAX it refuses and the warm-up tries again in a later minute. Short timeout: a hanging request
+        must not hold the engine's loop."""
+        if self.r.weight > WARM_WEIGHT_MAX:
+            raise DataNotReady(f"request weight {self.r.weight} > {WARM_WEIGHT_MAX}: warm-up waits")
+        return self._daily(sym, H_START_MS, until_day, timeout=WARM_TIMEOUT_S)
 
     def daily_day(self, day):
         out = {}
@@ -328,7 +347,8 @@ def build_paper(rest=None, clock=time.time, notifier=None):
                      timeout_s=float(os.getenv("LIVE_V6_POSTONLY_TIMEOUT_S", "300")))
     port.load(st.get("port"))
     cfg = BundleConfig(fee_mult=float(os.getenv("LIVE_V6_PAPER_FEE", "1")), capital=float(os.getenv("LIVE_V6_PAPER_CAPITAL", "106")),
-                       schedule_path=os.getenv("LIVE_V6_BUNDLE_SCHEDULE"), d_enabled=os.getenv("LIVE_V6_BUNDLE_D", "1") != "0")
+                       schedule_path=os.getenv("LIVE_V6_BUNDLE_SCHEDULE"), d_enabled=os.getenv("LIVE_V6_BUNDLE_D", "1") != "0",
+                       **sizing_from_env())
     drv = BundleDriver(m, port, cfg, state=st.get("drv"))
     if not drv.macro or max(t for t, _, _ in drv.macro) < clock() // 60:
         tg.send("⚠️ [모의] 거시지표 일정 CSV에 앞으로의 일정 없음 — M 신호 없음 (LIVE_V6_BUNDLE_SCHEDULE 갱신 필요)", kind="review")
