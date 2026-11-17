@@ -7,12 +7,14 @@
 # tradebot-ann-shadow.service, which uses the same ones):
 #   DynamicUser=yes with NO User= line; SupplementaryGroups=tradebot only to read the code below /opt/tradebot;
 #   InaccessiblePaths= hides what that group could open: the bot's env files and state (no "-": a missing path
-#   fails the start), the bot's alert log and the CI logs in /var/log/tradebot ("-": not checked on the server)
+#   fails the start), the bot's alert log and the CI logs in /var/log/tradebot and its testnet state in
+#   /var/lib/live_v6 ("-": this logger needs neither and must start where they are absent)
 #   and the Binance logger's data ("-": that directory may be absent, or already out of reach below
 #   /var/lib/private once that unit is migrated); EnvironmentFile= is read by the service manager as root
 #   before the sandbox exists, so upbit.env can stay 0600 root; ProtectProc=invisible + ProcSubset=pid hide the
 #   processes of other users. With DynamicUser the data is /var/lib/private/tradebot-upbit-ann-shadow and
-#   /var/lib/tradebot-upbit-ann-shadow is a symlink to it.
+#   /var/lib/tradebot-upbit-ann-shadow is a symlink to it. CPUQuotaPeriodSec=1s: the 20 % cap is counted per
+#   second, so a short burst never freezes the process and delays a receive stamp (see that header).
 # NOT covered: tradebot owns /opt/tradebot/app (where the "current" link is) and the venv, so the bot's UID can
 # change what this unit runs at its next start - and that code is started with the Upbit keys in its environment.
 #
@@ -54,7 +56,7 @@
 #   sudo systemctl daemon-reload
 [Unit]
 Description=Upbit announcement WebSocket shadow latency logger (read-only)
-After=network-online.target chrony.service
+After=network-online.target time-sync.target
 Wants=network-online.target
 
 [Service]
@@ -79,11 +81,13 @@ PrivateDevices=true
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictAddressFamilies=AF_INET AF_INET6
-InaccessiblePaths=/etc/tradebot /var/lib/live_v6-live -/var/log/tradebot -/var/lib/tradebot-ann-shadow
+InaccessiblePaths=/etc/tradebot /var/lib/live_v6-live -/var/log/tradebot -/var/lib/live_v6 -/var/lib/tradebot-ann-shadow
 ProtectProc=invisible
 ProcSubset=pid
 MemoryMax=200M
+# 20 % of the one CPU, counted per second (200 ms in any 1 s), not per the default 100 ms: see the header
 CPUQuota=20%
+CPUQuotaPeriodSec=1s
 
 [Install]
 WantedBy=multi-user.target

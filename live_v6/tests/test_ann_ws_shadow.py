@@ -1312,7 +1312,7 @@ UNIT_DIRECTIVES = {
                 "ExecStart", "Restart", "RestartSec", "KillSignal", "TimeoutStopSec", "StateDirectory",
                 "StateDirectoryMode", "UMask", "NoNewPrivileges", "ProtectSystem", "ProtectHome", "PrivateTmp",
                 "PrivateDevices", "ProtectKernelTunables", "ProtectControlGroups", "RestrictAddressFamilies",
-                "InaccessiblePaths", "ProtectProc", "ProcSubset", "MemoryMax", "CPUQuota"},
+                "InaccessiblePaths", "ProtectProc", "ProcSubset", "MemoryMax", "CPUQuota", "CPUQuotaPeriodSec"},
     "Install": {"WantedBy"},
 }
 ISOLATION = {
@@ -1323,6 +1323,9 @@ ISOLATION = {
     "ProtectHome": "true", "PrivateTmp": "true", "PrivateDevices": "true", "ProtectKernelTunables": "true",
     "ProtectControlGroups": "true", "RestrictAddressFamilies": "AF_INET AF_INET6", "MemoryMax": "200M",
     "CPUQuota": "20%", "Restart": "always", "RestartSec": "30", "KillSignal": "SIGTERM",
+    # the cap is counted per second: with the default 100 ms period 20 ms of work freezes the process for the rest
+    # of the period, and a push that arrives then is stamped late (seen on the server: 53 times in 4 h)
+    "CPUQuotaPeriodSec": "1s",
     "WorkingDirectory": "/opt/tradebot/app/current", "Environment": "WEBSOCKETS_MAX_REDIRECTS=1",
 }
 
@@ -1366,7 +1369,10 @@ def check_logger_unit(name, *, module, env_file, hidden=()):
     # the bot's group must not open the trading keys or the bot state; no "-": a missing path fails the start.
     # Nor the bot's alert log and the CI logs (the directory the CI import sandbox denies too); with "-": that
     # directory was not checked on the server, and a logger that does not start measures nothing
-    assert svc["InaccessiblePaths"].split() == ["/etc/tradebot", "/var/lib/live_v6-live", "-/var/log/tradebot", *hidden]
+    assert svc["InaccessiblePaths"].split() == ["/etc/tradebot", "/var/lib/live_v6-live", "-/var/log/tradebot",
+                                                "-/var/lib/live_v6", *hidden]
+    # accurate time first; the box syncs with systemd-timesyncd, so no unit of one particular NTP daemon is named
+    assert unit["Unit"]["After"] == ["network-online.target time-sync.target"]
     assert svc["EnvironmentFile"] == env_file                    # exactly one, and not optional ("-" prefix)
     assert svc["StateDirectory"] == stem
     assert svc["ExecStart"] == (f"/opt/tradebot/.venv/bin/python -m live_v6.tools.{module} "

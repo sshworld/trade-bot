@@ -14,11 +14,20 @@
 #                          And /var/log/tradebot: the bot's alert log (alerts-live.jsonl, the full text of its
 #                          Telegram messages) and the CI deploy logs - the CI import sandbox denies the same
 #                          directory (ci_deploy.sh, SANDBOX_DENY). With a "-" ("ignored when they do not
-#                          exist"): who may read that directory on the server was not checked, and this logger
-#                          needs nothing there (it logs to the journal).
+#                          exist"): this logger needs nothing there (it logs to the journal). On the server
+#                          it is 750 tradebot:tradebot with files 644 (seen 2026-11-17). -/var/lib/live_v6:
+#                          the bot's testnet state, same owner and mode.
 #   EnvironmentFile=       Still delivers the key: the file is "read from the file system of the service manager,
 #                          before any file system changes like bind mounts take place" - by root, not by this UID.
 #   ProtectProc=invisible  Processes of other users are hidden in /proc.   ProcSubset=pid: only /proc/<pid> is left.
+#   CPUQuotaPeriodSec=1s   Same 20 % cap, counted over 1 s. With the default period of 100 ms the service is
+#                          frozen for the rest of a period as soon as it used 20 ms in it - the receive
+#                          stamp of a push that arrives then is late by up to 80 ms. Seen on the server
+#                          2026-11-17 with the first version of this unit: cpu.stat nr_throttled 53 in
+#                          4 h (3.7 s frozen), every time request took about 200 ms instead of 4 ms.
+#                          ("The period is clamped to the range supported by the kernel, which is
+#                          [1ms, 1000ms]", systemd.resource-control(5).) Check: nr_throttled in
+#                          /sys/fs/cgroup/system.slice/<unit>/cpu.stat stays where it was after start.
 #   StateDirectory=        With DynamicUser the data is /var/lib/private/tradebot-ann-shadow (/var/lib/private is
 #                          closed to unprivileged users) and /var/lib/tradebot-ann-shadow is a symlink to it, so
 #                          the path in ExecStart holds. At every start the files are handed to that start's UID.
@@ -77,7 +86,7 @@
 #   sudo systemctl daemon-reload
 [Unit]
 Description=Binance announcement WebSocket shadow latency logger (read-only, never trades)
-After=network-online.target chrony.service
+After=network-online.target time-sync.target
 Wants=network-online.target
 
 [Service]
@@ -104,11 +113,13 @@ PrivateDevices=true
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictAddressFamilies=AF_INET AF_INET6
-InaccessiblePaths=/etc/tradebot /var/lib/live_v6-live -/var/log/tradebot
+InaccessiblePaths=/etc/tradebot /var/lib/live_v6-live -/var/log/tradebot -/var/lib/live_v6
 ProtectProc=invisible
 ProcSubset=pid
 MemoryMax=200M
+# 20 % of the one CPU, counted per second (200 ms in any 1 s), not per the default 100 ms: see the header
 CPUQuota=20%
+CPUQuotaPeriodSec=1s
 
 [Install]
 WantedBy=multi-user.target

@@ -16,11 +16,11 @@ the offset (GET /fapi/v1/time, public, in a side thread: every 15 min and right 
 (`title` to 500 characters - `title_len` is its whole length - and the tag is made from the title as logged).
 
 An offset only holds for the wall clock it was measured on. If the system time is STEPPED afterwards (date -s,
-chrony makestep, a guest agent that sets the time of the VM) the wall clock moves against the monotonic clock:
+the time daemon setting it, a guest agent that sets the time of the VM) the wall clock moves against the monotonic clock:
 more than 50 ms of that voids the offset - `lag_ms` is null until the next measurement, `lag_raw_ms` goes on -
 and one {"k":"clock","event":"step","delta_ms":…} line says so; the side thread measures again at once.
-NOT seen that way is an error that moves both clocks alike: chrony SLEWING the time (how it corrects in normal
-operation; Linux: CLOCK_MONOTONIC "is affected by frequency adjustments") and a hypervisor that pauses the VM
+NOT seen that way is an error that moves both clocks alike: the time daemon SLEWING the time (how a small error
+is corrected; Linux: CLOCK_MONOTONIC "is affected by frequency adjustments") and a hypervisor that pauses the VM
 ("the guest OS has no idea that there was a big gap in the time": both clocks stand still, then run on, late by
 the pause). `lag_ms` is then a number, not null, and it is wrong by that error until the next measurement. Two
 things in the file show it: the measurement that follows every announcement (not during a 429 / 418 ban, and at
@@ -79,7 +79,7 @@ TOPIC = "com_announcement_en"
 TIME_URL = "https://fapi.binance.com/fapi/v1/time"
 PING_S = 30.0                 # doc: ping every 30 s, closed after 60 s without one
 RECONNECT_S = 23 * 3600.0     # doc: a connection is valid for up to 24 h
-CLOCK_S = 900.0               # the box runs chrony; the offset only refines lag_ms
+CLOCK_S = 900.0               # the box keeps NTP time (systemd-timesyncd, seen 2026-11-17); the offset only refines lag_ms
 CLOCK_SAMPLES = 5             # back-to-back time requests per measurement; the fastest one is used
 CLOCK_MAX_RTT_S = 0.25        # a slower best sample is not a usable offset (its error can be rtt / 2)
 CLOCK_MAX_AGE_S = 3600.0      # lag_ms is null when the last valid offset is older
