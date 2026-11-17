@@ -1,0 +1,40 @@
+# /etc/systemd/system/tradebot-ann-shadow.service — announcement WebSocket SHADOW latency logger.
+# Read-only: subscribes to Binance announcement pushes and logs when they reach this box. It never places,
+# changes or cancels an order and cannot write to the bot's state directory (its own StateDirectory only).
+# Install (ops + sudo), after the release that contains live_v6/tools/ann_ws_shadow.py is deployed:
+#   sudo install -m 644 /opt/tradebot/app/current/live_v6/deploy/tradebot-ann-shadow.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now tradebot-ann-shadow
+#   sudo tail -f /var/lib/tradebot-ann-shadow/ann_ws_shadow.jsonl
+# Remove: sudo systemctl disable --now tradebot-ann-shadow && sudo rm /etc/systemd/system/tradebot-ann-shadow.service
+[Unit]
+Description=Binance announcement WebSocket shadow latency logger (read-only, never trades)
+After=network-online.target chrony.service
+Wants=network-online.target
+
+[Service]
+User=tradebot
+WorkingDirectory=/opt/tradebot/app/current
+EnvironmentFile=/etc/tradebot/live.env
+Environment=WEBSOCKETS_MAX_REDIRECTS=1
+ExecStart=/opt/tradebot/.venv/bin/python -m live_v6.tools.ann_ws_shadow --out /var/lib/tradebot-ann-shadow/ann_ws_shadow.jsonl
+Restart=always
+RestartSec=30
+KillSignal=SIGTERM
+TimeoutStopSec=10
+# isolation: own state dir only; the bot's /var/lib/live_v6-live is not writable from here
+StateDirectory=tradebot-ann-shadow
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+MemoryMax=200M
+CPUQuota=20%
+
+[Install]
+WantedBy=multi-user.target
