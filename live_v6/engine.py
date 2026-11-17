@@ -1120,15 +1120,16 @@ class V6Engine:
                 log.error("%s flatten after rejected stop not complete — close() keeps retrying via reconcile", sym)
             return False
         if up != "ok":                                      # pre-arm kept: it must be CONFIRMED live, else protect/flatten
+            amt_s = int(j.get("side", 1)) * D(j["qty"])     # SIGNED: find_stop/ensure_stop take the closing side from the sign
             try:
-                shielded = self.find_stop(D(j["qty"]), self.x("open_orders", sym)) is not None
+                shielded = self.find_stop(amt_s, self.x("open_orders", sym)) is not None
             except ExchangeError:
                 shielded = False                            # verification unknown → NOT confirmed: bounded round below
             if not shielded:
                 # BOUNDED: closePosition attempts (stop_attempts × stop_retry_delay_s) → pre-arm verification → ONE more
                 # bounded round (protect/ensure_stop: stop_attempts × stop_retry_delay_s). Still no confirmed stop → flatten
                 # this position in full + 🚨 (never wait for the api_dead_s flatten-all).
-                if not self.protect(sym, D(j["qty"]), D(j["stop_px"]), j["cid"]):
+                if not self.protect(sym, amt_s, D(j["stop_px"]), j["cid"]):
                     cur = self.st["pos"].get(sym)
                     if cur is not None and not cur.get("closing"):
                         self.alert("진입 후 손절 미확인(재시도 한도 초과) — 전량 청산",
