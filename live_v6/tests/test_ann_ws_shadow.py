@@ -1371,7 +1371,9 @@ def check_logger_unit(name, *, module, env_file, hidden=()):
     assert svc["StateDirectory"] == stem
     assert svc["ExecStart"] == (f"/opt/tradebot/.venv/bin/python -m live_v6.tools.{module} "
                                 f"--out /var/lib/{stem}/{module}.jsonl")
-    assert int(svc["TimeoutStopSec"]) >= 10 > S.STOP_CLOCK_S + S.STOP_WRITER_S + 1 + 3   # recv 1 s, close_timeout 3 s
+    # a stop during a connection attempt: open_timeout 10 s, then close_timeout 3 s and the two waits of _shutdown
+    assert int(svc["TimeoutStopSec"]) > 10 + 3 + S.STOP_CLOCK_S + S.STOP_WRITER_S
+    assert 10 > 1 + 3 + S.STOP_CLOCK_S + S.STOP_WRITER_S                               # the usual stop: recv 1 s
     for needle in ("systemd-analyze verify", "systemd-analyze security", f"/var/lib/private/{stem}",
                    "DynamicUser", "EnvironmentFile", "Migrate", "Verify", "Remove", "/var/log/tradebot"):
         assert needle in header, needle
@@ -1381,7 +1383,7 @@ def check_logger_unit(name, *, module, env_file, hidden=()):
 def test_binance_logger_unit_runs_isolated_from_the_bot():
     _, svc = check_logger_unit("tradebot-ann-shadow.service", module="ann_ws_shadow",
                                env_file="/etc/tradebot/live.env")
-    assert svc["TimeoutStopSec"] == "10"
+    assert svc["TimeoutStopSec"] == "20"
 
 
 def test_binance_logger_unit_does_not_claim_that_the_logger_is_kept_from_the_trading_keys():

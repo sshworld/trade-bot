@@ -934,4 +934,4 @@ def test_service_isolated_state_and_environment():
     text = (Path(__file__).parents[1]/'deploy/tradebot-upbit-ann-shadow.service').read_text(encoding='utf-8')
     assert '--categories' not in text and 'live.env' not in text    # never the bot's trading keys
     assert 'UPBIT_ACCESS_KEY' in header and 'UPBIT_SECRET_KEY' in header
-    assert svc['TimeoutStopSec'] == '15'
+    assert svc['TimeoutStopSec'] == '20'

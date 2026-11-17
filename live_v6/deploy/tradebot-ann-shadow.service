@@ -90,7 +90,7 @@ ExecStart=/opt/tradebot/.venv/bin/python -m live_v6.tools.ann_ws_shadow --out /v
 Restart=always
 RestartSec=30
 KillSignal=SIGTERM
-TimeoutStopSec=10
+TimeoutStopSec=20
 # isolation: nothing is writable but its own state directory and the private /tmp and /var/tmp of PrivateTmp=;
 # the bot's key FILE, state and logs cannot even be read. The key PAIR is in this process all the same (header).
 StateDirectory=tradebot-ann-shadow

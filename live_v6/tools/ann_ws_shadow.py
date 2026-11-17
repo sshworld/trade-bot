@@ -28,10 +28,13 @@ most one per 10 s), and `drift_ms` of a clock line = its offset minus the offset
 none, or a step had voided it).
 HOW TO USE lag_ms. The offset that held when an announcement came in lies between the offset_ms of the clock line
 before it and of the first one after it, each of them good to half its rtt_ms - unless a step line lies between
-those two lines: then leave the row out. The line after normally follows within a second (compare the t of both
-rows), so lag_raw_ms + ITS offset_ms is the best single value. lag_ms (made with the line before) stands if the
-two offsets differ by little: drift_ms of the line after says by how much. If they differ by more than the
-question allows (say 20 ms for a decision about 0.2 s) and the line after came late, leave the row out.
+those two lines: then leave the row out. lag_ms (made with the line before) stands when the line after followed
+at once (compare the t of both rows: normally well within a second, 10 s at most after a burst) and the two
+offsets agree within what the question allows (say 20 ms for a decision about 0.2 s): drift_ms of the line after
+is their difference. When they do not agree, the file cannot tell on which side of the announcement the clock
+moved - a pause BEFORE it makes lag_ms wrong and lag_raw_ms + the offset of the line after right, a pause between
+it and that measurement the other way round, and both leave the same lines. Then neither is "the" value: leave
+the row out, or carry both as the two ends of an interval. Never pick one of them.
 
 The receive loop only receives, stamps the time and enqueues; a writer thread does the file I/O, so a slow disk
 never inflates the measured lag. That thread survives any single record and a full disk; records it could not
@@ -453,7 +456,9 @@ class Shadow:
         """End of run(). The "stopped" row is the last one that is enqueued, and when this returns it and all rows
         before it are in the file - unless the writer is stuck, which is waited for only for STOP_WRITER_S.
         Budget: the last recv() ends within 1 s, closing the socket takes up to 3 s (close_timeout), then these
-        two waits: 8 s at most, under the TimeoutStopSec of the units (10 s, 15 s)."""
+        two waits: 8 s at most. A stop that arrives while a connection is being opened waits for that attempt
+        first (open_timeout, 10 s) and then needs the close and the two waits: 17 s at most, under the
+        TimeoutStopSec of both units (20 s)."""
         self.stop.set()
         self.clock_wake.set()                  # out of its wait now, not at the next look-out
         clock.join(timeout=STOP_CLOCK_S)       # its rows first (it only takes longer when a time request hangs)
