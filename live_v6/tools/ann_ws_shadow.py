@@ -6,7 +6,7 @@ possible from this box depends on one number we do not have: when does the push 
 
 What it does: connects to the announcement stream (signed with the account API key - the only use of the key; no
 order or account endpoint is imported or called) and appends one JSON line per pushed announcement:
-  {"k":"ann","recv_ms":…,"publish_ms":…,"lag_raw_ms":…,"lag_ms":…,"offset_ms":…,"offset_age_s":…,
+  {"k":"ann","recv_ms":…,"recv_wait_ms":…,"publish_ms":…,"lag_raw_ms":…,"lag_ms":…,"offset_ms":…,"offset_age_s":…,
    "offset_rtt_ms":…,"catalogId":…,"catalogName":…,"title":…,"title_len":…,"tag":…}
 `lag_raw_ms` = local receive time - publishDate; `lag_ms` adds the measured clock offset to the Binance server
 (null while no valid offset is known). `offset_rtt_ms` is the round trip of the time request that offset came
@@ -26,15 +26,29 @@ the pause). `lag_ms` is then a number, not null, and it is wrong by that error u
 things in the file show it: the measurement that follows every announcement (not during a 429 / 418 ban, and at
 most one per 10 s), and `drift_ms` of a clock line = its offset minus the offset it replaces (null: there was
 none, or a step had voided it).
-HOW TO USE lag_ms. The offset that held when an announcement came in lies between the offset_ms of the clock line
-before it and of the first one after it, each of them good to half its rtt_ms - unless a step line lies between
-those two lines: then leave the row out. lag_ms (made with the line before) stands when the line after followed
-at once (compare the t of both rows: normally well within a second, 10 s at most after a burst) and the two
+HOW TO USE lag_ms. A clock line's sample_ms is the wall-clock midpoint of its SELECTED request, in the same
+milliseconds as recv_ms; offset_age_s also starts at that midpoint, not at the end of all five requests.
+The clock line AFTER an announcement is the first valid measurement whose sample_ms > that announcement's recv_ms.
+File order and t (enqueue time) do not decide: a line written afterwards with sample_ms < recv_ms is BEFORE it.
+Compare the offset_ms of measurements on either side, each good to half its rtt_ms - unless a step line lies
+between them: then leave the row out. lag_ms stands when the later sample followed at once (compare sample_ms
+with recv_ms: normally well within a second, 10 s at most after a burst) and the two
 offsets agree within what the question allows (say 20 ms for a decision about 0.2 s): drift_ms of the line after
 is their difference. When they do not agree, the file cannot tell on which side of the announcement the clock
 moved - a pause BEFORE it makes lag_ms wrong and lag_raw_ms + the offset of the line after right, a pause between
 it and that measurement the other way round, and both leave the same lines. Then neither is "the" value: leave
 the row out, or carry both as the two ends of an interval. Never pick one of them.
+
+recv_wait_ms is the monotonic duration of the recv() that returned this frame, rounded to 0.01 ms. A small value
+(roughly below 1 ms) may mean the frame was already buffered: recv_ms is only an UPPER bound on its arrival,
+which may have been as early as the previous row's receive stamp. A long wait is evidence the loop was idle,
+not a guarantee against a pause during recv(). Measurement clock rows carry the service's own cgroup v2 CPU
+throttled_n (nr_throttled) and throttled_ms (throttled_usec / 1000), read by the CLOCK thread at the selected
+sample's completion. If throttled_n differs between the before/after clock measurements, discard the announcement:
+the process was paused by its CPU quota in that interval. Null counters mean unknown (macOS, missing v2 or
+permissions), not zero; unchanged counters cannot rule out a VM pause or an ancestor cgroup's CPU limit.
+Invalid/non-finite publication times keep the announcement with null publish_ms and lags; every written row is
+strict JSON with non-finite numeric values replaced by null. Credentials and signatures are redacted before cuts.
 
 The receive loop only receives, stamps the time and enqueues; a writer thread does the file I/O, so a slow disk
 never inflates the measured lag. That thread survives any single record and a full disk; records it could not
@@ -66,6 +80,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import queue
 import re
@@ -103,6 +118,38 @@ KEY_MAX = 100                 # ... and characters of each
 
 log = logging.getLogger("live_v6.ann_ws_shadow")
 _URL = re.compile(r"\b(wss?|https?)://([^\s/?#'\"]+)([^\s?#'\"]*)[^\s'\"]*")
+_SIGNATURE = re.compile(r"(signature=)[^&\s\"'\\<>]*")
+_JSON_STRING = re.compile(r'(?<!\\)"[^"\\]*(?:\\.[^"\\]*)*"')
+
+
+class RedactingFilter(logging.Filter):
+    """Sanitize at each root handler, including third-party messages and exception tracebacks."""
+
+    def __init__(self, redact):
+        super().__init__()
+        self.redact = redact
+
+    def filter(self, record):
+        record.msg, record.args = self.redact(record.getMessage()), ()
+        if record.exc_info:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+            record.exc_info = None
+        if record.exc_text:
+            record.exc_text = self.redact(record.exc_text)
+        if record.stack_info:
+            record.stack_info = self.redact(record.stack_info)
+        return True
+
+
+def finite_values(value):
+    """Keep a record, replacing only non-finite floats with JSON null (also in future nested fields)."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {k: finite_values(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [finite_values(v) for v in value]
+    return value
 
 
 def scrub(text) -> str:
@@ -110,10 +157,10 @@ def scrub(text) -> str:
     return _URL.sub(r"\1://\2\3", str(text))[:300]
 
 
-def _why(e: BaseException) -> str:
+def _why(e: BaseException, scrubber=scrub) -> str:
     """An exception as log text. One that cannot be printed (its __str__ raises) still has a type name."""
     try:
-        return scrub(f"{type(e).__name__}: {e}")
+        return scrubber(f"{type(e).__name__}: {e}")
     except Exception:  # noqa: BLE001
         return type(e).__name__
 
@@ -174,7 +221,12 @@ def parse_push(raw, recv_ms: float, offset_ms: float | None, offset_age_s: float
     if not isinstance(data, dict):
         return None
     pub = data.get("publishDate")
-    pub = float(pub) if isinstance(pub, (int, float)) and not isinstance(pub, bool) else None
+    try:
+        pub = float(pub) if isinstance(pub, (int, float)) and not isinstance(pub, bool) else None
+    except OverflowError:
+        pub = None
+    if pub is not None and not math.isfinite(pub):
+        pub = None
     whole = str(data.get("title") or "")
     title = whole[:TITLE_MAX]
     raw_lag = None if pub is None else round(recv_ms - pub, 1)
@@ -216,13 +268,83 @@ class Shadow:
         self.write_failed = 0                        # records the writer thread could not write
         self._unreported = 0                         # ... of which the file does not tell yet
         self._producers_done = threading.Event()     # run() is over: nothing is enqueued any more
+        self._write_lock = threading.RLock()         # enqueue and the final stopped/done boundary are atomic
+
+    def redact(self, text):
+        """Exact credentials (plain or JSON-escaped, also the nested DATA string) and signature values.
+        Longest spellings first: replacing a plain backslash inside an escape would leave broken JSON."""
+        text = str(text)
+        values = set()
+        for value in (self.key, self.secret):
+            if value:
+                values.add(value)
+                for ascii_only in (False, True):
+                    escaped = value
+                    for _ in range(2):
+                        escaped = json.dumps(escaped, ensure_ascii=ascii_only, allow_nan=False)[1:-1]
+                        values.add(escaped)
+        if values:
+            text = re.sub("|".join(re.escape(v) for v in sorted(values, key=len, reverse=True)),
+                          "[REDACTED]", text)
+        return _SIGNATURE.sub(r"\1[REDACTED]", text)
+
+    def scrub(self, text):
+        return scrub(self.redact(text))
+
+    def redact_json(self, text):
+        """Redact JSON string tokens before frame parsing / file append, preserving JSON syntax and numbers.
+        Decode each token's escapes first: a credential ending in a backslash must not match the escape before
+        a public quote. DATA may itself be JSON inside a string, so preserve that extra string boundary too."""
+        if isinstance(text, bytes):
+            try:
+                text = text.decode(json.detect_encoding(text), "surrogatepass")
+            except UnicodeError:
+                return text                   # preserve json.loads' rejection; other uses scrub(raw)
+        else:
+            text = str(text)
+
+        def token(match):
+            try:
+                value = json.loads(match[0])
+            except ValueError:
+                return match[0]               # malformed frame: parse_push rejects it; other uses scrub(raw)
+            if value.lstrip().startswith(("{", "[")):
+                try:
+                    json.loads(value)         # distinguish embedded JSON from ordinary title prose
+                except ValueError:
+                    value = self.redact(value)
+                else:
+                    value = self.redact_json(value)
+            else:
+                value = self.redact(value)
+            return json.dumps(value, ensure_ascii=False, allow_nan=False)
+
+        return _JSON_STRING.sub(token, text)
+
+    def clean(self, value):
+        """Sanitize every string before enqueue, including keys; retain ordinary notice URL queries."""
+        if isinstance(value, str):
+            return self.redact(value)
+        if isinstance(value, dict):
+            return {self.redact(k): self.clean(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [self.clean(v) for v in value]
+        return value
+
+    def install_log_filter(self):
+        for handler in logging.getLogger().handlers:
+            handler.addFilter(RedactingFilter(self.redact))
 
     # ── output (writer thread; the receive loop never touches the disk) ──
     def write(self, rec: dict):
-        try:
-            self.q.put_nowait(dict(rec, t=round(self.clock(), 3)))
-        except queue.Full:
-            self.dropped += 1
+        with self._write_lock:
+            if self._producers_done.is_set():
+                self.dropped += 1
+                return
+            try:
+                self.q.put_nowait(dict(self.clean(rec), t=round(self.clock(), 3)))
+            except queue.Full:
+                self.dropped += 1
 
     @staticmethod
     def _encode(line: str) -> bytes:
@@ -250,7 +372,7 @@ class Shadow:
         try:
             if os.path.getsize(self.out_path) > MAX_FILE_BYTES:
                 os.replace(self.out_path, self.out_path + ".1")
-        except OSError:
+        except FileNotFoundError:
             pass
         fd = os.open(self.out_path, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
         try:
@@ -260,15 +382,19 @@ class Shadow:
 
     def _write_record(self, rec: dict):
         if self._unreported:                   # say how many records are missing, at the place where they are missing
-            self._append(json.dumps(dict(k="writer", event="lost", n=self._unreported, total=self.write_failed,
-                                         t=round(self.clock(), 3))) + "\n")
+            self._append(self._json_line(dict(k="writer", event="lost", n=self._unreported, total=self.write_failed,
+                                             t=round(self.clock(), 3))))
             self._unreported = 0
         dropped = self.dropped                 # read once: the other threads go on counting
         if dropped != self._dropped_told:      # records that found the queue full: they never got to this thread
-            self._append(json.dumps(dict(k="writer", event="dropped", n=dropped - self._dropped_told, total=dropped,
-                                         t=round(self.clock(), 3))) + "\n")
+            self._append(self._json_line(dict(k="writer", event="dropped", n=dropped - self._dropped_told, total=dropped,
+                                             t=round(self.clock(), 3))))
             self._dropped_told = dropped
-        self._append(json.dumps(rec, ensure_ascii=False) + "\n")
+        self._append(self._json_line(rec))
+
+    def _json_line(self, rec):
+        # Final boundary, after serialization and immediately before the writer appends ANY row kind.
+        return self.redact_json(json.dumps(finite_values(rec), ensure_ascii=False, allow_nan=False)) + "\n"
 
     def writer_loop(self):
         """The writer thread's loop, until stop is set and the queue is empty. No single record ends it: whatever
@@ -288,14 +414,14 @@ class Shadow:
                     self.write_failed += 1
                     self._unreported += 1
                     try:
-                        log.warning("write failed: %s", _why(e))
+                        log.warning("write failed: %s", _why(e, self.scrub))
                     except Exception:  # noqa: BLE001  not being able to say so is no reason to stop writing
                         pass
                     if isinstance(e, OSError):     # disk full / permission: keep measuring, do not spin
                         self.stop.wait(30.0)
         except BaseException as e:  # noqa: BLE001  whatever ends this thread must end the process
             try:
-                log.critical("writer thread died, exiting with status %d: %s", EXIT_WRITER_DEAD, _why(e))
+                log.critical("writer thread died, exiting with status %d: %s", EXIT_WRITER_DEAD, _why(e, self.scrub))
             finally:
                 os._exit(EXIT_WRITER_DEAD)
 
@@ -308,6 +434,24 @@ class Shadow:
         self.writer_loop()
 
     # ── clock offset (side thread) ──
+    @staticmethod
+    def _cpu_throttling():
+        """Own unified cgroup counters; only called by clock measurements, never by receive/write/correction.
+        Missing v2/controller/permissions (including macOS) is unknown, never a fabricated zero."""
+        try:
+            with open("/proc/self/cgroup", encoding="utf-8") as groups:
+                path = next(line.rstrip("\n").split(":", 2)[2] for line in groups if line.startswith("0::"))
+            if not path.startswith("/") or ".." in path.split("/"):
+                raise ValueError("invalid unified cgroup path")
+            with open("/sys/fs/cgroup" + path.rstrip("/") + "/cpu.stat", encoding="utf-8") as stats:
+                fields = dict(line.split() for line in stats)
+            n, usec = int(fields["nr_throttled"]), int(fields["throttled_usec"])
+            if n < 0 or usec < 0:
+                raise ValueError("negative throttle counter")
+            return dict(throttled_n=n, throttled_ms=usec / 1000)
+        except Exception:  # noqa: BLE001  optional telemetry must never stop clock measurements
+            return dict(throttled_n=None, throttled_ms=None)
+
     def measure_clock(self):
         """offset = server time - local time at the middle of the request (public endpoint, no key), taken from the
         FASTEST of CLOCK_SAMPLES back-to-back requests. One sample is off by up to rtt / 2, and a request that first
@@ -322,20 +466,27 @@ class Shadow:
         measurements were that bad (each can be off by rtt / 2)."""
         best = None
         for _ in range(CLOCK_SAMPLES):
+            if self.stop.is_set():
+                return
             m0, t0 = self.mono(), self.clock()
             server_ms = float(self._http_get(TIME_URL)["serverTime"])
+            if self.stop.is_set():
+                return
             rtt = self.mono() - m0
             if best is None or rtt < best[0]:
-                best = (rtt, server_ms - (t0 + rtt / 2) * 1000, t0 - m0)
-        rtt, offset, ref = best
+                best = (rtt, server_ms - (t0 + rtt / 2) * 1000, t0 - m0, m0 + rtt / 2,
+                        (t0 + rtt / 2) * 1000, self._cpu_throttling())
+        rtt, offset, ref, sample_mono, sample_ms, cpu = best
+        if self.stop.is_set():
+            return
         if rtt > CLOCK_MAX_RTT_S:
-            self.write(dict(k="clock", skipped="slow", rtt_ms=round(rtt * 1000, 1)))
+            self.write(dict(k="clock", skipped="slow", rtt_ms=round(rtt * 1000, 1), sample_ms=sample_ms, **cpu))
             return
         with self._clock_lock:
             before = self.offset_ms            # None: never measured, or voided by a step (its line says by how much)
-            self.offset_ms, self.offset_at, self.offset_ref, self.offset_rtt_ms = offset, self.mono(), ref, rtt * 1000
+            self.offset_ms, self.offset_at, self.offset_ref, self.offset_rtt_ms = offset, sample_mono, ref, rtt * 1000
         self.write(dict(k="clock", offset_ms=round(offset, 1), rtt_ms=round(rtt * 1000, 1), n=CLOCK_SAMPLES,
-                        drift_ms=None if before is None else round(offset - before, 1)))
+                        drift_ms=None if before is None else round(offset - before, 1), sample_ms=sample_ms, **cpu))
 
     def clock_loop(self):
         while not self.stop.is_set():
@@ -344,7 +495,9 @@ class Shadow:
             try:
                 self.measure_clock()
             except Exception as e:  # noqa: BLE001  the offset only refines lag_ms
-                self.write(dict(k="clock", error=scrub(repr(e))))
+                if self.stop.is_set():
+                    return
+                self.write(dict(k="clock", error=self.scrub(repr(e)), **self._cpu_throttling()))
                 banned = any(code in str(e) for code in ("429", "418"))
             if banned:
                 wait = floor = 3600.0          # rate-limited / banned IP: stay away for an hour, clock step or not
@@ -429,18 +582,21 @@ class Shadow:
                     pong = ws.ping(b"")
                     last_ping = now
                 try:
+                    recv_start = self.mono()
                     raw = ws.recv(timeout=1.0)
                 except TimeoutError:
                     continue
                 recv_ms = self.clock() * 1000          # stamp first, everything else afterwards
-                off, age, rtt = self._correction(recv_ms / 1000, self.mono())
-                rec = parse_push(raw, recv_ms, off, age, rtt)
+                recv_mono = self.mono()
+                off, age, rtt = self._correction(recv_ms / 1000, recv_mono)
+                rec = parse_push(self.redact_json(raw), recv_ms, off, age, rtt)
                 if rec is None:
                     other += 1
                     if other <= MAX_OTHER_PER_CONN:
-                        self.write(dict(k="other", raw=scrub(raw)))
+                        self.write(dict(k="other", raw=self.scrub(raw)))
                     continue
                 n += 1
+                rec["recv_wait_ms"] = round((recv_mono - recv_start) * 1000, 2)
                 self.write(rec)
                 self.clock_wake.set()                  # measure the clock again now: was this row's offset still true?
 
@@ -462,8 +618,9 @@ class Shadow:
         self.stop.set()
         self.clock_wake.set()                  # out of its wait now, not at the next look-out
         clock.join(timeout=STOP_CLOCK_S)       # its rows first (it only takes longer when a time request hangs)
-        self.write(dict(k="conn", event="stopped", dropped=self.dropped, write_failed=self.write_failed))
-        self._producers_done.set()
+        with self._write_lock:
+            self.write(dict(k="conn", event="stopped", dropped=self.dropped, write_failed=self.write_failed))
+            self._producers_done.set()
         writer.join(timeout=STOP_WRITER_S)
 
     def run(self):
@@ -487,7 +644,7 @@ class Shadow:
                     continue
                 except Exception as e:  # noqa: BLE001  reconnect on any stream error
                     rejects = 0
-                    self.write(dict(k="conn", event="error", detail=scrub(repr(e))))
+                    self.write(dict(k="conn", event="error", detail=self.scrub(repr(e))))
                 backoff = 1.0 if self.mono() - started > 60 else min(backoff * 2, BACKOFF_MAX_S)
                 self.stop.wait(backoff)
         finally:
@@ -523,6 +680,7 @@ def main(argv=None):
     os.umask(0o077)
     sh = Shadow(os.environ["BINANCE_API_KEY"], os.environ["BINANCE_API_SECRET"], a.out,
                 connect=_connect_no_redirect(), http_get=_http_get)
+    sh.install_log_filter()
     for s in (signal.SIGTERM, signal.SIGINT):
         signal.signal(s, lambda *_: sh.stop.set())
     log.info("announcement shadow logger -> %s (read-only, no orders)", a.out)

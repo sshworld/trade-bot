@@ -935,3 +935,28 @@ def test_service_isolated_state_and_environment():
     assert '--categories' not in text and 'live.env' not in text    # never the bot's trading keys
     assert 'UPBIT_ACCESS_KEY' in header and 'UPBIT_SECRET_KEY' in header
     assert svc['TimeoutStopSec'] == '20'
+
+
+def test_f1_upbit_main_filters_third_party_keys_tokens_and_tracebacks(tmp_path, monkeypatch):
+    from .test_ann_ws_shadow import _assert_main_log_filter
+    _assert_main_log_filter(S, S.UpbitShadow, monkeypatch, tmp_path, ('UPBIT_ACCESS_KEY', 'UPBIT_SECRET_KEY'))
+
+
+def test_f4_upbit_recv_wait_and_stamp_have_no_file_io(tmp_path, monkeypatch):
+    from .test_ann_ws_shadow import _assert_recv_wait
+    sh, _, clock = shadow(tmp_path)
+    _assert_recv_wait(S, sh, clock, json.dumps(DOC), monkeypatch)
+
+
+def test_f5_upbit_infinite_original_timestamp_is_null_in_strict_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(S, 'RECONNECT_S', 2)
+    raw = json.dumps(dict(DOC, timestamp=0)).replace('"timestamp": 0', '"timestamp": 1e999')
+    sh, _, _ = shadow(tmp_path, [raw])
+    sh.run_once()
+    sh.stop.set()
+    sh.writer_loop()
+    rows = [json.loads(line, parse_constant=lambda x: pytest.fail(x)) for line in file_lines(sh)]
+    ann = next(r for r in rows if r['k'] == 'upbit_ann')
+    assert ann['timestamp'] is None and ann['timestamp_ms'] is None
+    assert ann['lag_raw_ms_timestamp'] is None and ann['lag_ms_timestamp'] is None
+    assert ann['title'] == DOC['title'] and sh.write_failed == 0

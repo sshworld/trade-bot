@@ -28,7 +28,13 @@ Upbit's own clock differs from that stays inside every lag_ms_*.
 tag and tickers are made from the title as it is logged (its first 500 characters;
 title_len is the whole length). offset_rtt_ms, the clock / writer / conn rows, what
 a clock step or slewing does to lag_ms_* and how to read the file: see the module
-text of ann_ws_shadow.
+text of ann_ws_shadow. recv_wait_ms is this recv()'s monotonic wait in ms: near zero
+means recv_ms may only be an arrival upper bound because a frame was buffered.
+Use sample_ms > recv_ms to find a genuinely later clock measurement; file order
+and t do not decide. Discard announcements between measurements with different
+throttled_n; null throttled_n/throttled_ms means the CPU counters are unknown.
+The raw timestamp is retained except that non-finite numeric values become null
+at the common strict-JSON writer boundary.
 """
 from __future__ import annotations
 
@@ -218,31 +224,10 @@ class UpbitShadow(base.Shadow):
         self._ws_log.propagate = False
 
     def redact(self, text):
-        text = str(text)
-        for value in (self._token, self.key, self.secret):
-            if value:
-                text = text.replace(value, "[REDACTED]")
-                text = text.replace(json.dumps(value)[1:-1], "[REDACTED]")
+        text = super().redact(text)
+        if self._token:
+            text = text.replace(self._token, "[REDACTED]")
         return redact_jwts(text)
-
-    def scrub(self, text):
-        return base.scrub(self.redact(text))
-
-    def clean(self, rec):
-        # Sanitize every string, including echoed titles, field names and errors.
-        # Preserve legitimate notice URL queries (id is needed for later joins).
-        def clean(value):
-            if isinstance(value, str):
-                return self.redact(value)
-            if isinstance(value, dict):
-                return {self.redact(k): clean(v) for k, v in value.items()}
-            if isinstance(value, list):
-                return [clean(v) for v in value]
-            return value
-        return clean(rec)
-
-    def write(self, rec):
-        super().write(self.clean(rec))
 
     def _append(self, line):
         """Harden the inherited writer's append: regular private files, no links.
@@ -303,11 +288,13 @@ class UpbitShadow(base.Shadow):
                         pong = ws.ping(b"")
                         last_ping = now
                     try:
+                        recv_start = self.mono()
                         raw = ws.recv(timeout=1.0)
                     except TimeoutError:
                         continue
                     recv_ms = self.clock() * 1000  # stamp before decoding/offset/scrub
-                    off, age, rtt = self._correction(recv_ms / 1000, self.mono())  # valid for THIS stamp's clocks?
+                    recv_mono = self.mono()
+                    off, age, rtt = self._correction(recv_ms / 1000, recv_mono)  # valid for THIS stamp's clocks?
                     msg = decode(raw)
                     if msg is not None and "error" in msg:
                         error = msg["error"]
@@ -321,6 +308,7 @@ class UpbitShadow(base.Shadow):
                             self.write(dict(k="other", recv_ms=recv_ms, raw=self.scrub(raw)))
                     else:
                         n += 1
+                        rec["recv_wait_ms"] = round((recv_mono - recv_start) * 1000, 2)
                         self.write(rec)
                         self.clock_wake.set()  # measure the clock again now: was this row's offset still true?
         except StreamError:
@@ -382,6 +370,7 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     sh = UpbitShadow(key, secret, a.out, categories=categories,
                      connect=base._connect_no_redirect(), http_get=base._http_get)
+    sh.install_log_filter()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: sh.stop.set())
     try:

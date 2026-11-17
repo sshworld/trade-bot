@@ -404,10 +404,11 @@ def test_a_wall_clock_step_voids_the_offset_is_logged_once_and_wakes_a_new_measu
 def test_a_shift_within_50_ms_or_both_clocks_running_on_is_not_a_step(tmp_path):
     sh, _, clock, wall = _stepping(tmp_path)
     sh.measure_clock()
+    sample_age = clock.now - sh.offset_at
     clock.now += 1800.0                                          # half an hour passes on both clocks
     wall.shift += 0.049
     off, age = sh._offset()
-    assert off == pytest.approx(SERVER_AHEAD_MS, abs=0.01) and age == pytest.approx(1800.0)
+    assert off == pytest.approx(SERVER_AHEAD_MS, abs=0.01) and age == pytest.approx(1800.0 + sample_age)
     assert not sh.clock_wake.is_set()
     wall.shift += 0.002                                          # 51 ms in total: more than CLOCK_STEP_S
     assert S.CLOCK_STEP_S == 0.05 and sh._offset() == (None, None) and sh.clock_wake.is_set()
@@ -456,13 +457,14 @@ def test_run_once_checks_the_offset_against_the_clocks_of_the_receive_stamp(tmp_
 def test_the_age_of_an_offset_is_its_age_at_the_receive_stamp_not_when_the_push_gets_handled(tmp_path):
     sh, _, clock, wall = _stepping(tmp_path)
     sh.measure_clock()
+    sample_age = clock.now - sh.offset_at
     clock.now += 10.0
     stamp = (wall(), clock.now)
     clock.now += 30.0                                            # the receive thread got to it half a minute later
-    assert sh._offset(*stamp)[1] == pytest.approx(10.0) and sh._offset()[1] == pytest.approx(40.0)
-    assert sh._correction(*stamp) == (pytest.approx(SERVER_AHEAD_MS, abs=0.01), pytest.approx(10.0), pytest.approx(4.0))
+    assert sh._offset(*stamp)[1] == pytest.approx(10.0 + sample_age) and sh._offset()[1] == pytest.approx(40.0 + sample_age)
+    assert sh._correction(*stamp) == (pytest.approx(SERVER_AHEAD_MS, abs=0.01), pytest.approx(10.0 + sample_age), pytest.approx(4.0))
     clock.now += S.CLOCK_MAX_AGE_S                               # too old now - but not at that stamp
-    assert sh._correction() == (None, pytest.approx(S.CLOCK_MAX_AGE_S + 40.0), None)
+    assert sh._correction() == (None, pytest.approx(S.CLOCK_MAX_AGE_S + 40.0 + sample_age), None)
     assert sh._offset(*stamp)[0] == pytest.approx(SERVER_AHEAD_MS, abs=0.01)
 
 
@@ -1294,7 +1296,7 @@ def test_module_is_read_only_no_trading_imports():
         elif isinstance(node, ast.ImportFrom):
             assert node.level == 0, "no relative imports (would pull bot modules)"
             mods.add((node.module or "").split(".")[0])
-    assert mods <= {"__future__", "argparse", "hashlib", "hmac", "json", "logging", "os", "queue", "re", "secrets",
+    assert mods <= {"__future__", "argparse", "hashlib", "hmac", "json", "logging", "math", "os", "queue", "re", "secrets",
                     "signal", "threading", "time", "httpx", "websockets"}
     for banned in ("/fapi/v1/order", "/fapi/v1/leverage", "/fapi/v1/marginType", "listenKey", "new_order"):
         assert banned not in src
@@ -1416,3 +1418,422 @@ def test_unit_parser_refuses_unknown_misspelt_or_malformed_directives(tmp_path, 
         unit_file(unit)
     unit.write_text("# header\n[Service]\nDynamicUser=yes\n")
     assert unit_file(unit) == ("# header", {"Service": {"DynamicUser": ["yes"]}})
+
+
+# Review 2 regressions: F1--F6, fake transports only.
+@pytest.mark.parametrize('nested', [False, True])
+def test_f1_redacts_frames_before_cut_and_keeps_json(tmp_path, monkeypatch, nested):
+    monkeypatch.setattr(S, 'RECONNECT_S', 3)
+    sh, _, clock = _shadow(tmp_path)
+    sh.key, sh.secret = 'fake-key-"quoted"-tail', 'fake-secret-\\slash-tail'
+    data = dict(title='x' * 490 + sh.key + ' ' + sh.secret, catalogName=sh.secret,
+                publishDate=1, note=sh.key)
+    raw = json.dumps(dict(type='DATA', data=json.dumps(data) if nested else data))
+    sh._connect = lambda *a, **kw: FakeWS([raw, 'x' * 290 + sh.secret], clock)
+    sh.run_once()
+    rows = _drain(sh)
+    ann = next(r for r in rows if r['k'] == 'ann')
+    assert '[REDACTED]' in ann['title'] and 'fake-key-' not in ann['title']
+    assert ann['catalogName'] == '[REDACTED]'
+    assert 'fake-secret-' not in next(r['raw'] for r in rows if r['k'] == 'other')
+    for r in rows:
+        sh.write(r)
+    sh.stop.set()
+    sh.writer_loop()
+    for line in _file_lines(sh):
+        json.loads(line)
+        assert b'fake-key-' not in line and b'fake-secret-' not in line
+
+
+def test_f1_common_queue_and_final_file_boundary(tmp_path):
+    sh, _, _ = _shadow(tmp_path)
+    sh.write(dict(k='future', nested={sh.key: [sh.secret, '/sapi/wss?x=1&signature=abc123&tail=ok']}))
+    queued = _drain(sh)[0]
+    text = json.dumps(queued)
+    assert sh.key not in text and sh.secret not in text and 'abc123' not in text
+    # Bypass write(): future producers must still meet the writer's final boundary.
+    sh.q.put(dict(k='future', title=sh.secret, detail='signature=abc123'))
+    sh.stop.set()
+    sh.writer_loop()
+    line = _file_lines(sh)[0]
+    assert json.loads(line)['title'] == '[REDACTED]'
+    assert b'abc123' not in line
+
+
+@pytest.mark.parametrize('kind', ['conn', 'clock'])
+def test_f1_error_redaction_precedes_scrub_truncation(tmp_path, kind):
+    sh, _, _ = _shadow(tmp_path)
+    def fail(*a, **kw):
+        raise RuntimeError('x' * 280 + sh.secret + ' ' + sh.key + ' /sapi/wss?signature=abc123')
+    if kind == 'conn':
+        sh._connect = fail
+        _run_with_waits(sh, 1)
+    else:
+        sh._http_get = fail
+        sh._clock_sleep = lambda *a: sh.stop.set()
+        sh.clock_loop()
+    row = next(r for r in _drain(sh) if r['k'] == kind and ('error' in r or r.get('event') == 'error'))
+    text = json.dumps(row)
+    assert sh.secret not in text and sh.key not in text and 'abc123' not in text
+    assert 'SECR' not in text and '[REDAC' in text  # truncating the harmless marker is safe
+
+
+def _assert_main_log_filter(module, cls, monkeypatch, tmp_path, env_prefix):
+    import io
+    import logging
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    root = logging.getLogger()
+    old_handlers = root.handlers[:]
+    root.handlers[:] = [handler]
+    monkeypatch.setenv(env_prefix[0], 'fake-log-key')
+    monkeypatch.setenv(env_prefix[1], 'fake-log-secret')
+    monkeypatch.setattr(module.signal, 'signal', lambda *a: None)
+    monkeypatch.setattr(S, '_connect_no_redirect', lambda: None)
+    def run(self):
+        for name in ('live_v6.ann_ws_shadow', 'httpx', 'websockets.client'):
+            try:
+                raise RuntimeError(self.secret + ' eyJ.a.b')
+            except RuntimeError:
+                logging.getLogger(name).warning('key=%s /sapi/wss?signature=abc123', self.key, exc_info=True)
+    monkeypatch.setattr(cls, 'run', run)
+    old_mask = os.umask(0o077)
+    try:
+        module.main(['--out', str(tmp_path / 'log')])
+    finally:
+        root.handlers[:] = old_handlers
+        os.umask(old_mask)
+    output = stream.getvalue()
+    assert 'fake-log-key' not in output and 'fake-log-secret' not in output and 'abc123' not in output
+    assert '[REDACTED]' in output
+    if cls is not S.Shadow:
+        assert 'eyJ.a.b' not in output
+
+
+def test_f1_main_filters_all_root_handler_logs(tmp_path, monkeypatch):
+    _assert_main_log_filter(S, S.Shadow, monkeypatch, tmp_path, ('BINANCE_API_KEY', 'BINANCE_API_SECRET'))
+
+
+@pytest.mark.parametrize('failure', ['size', 'rotate'])
+def test_f2_rotation_or_stat_failure_loses_row_and_recovers(tmp_path, monkeypatch, failure):
+    sh, _, _ = _shadow(tmp_path)
+    path = pathlib.Path(sh.out_path)
+    path.write_text('old\n')
+    monkeypatch.setattr(S, 'MAX_FILE_BYTES', 2)
+    real_size, real_replace = os.path.getsize, os.replace
+    def refuse(*a):
+        raise PermissionError(errno.EACCES, 'offline denied')
+    monkeypatch.setattr(os.path, 'getsize', refuse if failure == 'size' else real_size)
+    monkeypatch.setattr(os, 'replace', refuse if failure == 'rotate' else real_replace)
+    waits = []
+    sh.stop.wait = waits.append
+    sh.write(dict(k='must_be_lost'))
+    sh.stop.set()
+    sh.writer_loop()
+    assert path.read_text() == 'old\n' and sh.write_failed == 1 and waits == [30.0]
+    monkeypatch.setattr(os.path, 'getsize', real_size)
+    monkeypatch.setattr(os, 'replace', real_replace)
+    monkeypatch.setattr(S, 'MAX_FILE_BYTES', 10000)
+    sh.write(dict(k='recovered'))
+    sh.writer_loop()
+    rows = [json.loads(x) for x in _file_lines(sh)[1:]]
+    assert [(r['k'], r.get('event'), r.get('n')) for r in rows] == [('writer', 'lost', 1), ('recovered', None, None)]
+
+
+def test_f2_missing_file_is_normal_first_append(tmp_path):
+    sh, _, _ = _shadow(tmp_path)
+    sh._append('{}\n')
+    assert _file_lines(sh) == [b'{}']
+
+
+def test_f3_selected_sample_midpoint_is_the_offset_age_origin(tmp_path):
+    sh, _, clock = _shadow(tmp_path)
+    start = clock.now
+    rtts = iter([.004, .01, .02, .03, .04])
+    def get(url):
+        rtt = next(rtts)
+        clock.now += rtt
+        return dict(serverTime=(clock.now - rtt / 2) * 1000)
+    sh._http_get = get
+    sh.measure_clock()
+    row = _drain(sh)[0]
+    assert row['sample_ms'] == pytest.approx((start + .002) * 1000)
+    assert sh.offset_at == pytest.approx(start + .002)
+    assert sh._offset()[1] == pytest.approx(clock.now - start - .002)
+
+
+def test_f3_push_during_measurement_gets_a_genuinely_later_sample(tmp_path, monkeypatch):
+    monkeypatch.setattr(S, 'RECONNECT_S', .001)
+    sh, _, clock, wall = _stepping(tmp_path)
+    sh.offset_ms, sh.offset_at, sh.offset_ref, sh.offset_rtt_ms = 0, clock.now, wall() - clock.now, 4
+    n = [0]
+    def get(url):
+        n[0] += 1
+        if n[0] == 2:
+            wall.true_shift += .3  # both local clocks lost 300 ms; no step
+            raw = json.dumps(dict(type='DATA', data=dict(title='notice', publishDate=wall.true_ms() + 900)))
+            sh._connect = lambda *a, **kw: FakeWS([raw], clock)
+            sh.run_once()
+        rtt = .004 if n[0] % 5 == 1 else .008
+        clock.now += rtt
+        return dict(serverTime=wall.true_ms() - rtt * 500)
+    sh._http_get = get
+    starts = _run_clock_thread(sh, clock, until=clock.now + 30)
+    rows = _drain(sh)
+    ann = next(r for r in rows if r['k'] == 'ann')
+    assert ann['lag_ms'] == pytest.approx(-200, abs=.1)  # true lag: 100 ms
+    clocks = [r for r in rows if r['k'] == 'clock' and 'offset_ms' in r]
+    assert len(starts) == len(clocks) == 2 and starts[1] - starts[0] >= 10
+    assert rows.index(ann) < rows.index(clocks[0])  # written later, sampled BEFORE the announcement
+    assert clocks[0]['sample_ms'] < ann['recv_ms'] < clocks[1]['sample_ms']
+    assert clocks[0]['offset_ms'] == pytest.approx(0, abs=.01)
+    assert clocks[1]['offset_ms'] == pytest.approx(300, abs=.01)
+    for phrase in ('sample_ms', 'recv_ms', 'Never pick one of them'):
+        assert phrase in S.__doc__
+
+
+def _assert_recv_wait(module, sh, clock, raw, monkeypatch):
+    import builtins
+    expected_stamp, calls = [False], []
+    original_clock, original_mono = sh.clock, sh.mono
+    def wall():
+        if expected_stamp[0]:
+            expected_stamp[0] = False
+            calls.append('stamp')
+        return original_clock()
+    def mono():
+        assert not expected_stamp[0], 'monotonic read ran before receive stamp'
+        return original_mono()
+    sh.clock, sh.mono = wall, mono
+    class WS:
+        def __enter__(self):
+            self.n = 0
+            return self
+        def __exit__(self, *a):
+            pass
+        def send(self, message):
+            pass
+        def recv(self, timeout):
+            self.n += 1
+            if self.n == 1:
+                clock.now += .020
+            else:
+                sh.stop.set()  # second frame was already buffered
+            expected_stamp[0] = True
+            return raw
+    sh._connect = lambda *a, **kw: WS()
+    original_parse = module.parse_push
+    def parse(*a, **kw):
+        assert not expected_stamp[0]
+        clock.now += .065  # processing the previous frame delays the buffered frame
+        return original_parse(*a, **kw)
+    monkeypatch.setattr(module, 'parse_push', parse)
+    def forbidden(*a, **kw):
+        raise AssertionError('receive thread must not read/write files')
+    monkeypatch.setattr(builtins, 'open', forbidden)
+    monkeypatch.setattr(os, 'open', forbidden)
+    sh.run_once()
+    rows = [r for r in _drain(sh) if r['k'] in ('ann', 'upbit_ann')]
+    assert calls == ['stamp', 'stamp']
+    assert [r['recv_wait_ms'] for r in rows] == [20.0, 0.0]
+    assert rows[1]['recv_ms'] - rows[0]['recv_ms'] == pytest.approx(65)
+
+
+def test_f4_recv_wait_marks_buffered_frames_and_stamps_before_work(tmp_path, monkeypatch):
+    sh, _, clock = _shadow(tmp_path)
+    _assert_recv_wait(S, sh, clock, DOC_PUSH, monkeypatch)
+
+
+@pytest.mark.parametrize(('membership', 'stats', 'expected'), [
+    ('0::/system.slice/offline.service\n', 'usage_usec 123\nnr_throttled 53\nthrottled_usec 12345\n', (53, 12.345)),
+    ('0::/\n', 'nr_throttled 0\nthrottled_usec 0\n', (0, 0.0)),
+    ('2:cpu:/other\n0::/a:b\n', 'nr_throttled 7\nthrottled_usec 2000\n', (7, 2.0)),
+    (None, None, (None, None)),
+    ('2:cpu:/legacy\n', '', (None, None)),
+    ('0::/a\n', None, (None, None)),
+    ('0::/a\n', 'nr_throttled broken\nthrottled_usec 3\n', (None, None)),
+    ('0::/a\n', 'nr_throttled 3\n', (None, None)),
+    ('0::/a\n', 'nr_throttled -1\nthrottled_usec 3\n', (None, None)),
+])
+def test_f4_cgroup_counters_are_clock_thread_only_and_optional(tmp_path, monkeypatch, membership, stats, expected):
+    import builtins
+    sh, _, _ = _shadow(tmp_path)
+    group_file, stat_file = tmp_path / 'cgroup', tmp_path / 'cpu.stat'
+    group_file.write_text(membership or '')
+    stat_file.write_text(stats or '')
+    original = builtins.open
+    seen = []
+    def fake_open(path, *a, **kw):
+        assert threading.current_thread().name == 'offline-clock'
+        seen.append(str(path))
+        if str(path) == '/proc/self/cgroup' and membership is not None:
+            return original(group_file, *a, **kw)
+        suffix = next((line[3:] for line in (membership or '').splitlines() if line.startswith('0::')), None)
+        if suffix is not None and str(path) == '/sys/fs/cgroup' + suffix.rstrip('/') + '/cpu.stat' and stats is not None:
+            return original(stat_file, *a, **kw)
+        raise FileNotFoundError(path)
+    monkeypatch.setattr(builtins, 'open', fake_open)
+    t = threading.Thread(target=sh.measure_clock, name='offline-clock')
+    t.start()
+    t.join(5)
+    assert not t.is_alive()
+    row = _drain(sh)[0]
+    assert (row['throttled_n'], row['throttled_ms']) == expected
+    assert seen and 'offset_ms' in row
+
+
+@pytest.mark.parametrize('value', ['1e999', '-1e999', 'NaN', '9' * 600, '"123"', 'true'],
+                         ids=['positive-overflow', 'negative-overflow', 'nan', 'huge-int', 'string', 'bool'])
+def test_f5_bad_publish_date_keeps_row_with_null_lags(tmp_path, monkeypatch, value):
+    monkeypatch.setattr(S, 'RECONNECT_S', 2)
+    raw = '{"type":"DATA","data":{"title":"notice","publishDate":' + value + '}}'
+    sh, _, _ = _shadow(tmp_path, [raw])
+    sh.offset_ms, sh.offset_at, sh.offset_ref = 0, 1000, 0
+    sh.run_once()
+    ann = next(r for r in _drain(sh) if r['k'] == 'ann')
+    assert [ann[k] for k in ('publish_ms', 'lag_raw_ms', 'lag_ms')] == [None, None, None]
+    sh.write(ann)
+    sh.stop.set()
+    sh.writer_loop()
+    for line in _file_lines(sh):
+        json.loads(line, parse_constant=lambda x: pytest.fail('non-finite JSON: ' + x))
+
+
+def test_f5_writer_replaces_only_nonfinite_values_and_uses_strict_json(tmp_path, monkeypatch):
+    sh, _, _ = _shadow(tmp_path)
+    original, seen = S.json.dumps, []
+    def dumps(*a, **kw):
+        seen.append(kw.get('allow_nan'))
+        return original(*a, **kw)
+    monkeypatch.setattr(S.json, 'dumps', dumps)
+    sh.q.put(dict(k='future', nested=[float('inf'), dict(x=float('nan')), float('-inf'), 3.0], title='keep'))
+    sh.stop.set()
+    sh.writer_loop()
+    row = json.loads(_file_lines(sh)[0], parse_constant=lambda x: pytest.fail(x))
+    assert row == dict(k='future', nested=[None, dict(x=None), None, 3.0], title='keep')
+    assert seen and all(value is False for value in seen)
+    assert sh.write_failed == 0
+
+
+@pytest.mark.parametrize('stop_at', [1, 3, 5])
+def test_f6_stop_between_samples_emits_no_clock_row(tmp_path, stop_at):
+    sh, _, clock = _shadow(tmp_path)
+    calls = []
+    def get(url):
+        calls.append(url)
+        clock.now += .004
+        if len(calls) == stop_at:
+            sh.stop.set()
+        return dict(serverTime=clock.now * 1000)
+    sh._http_get = get
+    sh.measure_clock()
+    assert len(calls) == stop_at and _drain(sh) == [] and sh.offset_ms is None
+
+
+def test_f6_writes_after_producers_done_are_counted_not_enqueued(tmp_path):
+    sh, _, _ = _shadow(tmp_path)
+    sh._producers_done.set()
+    sh.write(dict(k='clock', offset_ms=1))
+    assert sh.q.empty() and sh.dropped == 1
+
+
+def test_f6_clock_request_outliving_shutdown_cannot_follow_stopped(tmp_path, monkeypatch):
+    monkeypatch.setattr(S, 'STOP_CLOCK_S', .01)
+    sh, _, _ = _shadow(tmp_path)
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    def get(url):
+        entered.set()
+        assert release.wait(5)
+        return dict(serverTime=1)
+    sh._http_get = get
+    def clock_loop():
+        try:
+            sh.measure_clock()
+        finally:
+            finished.set()
+    sh.clock_loop = clock_loop
+    def once():
+        assert entered.wait(5)
+        sh.stop.set()
+    sh.run_once = once
+    try:
+        sh.run()
+    finally:
+        release.set()
+    assert finished.wait(5)
+    assert sh.q.empty()
+    rows = [json.loads(x) for x in _file_lines(sh)]
+    assert [r.get('event') for r in rows] == ['stopped']
+
+
+def test_f1_writer_error_is_redacted_before_journal_truncation(tmp_path, caplog):
+    sh, _, _ = _shadow(tmp_path)
+    def append(line):
+        raise ValueError('x' * 284 + sh.secret + ' trailing')
+    sh._append = append
+    sh.write(dict(k='future'))
+    sh.stop.set()
+    sh.writer_loop()
+    assert 'SECR' not in caplog.text and '[RED' in caplog.text
+
+
+@pytest.mark.parametrize('prefix', ['/sapi/wss?x=1&', 'wss://api.binance.com/sapi/wss?x=1&', ''])
+def test_f1_signature_values_redacted_in_valid_json(tmp_path, prefix):
+    sh, _, _ = _shadow(tmp_path)
+    sh.write(dict(k='future', detail=prefix + 'signature=abc123&tail=ok'))
+    queued = _drain(sh)[0]
+    assert queued['detail'] == prefix + 'signature=[REDACTED]&tail=ok'
+    sh.q.put(queued)
+    sh.stop.set()
+    sh.writer_loop()
+    row = json.loads(_file_lines(sh)[0])
+    assert row['detail'] == queued['detail']
+
+
+@pytest.mark.parametrize('nested', [False, True])
+def test_f1_json_escaping_cannot_turn_public_quote_into_a_secret_match(tmp_path, monkeypatch, nested):
+    monkeypatch.setattr(S, 'RECONNECT_S', 2)
+    sh, _, clock = _shadow(tmp_path)
+    sh.secret = 'fake-escape-\\'
+    title = 'fake-escape-"still public'
+    data = dict(title=title, publishDate=1)
+    raw = json.dumps(dict(type='DATA', data=json.dumps(data) if nested else data))
+    sh._connect = lambda *a, **kw: FakeWS([raw], clock)
+    sh.run_once()
+    ann = next(r for r in _drain(sh) if r['k'] == 'ann')
+    assert ann['title'] == title
+    sh.q.put(dict(k='future', title=title, hidden=sh.secret))
+    sh.stop.set()
+    sh.writer_loop()
+    row = json.loads(_file_lines(sh)[0])
+    assert row['title'] == title and row['hidden'] == '[REDACTED]'
+
+
+def test_f1_final_redaction_leaves_json_numeric_tokens_intact(tmp_path):
+    sh, _, _ = _shadow(tmp_path)
+    sh.secret = '123'
+    sh.q.put(dict(k='future', n=123, title='123'))
+    sh.stop.set()
+    sh.writer_loop()
+    assert json.loads(_file_lines(sh)[0]) == dict(k='future', n=123, title='[REDACTED]')
+
+
+@pytest.mark.parametrize('encoding', ['utf-8', 'utf-16', 'utf-32'])
+def test_f1_binary_json_encodings_keep_redaction_and_ann_rows(tmp_path, monkeypatch, encoding):
+    monkeypatch.setattr(S, 'RECONNECT_S', 2)
+    sh, _, clock = _shadow(tmp_path)
+    raw = json.dumps(dict(type='DATA', data=dict(title='x' * 490 + sh.secret, publishDate=1))).encode(encoding)
+    sh._connect = lambda *a, **kw: FakeWS([raw], clock)
+    sh.run_once()
+    ann = next(r for r in _drain(sh) if r['k'] == 'ann')
+    assert ann['title'] == 'x' * 490 + '[REDACTED]'
+
+
+def test_f1_invalid_binary_json_stays_an_other_row(tmp_path, monkeypatch):
+    monkeypatch.setattr(S, 'RECONNECT_S', 2)
+    raw = b'{"type":"DATA","data":{"title":"\xff","publishDate":1}}'
+    sh, _, _ = _shadow(tmp_path, [raw])
+    sh.run_once()
+    rows = _drain(sh)
+    assert not any(r['k'] == 'ann' for r in rows)
+    assert next(r['raw'] for r in rows if r['k'] == 'other') == S.scrub(raw)
