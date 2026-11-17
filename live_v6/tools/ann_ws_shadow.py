@@ -7,7 +7,7 @@ possible from this box depends on one number we do not have: when does the push 
 What it does: connects to the announcement stream (signed with the account API key - the only use of the key; no
 order or account endpoint is imported or called) and appends one JSON line per pushed announcement:
   {"k":"ann","recv_ms":…,"recv_wait_ms":…,"publish_ms":…,"lag_raw_ms":…,"lag_ms":…,"offset_ms":…,"offset_age_s":…,
-   "offset_rtt_ms":…,"catalogId":…,"catalogName":…,"title":…,"title_len":…,"tag":…}
+   "offset_rtt_ms":…,"offset_sample_ms":…,"catalogId":…,"catalogName":…,"title":…,"title_len":…,"tag":…}
 `lag_raw_ms` = local receive time - publishDate; `lag_ms` adds the measured clock offset to the Binance server
 (null while no valid offset is known). `offset_rtt_ms` is the round trip of the time request that offset came
 from: the offset, and with it `lag_ms`, can be off by half of it. {"k":"clock"} lines record every measurement of
@@ -27,34 +27,56 @@ things in the file show it: the measurement that follows every announcement (not
 most one per 10 s), and `drift_ms` of a clock line = its offset minus the offset it replaces (null: there was
 none, or a step had voided it).
 HOW TO USE lag_ms. A clock line's sample_ms is the wall-clock midpoint of its SELECTED request, in the same
-milliseconds as recv_ms; offset_age_s also starts at that midpoint, not at the end of all five requests.
-The clock line AFTER an announcement is the first valid measurement whose sample_ms > that announcement's recv_ms.
-File order and t (enqueue time) do not decide: a line written afterwards with sample_ms < recv_ms is BEFORE it.
-Compare the offset_ms of measurements on either side, each good to half its rtt_ms - unless a step line lies
-between them: then leave the row out. lag_ms stands when the later sample followed at once (compare sample_ms
-with recv_ms: normally well within a second, 10 s at most after a burst) and the two
-offsets agree within what the question allows (say 20 ms for a decision about 0.2 s): drift_ms of the line after
-is their difference. When they do not agree, the file cannot tell on which side of the announcement the clock
-moved - a pause BEFORE it makes lag_ms wrong and lag_raw_ms + the offset of the line after right, a pause between
-it and that measurement the other way round, and both leave the same lines. Then neither is "the" value: leave
-the row out, or carry both as the two ends of an interval. Never pick one of them.
+milliseconds as recv_ms: that request ran from sample_ms - rtt_ms/2 to sample_ms + rtt_ms/2, and offset_age_s
+starts at its midpoint. An announcement row names the measurement its lag_ms was made with: offset_sample_ms is
+the sample_ms of that clock line (null when offset_ms is). Take, among the valid measurements (clock lines with an
+offset_ms), for each row:
+  BEFORE  the last one whose request ENDED before recv_ms     (sample_ms + rtt_ms/2 < recv_ms)
+  USED    the one whose sample_ms equals the row's offset_sample_ms
+  AFTER   the first one whose request BEGAN after recv_ms     (sample_ms - rtt_ms/2 > recv_ms)
+and every valid one whose sample_ms lies between the earliest of these three and AFTER. File order and t (enqueue
+time) decide nothing: a measurement that was still running when the push came in is written after the row, its
+sample may still be from before it; USED can be older than BEFORE (that one was not installed yet when the row
+was stamped) and - offset_age_s then reads 0.0 - newer than recv_ms (installed between the stamp and the row);
+a request that straddles recv_ms is neither BEFORE nor AFTER, only one of those in between. Comparing BEFORE with
+AFTER alone is NOT enough: neither need be the offset lag_ms was made with. lag_ms stands when all three exist, no
+step line lies between the first and the last of these lines in the file, their throttled_n are all equal (see
+below), and the row's own offset_ms agrees with the offset_ms of every one of them within what the question
+allows (say 20 ms for a decision about 0.2 s; each is good to half its rtt_ms; drift_ms of a line is its offset
+minus the one before it). AFTER usually comes moments after the announcement (the measurement it asks for), but in
+a burst it can take a little more than 10 s: a measurement that was running at recv_ms, or had ended less than
+CLOCK_MIN_GAP_S (10 s) before it, is followed by the next one only 10 s after it ENDED, and AFTER can be the
+selected sample of that next one (the rest of the running measurement + 10 s + the requests up to the selected
+one). A reader that waits for less loses those rows; one that cannot find all three lines leaves the row out.
+When the offsets do not agree, the file cannot tell on which side of the announcement the clock moved - a pause
+BEFORE it makes lag_ms wrong and lag_raw_ms + the offset of AFTER right, a pause between it and that measurement
+the other way round, and both leave the same lines. Then neither is "the" value: leave the row out, or carry both
+as the two ends of an interval. Never pick one of them.
 
-recv_wait_ms is the monotonic duration of the recv() that returned this frame, rounded to 0.01 ms. A small value
-(roughly below 1 ms) may mean the frame was already buffered: recv_ms is only an UPPER bound on its arrival,
-which may have been as early as the previous row's receive stamp. A long wait is evidence the loop was idle,
-not a guarantee against a pause during recv(). Measurement clock rows carry the service's own cgroup v2 CPU
-throttled_n (nr_throttled) and throttled_ms (throttled_usec / 1000), read by the CLOCK thread at the selected
-sample's completion. If throttled_n differs between the before/after clock measurements, discard the announcement:
-the process was paused by its CPU quota in that interval. Null counters mean unknown (macOS, missing v2 or
-permissions), not zero; unchanged counters cannot rule out a VM pause or an ancestor cgroup's CPU limit.
+recv_wait_ms is how long the receive LOOP waited inside the recv() that returned this frame (monotonic, rounded to
+0.01 ms) - not how long the frame waited. It includes the library's own reader thread handing the frame over
+(scheduling, the interpreter lock, decoding a big frame): a frame that was in the socket 4 ms before recv() was
+called has been seen to wait 4.8 ms (loopback on a laptop, 2026-11-17; on the server not measured). So a wait of a
+few ms does not show that the loop was idle when the frame came in, and no wait rules out a pause during recv().
+Where the loop may not have been idle, the frame may have been waiting behind the work on earlier frames: recv_ms
+is then only an UPPER bound on its arrival, and the file holds no lower bound - earlier frames may have waited as
+well, so their stamps do not bound it either. Leave such rows out of millisecond judgements.
+Measurement clock rows carry the service's own cgroup v2 CPU throttled_n (nr_throttled) and throttled_ms
+(throttled_usec / 1000), read by the CLOCK thread at the selected sample's completion. If throttled_n differs
+between the measurements HOW TO USE lag_ms names for a row, discard the row: the process was paused by its CPU
+quota in that interval. Null counters mean unknown (macOS, missing v2 or permissions), not zero; unchanged
+counters cannot rule out a VM pause or an ancestor cgroup's CPU limit.
 Invalid/non-finite publication times keep the announcement with null publish_ms and lags; every written row is
-strict JSON with non-finite numeric values replaced by null. Credentials and signatures are redacted before cuts.
+strict JSON with non-finite numeric values replaced by null. Credentials and signature values are masked before
+anything is cut, so title_len and body_len count the masked text (they differ from the frame only where something
+was masked); text with nothing to mask is passed on exactly as it came.
 
 The receive loop only receives, stamps the time and enqueues; a writer thread does the file I/O, so a slow disk
 never inflates the measured lag. That thread survives any single record and a full disk; records it could not
 write are counted in a {"k":"writer","event":"lost","n":…} line, records that found the queue full (the writer was
 stuck for that long) in a {"k":"writer","event":"dropped","n":…} line, and a line torn by a failed write is
-closed before the next record. On a normal stop the last line is {"k":"conn","event":"stopped",…}.
+closed before the next record. On a normal stop the last line is {"k":"conn","event":"stopped",…} - unless the
+writer could not finish within STOP_WRITER_S (stuck, or thousands of rows behind: see Shadow._shutdown).
 HOW TO READ the file: split it into lines as BYTES (or open it with errors="replace") and skip a line that does
 not parse. A torn line can end inside a multi-byte character, and then the file as a whole is not valid UTF-8:
 iterating over open(path, encoding="utf-8") raises UnicodeDecodeError before there is a line to skip.
@@ -118,27 +140,73 @@ KEY_MAX = 100                 # ... and characters of each
 
 log = logging.getLogger("live_v6.ann_ws_shadow")
 _URL = re.compile(r"\b(wss?|https?)://([^\s/?#'\"]+)([^\s?#'\"]*)[^\s'\"]*")
-_SIGNATURE = re.compile(r"(signature=)[^&\s\"'\\<>]*")
+# A signature value: hex (HMAC-SHA256, see signed_url) after "signature=" in any ASCII case (re.ASCII: no "ſ" for "s"
+# - redact_json's shortcut relies on every match being spelled in ASCII), also percent-encoded - and,
+# when it is at least 16 hex digits long (a real one has 64), after "signature" as a JSON key, in a repr of a pair
+# or before a colon. Only a whole hex run goes (not the "fea" of "signature=feature"): public text such as
+# "signature=HMAC-SHA256" keeps its words. The signature of the current connection is also masked as an exact
+# value (Shadow._secret_values), wherever it is and whatever follows it.
+_SIGNATURE = re.compile(r"(?ai)(signature(?:=|%3d)|signature[\"']?\s{0,3}[:,]\s{0,3}[\"']?(?=[0-9a-f]{16}))"
+                        r"[0-9a-f]+(?![0-9a-z_])")
 _JSON_STRING = re.compile(r'(?<!\\)"[^"\\]*(?:\\.[^"\\]*)*"')
+_JSON_ESCAPE = re.compile(r'\\u([dD][89abAB][0-9a-fA-F]{2})\\u([dD][c-fC-F][0-9a-fA-F]{2})'
+                          r'|\\(?:u([0-9a-fA-F]{4})|(["\\/bfnrt]))')
+_SHORT_ESCAPES = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
+UNESCAPE_PASSES = 8           # levels of nested escapes undone where one could hide a secret (Shadow.redact)
+
+
+def _unescaped_once(text: str) -> str:
+    """`text` with one level of JSON escapes undone, as json.loads does it: a surrogate pair is the one character it
+    spells. An escape JSON does not know (\\q) stays as it is."""
+    def one(m):
+        if m[1]:
+            return chr(0x10000 + ((int(m[1], 16) - 0xD800) << 10) + int(m[2], 16) - 0xDC00)
+        return chr(int(m[3], 16)) if m[3] else _SHORT_ESCAPES[m[4]]
+    return _JSON_ESCAPE.sub(one, text)
 
 
 class RedactingFilter(logging.Filter):
-    """Sanitize at each root handler, including third-party messages and exception tracebacks."""
+    """Sanitize at each root handler, including third-party messages and exception tracebacks. A filter that raised
+    would raise into whoever logged (a library's reader thread, say) where a handler only prints a logging error -
+    so this one never raises, and lets nothing through that it could not redact."""
 
     def __init__(self, redact):
         super().__init__()
         self.redact = redact
 
     def filter(self, record):
-        record.msg, record.args = self.redact(record.getMessage()), ()
-        if record.exc_info:
-            record.exc_text = logging.Formatter().formatException(record.exc_info)
-            record.exc_info = None
-        if record.exc_text:
-            record.exc_text = self.redact(record.exc_text)
-        if record.stack_info:
-            record.stack_info = self.redact(record.stack_info)
+        try:
+            try:
+                message = record.getMessage()
+            except Exception:  # noqa: BLE001  a malformed call (arguments that do not fit the message)
+                message = f"{record.msg!s} {record.args!r}"
+            record.msg, record.args = self.redact(message), ()
+            if record.exc_info:
+                record.exc_text = logging.Formatter().formatException(record.exc_info)
+                record.exc_info = None
+            if record.exc_text:
+                record.exc_text = self.redact(record.exc_text)
+            if record.stack_info:
+                record.stack_info = self.redact(record.stack_info)
+        except Exception:  # noqa: BLE001  what cannot be redacted is not logged
+            record.msg, record.args = "[log record dropped: it could not be redacted]", ()
+            record.exc_info = record.exc_text = record.stack_info = None
         return True
+
+
+def _log_thread_exception(args):
+    """threading.excepthook: an exception that ends a thread goes through the root handlers (and their redaction),
+    not straight to stderr. Should even that fail, stderr gets its type and nothing else."""
+    if issubclass(args.exc_type, SystemExit):
+        return
+    try:
+        log.error("exception in thread %s", getattr(args.thread, "name", "?"),
+                  exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+    except Exception:  # noqa: BLE001
+        try:
+            os.write(2, f"exception in a thread: {args.exc_type.__name__}\n".encode())
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def finite_values(value):
@@ -258,6 +326,7 @@ class Shadow:
         self.offset_at: float | None = None          # monotonic time of the last VALID offset
         self.offset_ref: float | None = None         # wall clock - monotonic clock when that offset was measured
         self.offset_rtt_ms: float | None = None      # round trip of the sample it came from (its error: half of this)
+        self.offset_sample_ms: float | None = None   # sample_ms of that measurement: which clock line a row used
         self.clock_wake = threading.Event()          # measure again now: a step voided the offset / a push came
         self._clock_lock = threading.Lock()          # offset_* are written by the clock thread, voided by any thread
         self.order = "url"
@@ -269,23 +338,98 @@ class Shadow:
         self._unreported = 0                         # ... of which the file does not tell yet
         self._producers_done = threading.Event()     # run() is over: nothing is enqueued any more
         self._write_lock = threading.RLock()         # enqueue and the final stopped/done boundary are atomic
+        self._signature = ""                         # of the connection being opened / open: masked like the key
+        self._patterns_for = None                    # (secrets, patterns) of _patterns(), built once per set of secrets
+        # websockets' DEBUG lines print a frame cut to its start and end BEFORE any handler sees it, and a secret cut
+        # in half is not recognised: the connection logs through a logger of ours that never goes below INFO.
+        self._ws_log = logging.getLogger("live_v6.ann_ws_shadow.websockets")
+        self._ws_log.setLevel(logging.INFO)
 
-    def redact(self, text):
-        """Exact credentials (plain or JSON-escaped, also the nested DATA string) and signature values.
-        Longest spellings first: replacing a plain backslash inside an escape would leave broken JSON."""
-        text = str(text)
-        values = set()
-        for value in (self.key, self.secret):
-            if value:
-                values.add(value)
+    # ── secrets: never in the file, never in the journal ──
+    NEEDLES: tuple[str, ...] = ()                    # literal text that marks what a subclass's _mask() also masks
+
+    def _secret_values(self):
+        """The exact secrets of this process (a subclass adds its own)."""
+        return (self.key, self.secret, self._signature)
+
+    def _patterns(self):
+        """(secrets, hiding): two regular expressions for the current secrets. Built once, and again only when a
+        secret changes (the signature: at every connection attempt) - building them for every string cost about 10
+        us a string, i.e. seconds on the receive thread for a frame of many short strings.
+        secrets: every spelling of every secret - plain, JSON-escaped once and twice (DATA nests one JSON text in
+          another), as repr() / ascii() show it inside an exception's text - longest first (a plain backslash
+          replaced inside an escape would leave broken JSON).
+        hiding: a \\u escape that could spell a character of a needle (_clean_as_is), or of another such escape (that
+          is how an escape hides at a deeper level of nested JSON). None when a secret holds a character that JSON's
+          short escapes stand for (" \\ / and control characters): then nothing is ever passed on unread."""
+        values = tuple(v for v in self._secret_values() if v)
+        built = self._patterns_for
+        if built is not None and built[0] == values:
+            return built[1]
+        spellings = set()
+        for value in values:
+            for shown in (value, repr(value)[1:-1], repr(value + '"')[1:-2], ascii(value)[1:-1],
+                          ascii(value + '"')[1:-2]):
+                spellings.add(shown)
                 for ascii_only in (False, True):
-                    escaped = value
+                    escaped = shown
                     for _ in range(2):
                         escaped = json.dumps(escaped, ensure_ascii=ascii_only, allow_nan=False)[1:-1]
-                        values.add(escaped)
-        if values:
-            text = re.sub("|".join(re.escape(v) for v in sorted(values, key=len, reverse=True)),
-                          "[REDACTED]", text)
+                        spellings.add(escaped)
+        alternatives = [re.escape(s) for s in sorted(spellings, key=len, reverse=True)]
+        secrets_re = re.compile("|".join(alternatives)) if alternatives else None
+        chars = set("".join(spellings) + "signatureSIGNATURE" + "".join(self.NEEDLES))
+        hiding = None
+        if all(" " <= c <= "~" and c not in "\"\\/" for c in chars):
+            chars |= set("\\u0123456789abcdefABCDEF")
+            codes = sorted({f"{ord(c):02x}" for c in chars} | {f"{ord(c):02X}" for c in chars})
+            hiding = re.compile(r"\\u00(?:" + "|".join(codes) + ")")
+        patterns = (secrets_re, hiding)
+        self._patterns_for = (values, patterns)
+        return patterns
+
+    def _clean_as_is(self, text: str, patterns=None) -> bool:
+        """True when redact_json() - and redact() - would give `text` back unchanged: decided by a few scans instead of
+        a token walk. The needles are what _mask() acts on: a spelling of a secret, "signature" in any ASCII case
+        (every match of _SIGNATURE starts with it), a subclass's NEEDLES. None of them may be in `text`, and no \\u
+        escape that could spell a character of one. JSON's other escapes (\\" \\\\ \\/ \\n ...) only stand for
+        " \\ / and control characters, and _patterns() never allows this for a secret that holds one of those. So a
+        needle in a decoded string, at any depth of nesting, would be spelled out in `text` itself."""
+        secrets_re, hiding = patterns or self._patterns()
+        return (hiding is not None and not hiding.search(text)
+                and (secrets_re is None or not secrets_re.search(text))
+                and "signature" not in text.lower()        # lower() maps every ASCII spelling to this one
+                and not any(n in text for n in self.NEEDLES))
+
+    def redact(self, text):
+        """Every spelling of the exact secrets, and signature values (_mask) - also where escapes spell one: a string
+        that is no valid JSON (a frame with an escape JSON does not know, which redact_json cannot decode and an
+        `other` row shows) or a log message may spell a key as \\u0041... Where an escape could spell a character
+        of something to mask (not _clean_as_is), the escapes are undone one level at a time, each level masked
+        before the next is undone (a key that shows at one level may lose its first letter to the next: "\\" +
+        "nKEY" becomes a line break + "KEY"). Should that show anything, the text is given at its last level,
+        masked; otherwise as it is. Nested deeper than UNESCAPE_PASSES levels with an escape that could still hide
+        something, it is not given at all: "[REDACTED]"."""
+        masked = self._mask(str(text))
+        if "\\" not in masked or self._clean_as_is(masked):
+            return masked
+        level, shown = masked, False
+        for _ in range(UNESCAPE_PASSES):
+            flat = _unescaped_once(level)
+            if flat == level:
+                break
+            level = self._mask(flat)
+            shown = shown or level != flat
+        else:
+            if _unescaped_once(level) != level and not self._clean_as_is(level):
+                return "[REDACTED]"
+        return level if shown else masked
+
+    def _mask(self, text: str) -> str:
+        """Every spelling of the exact secrets (_patterns), and signature values; a subclass masks more."""
+        secrets_re = self._patterns()[0]
+        if secrets_re is not None:
+            text = secrets_re.sub("[REDACTED]", text)
         return _SIGNATURE.sub(r"\1[REDACTED]", text)
 
     def scrub(self, text):
@@ -294,32 +438,48 @@ class Shadow:
     def redact_json(self, text):
         """Redact JSON string tokens before frame parsing / file append, preserving JSON syntax and numbers.
         Decode each token's escapes first: a credential ending in a backslash must not match the escape before
-        a public quote. DATA may itself be JSON inside a string, so preserve that extra string boundary too."""
+        a public quote. DATA may itself be JSON inside a string, so preserve that extra string boundary too.
+        A token with nothing to mask stays exactly as it came (not re-encoded: "\\u0041" stays "\\u0041"), and so
+        does the whole text when _clean_as_is() says there is nothing to mask in it at all. A token that is no strict
+        JSON string stays as it came too: masking never turns a frame parse_push rejects into one it reads."""
         if isinstance(text, bytes):
             try:
                 text = text.decode(json.detect_encoding(text), "surrogatepass")
             except UnicodeError:
-                return text                   # preserve json.loads' rejection; other uses scrub(raw)
+                return text                   # preserve json.loads' rejection; an other row decodes it (_readable)
         else:
             text = str(text)
+        patterns = self._patterns()
+        if self._clean_as_is(text, patterns):
+            return text
 
         def token(match):
+            if self._clean_as_is(match[0], patterns):
+                return match[0]               # nothing in it to mask: not even decoded
             try:
                 value = json.loads(match[0])
-            except ValueError:
-                return match[0]               # malformed frame: parse_push rejects it; other uses scrub(raw)
+            except ValueError:                # a bad escape, a raw control character: the frame stays as invalid as
+                return match[0]               # it came (parse_push rejects it); an other row is redact()ed as text
             if value.lstrip().startswith(("{", "[")):
                 try:
                     json.loads(value)         # distinguish embedded JSON from ordinary title prose
-                except ValueError:
-                    value = self.redact(value)
+                except (ValueError, RecursionError):
+                    masked = self.redact(value)
                 else:
-                    value = self.redact_json(value)
+                    masked = self.redact_json(value)
             else:
-                value = self.redact(value)
-            return json.dumps(value, ensure_ascii=False, allow_nan=False)
+                masked = self.redact(value)
+            return match[0] if masked == value else json.dumps(masked, ensure_ascii=False, allow_nan=False)
 
         return _JSON_STRING.sub(token, text)
+
+    def _readable(self, red):
+        """A redacted frame as text for an `other` row. Bytes that redact_json() could not decode (and so could not
+        look into) are decoded with replacement characters and redacted then: never logged as a bytes repr, which
+        in UTF-16 or UTF-32 puts NULs between the characters of a secret where nothing recognises it."""
+        if isinstance(red, bytes):
+            red = self.redact_json(red.decode(json.detect_encoding(red), "replace"))
+        return red
 
     def clean(self, value):
         """Sanitize every string before enqueue, including keys; retain ordinary notice URL queries."""
@@ -332,17 +492,28 @@ class Shadow:
         return value
 
     def install_log_filter(self):
+        """Redact at every root handler: this module's records, what other loggers send there (httpx, websockets),
+        warnings (captured into logging) and an exception that ends a thread - those two would otherwise be printed
+        straight to stderr, past the handlers. (main() logs what ends run() the same way.)"""
         for handler in logging.getLogger().handlers:
             handler.addFilter(RedactingFilter(self.redact))
+        logging.captureWarnings(True)
+        threading.excepthook = _log_thread_exception
 
     # ── output (writer thread; the receive loop never touches the disk) ──
-    def write(self, rec: dict):
+    def write(self, rec: dict, wait_s: float | None = None):
+        """Enqueue a record. Never blocks: a full queue (the writer stuck for that long) costs the record, counted in
+        `dropped` - except for the stopped row, which may wait up to `wait_s` for a place (see _shutdown)."""
         with self._write_lock:
             if self._producers_done.is_set():
                 self.dropped += 1
                 return
+            item = dict(self.clean(rec), t=round(self.clock(), 3))
             try:
-                self.q.put_nowait(dict(self.clean(rec), t=round(self.clock(), 3)))
+                if wait_s is None:
+                    self.q.put_nowait(item)
+                else:
+                    self.q.put(item, timeout=wait_s)
             except queue.Full:
                 self.dropped += 1
 
@@ -470,6 +641,8 @@ class Shadow:
                 return
             m0, t0 = self.mono(), self.clock()
             server_ms = float(self._http_get(TIME_URL)["serverTime"])
+            if not math.isfinite(server_ms):   # "NaN", "Infinity", 1e999: an error, not an offset of nan
+                raise ValueError(f"serverTime is not a finite number: {server_ms}")
             if self.stop.is_set():
                 return
             rtt = self.mono() - m0
@@ -485,6 +658,7 @@ class Shadow:
         with self._clock_lock:
             before = self.offset_ms            # None: never measured, or voided by a step (its line says by how much)
             self.offset_ms, self.offset_at, self.offset_ref, self.offset_rtt_ms = offset, sample_mono, ref, rtt * 1000
+            self.offset_sample_ms = sample_ms  # the very number the clock line below carries: rows name it
         self.write(dict(k="clock", offset_ms=round(offset, 1), rtt_ms=round(rtt * 1000, 1), n=CLOCK_SAMPLES,
                         drift_ms=None if before is None else round(offset - before, 1), sample_ms=sample_ms, **cpu))
 
@@ -528,10 +702,10 @@ class Shadow:
         return self._correction(wall, mono)[:2]
 
     def _correction(self, wall: float | None = None, mono: float | None = None):
-        """(offset_ms, age_s, rtt_ms) for a message whose receive stamp is `wall`, with the monotonic clock read
-        right after it as `mono` (without them: for this very moment). rtt_ms is the round trip of the measurement
-        the offset came from. offset_ms is None when there is nothing to correct with: never measured, older than
-        CLOCK_MAX_AGE_S, or the wall clock was stepped since the measurement.
+        """(offset_ms, age_s, rtt_ms, sample_ms) for a message whose receive stamp is `wall`, with the monotonic clock
+        read right after it as `mono` (without them: for this very moment). rtt_ms and sample_ms are those of the
+        measurement the offset came from (sample_ms names its clock line). offset_ms is None when there is nothing to
+        correct with: never measured, older than CLOCK_MAX_AGE_S, or the wall clock was stepped since the measurement.
         A step is seen as the wall clock having moved against the monotonic clock. It voids the offset until the
         next measurement, is logged once, and wakes the clock thread. The stamp gets the same test: an offset
         measured after a step is not for a stamp taken before it. What moves BOTH clocks is not seen: slewing, a
@@ -539,28 +713,31 @@ class Shadow:
         Called for every push right after its receive stamp, and by the clock thread while it waits."""
         with self._clock_lock:
             if self.offset_ms is None or self.offset_at is None or self.offset_ref is None:
-                return None, None, None
+                return None, None, None, None
             now_mono, now_wall = self.mono(), self.clock()
             step = (now_wall - now_mono) - self.offset_ref
             if abs(step) > CLOCK_STEP_S:
                 self.offset_ms = self.offset_ref = None
                 self.write(dict(k="clock", event="step", delta_ms=round(step * 1000, 1)))
                 self.clock_wake.set()
-                return None, None, None
+                return None, None, None, None
             if wall is None or mono is None:
                 mono = now_mono
             elif abs((wall - mono) - self.offset_ref) > CLOCK_STEP_S:
-                return None, None, None        # stamped on the clock as it was before a step; the offset is newer
-            age = max(mono - self.offset_at, 0.0)
-            return (self.offset_ms, age, self.offset_rtt_ms) if age <= CLOCK_MAX_AGE_S else (None, age, None)
+                return None, None, None, None  # stamped on the clock as it was before a step; the offset is newer
+            age = max(mono - self.offset_at, 0.0)   # 0.0 also when the sample is newer than the stamp: see the module
+            if age > CLOCK_MAX_AGE_S:
+                return None, age, None, None
+            return self.offset_ms, age, self.offset_rtt_ms, self.offset_sample_ms
 
     # ── stream ──
     def run_once(self):
         """One connection: receive until stop, an error, or the planned reconnect before the 24 h limit."""
+        url = signed_url(self.secret, order=self.order)
+        self._signature = url.rsplit("signature=", 1)[1]    # masked as an exact value from now on, in any spelling
         try:
-            cm = self._connect(signed_url(self.secret, order=self.order),
-                               additional_headers={"X-MBX-APIKEY": self.key},
-                               ping_interval=None, open_timeout=10, close_timeout=3)
+            cm = self._connect(url, additional_headers={"X-MBX-APIKEY": self.key},
+                               ping_interval=None, open_timeout=10, close_timeout=3, logger=self._ws_log)
         except Exception as e:  # noqa: BLE001
             status = getattr(getattr(e, "response", None), "status_code", None)
             if status is not None:
@@ -588,15 +765,17 @@ class Shadow:
                     continue
                 recv_ms = self.clock() * 1000          # stamp first, everything else afterwards
                 recv_mono = self.mono()
-                off, age, rtt = self._correction(recv_ms / 1000, recv_mono)
-                rec = parse_push(self.redact_json(raw), recv_ms, off, age, rtt)
+                off, age, rtt, sample = self._correction(recv_ms / 1000, recv_mono)
+                red = self.redact_json(raw)            # masked before anything is parsed or cut
+                rec = parse_push(red, recv_ms, off, age, rtt)
                 if rec is None:
                     other += 1
                     if other <= MAX_OTHER_PER_CONN:
-                        self.write(dict(k="other", raw=self.scrub(raw)))
+                        self.write(dict(k="other", raw=self.scrub(self._readable(red))))
                     continue
                 n += 1
                 rec["recv_wait_ms"] = round((recv_mono - recv_start) * 1000, 2)
+                rec["offset_sample_ms"] = sample       # the clock line lag_ms was made with (see the module text)
                 self.write(rec)
                 self.clock_wake.set()                  # measure the clock again now: was this row's offset still true?
 
@@ -610,18 +789,29 @@ class Shadow:
 
     def _shutdown(self, writer, clock):
         """End of run(). The "stopped" row is the last one that is enqueued, and when this returns it and all rows
-        before it are in the file - unless the writer is stuck, which is waited for only for STOP_WRITER_S.
+        before it are in the file - unless the writer does not get there within STOP_WRITER_S: stuck, or too far
+        behind (each row is an open, a write and a close of the file: a backlog of thousands of rows can take
+        longer). Then the rows it has not reached, and the stopped row, are not in the file. A full queue is waited
+        for within the same STOP_WRITER_S: the stopped row waits for the writer to make room (it is lost, and
+        counted in dropped, only when the writer makes none within that time).
         Budget: the last recv() ends within 1 s, closing the socket takes up to 3 s (close_timeout), then these
         two waits: 8 s at most. A stop that arrives while a connection is being opened waits for that attempt
         first (open_timeout, 10 s) and then needs the close and the two waits: 17 s at most, under the
-        TimeoutStopSec of both units (20 s)."""
+        TimeoutStopSec of both units (20 s). That assumes the name lookup answers and the first address does:
+        open_timeout bounds neither the lookup (the resolver's own timeouts, before the connection is tried) nor the
+        attempts at further addresses (each may take the whole open_timeout). A stop while the resolver hangs, or
+        while a host with several addresses does not answer, can take longer than 20 s: systemd then kills the
+        process, the file has no stopped row (a reader cannot tell that stop from a crash), and the rows before it
+        are in the file as far as the writer got."""
         self.stop.set()
         self.clock_wake.set()                  # out of its wait now, not at the next look-out
         clock.join(timeout=STOP_CLOCK_S)       # its rows first (it only takes longer when a time request hangs)
+        writer_deadline = time.monotonic() + STOP_WRITER_S
         with self._write_lock:
-            self.write(dict(k="conn", event="stopped", dropped=self.dropped, write_failed=self.write_failed))
+            self.write(dict(k="conn", event="stopped", dropped=self.dropped, write_failed=self.write_failed),
+                       wait_s=STOP_WRITER_S)
             self._producers_done.set()
-        writer.join(timeout=STOP_WRITER_S)
+        writer.join(timeout=max(writer_deadline - time.monotonic(), 0.0))
 
     def run(self):
         writer, clock = self._start_workers("ann")
@@ -684,8 +874,13 @@ def main(argv=None):
     for s in (signal.SIGTERM, signal.SIGINT):
         signal.signal(s, lambda *_: sh.stop.set())
     log.info("announcement shadow logger -> %s (read-only, no orders)", a.out)
-    sh.run()
+    try:
+        sh.run()
+    except Exception as exc:  # noqa: BLE001  through the redacting handlers, never a raw traceback on stderr
+        log.error("shadow stopped: %s", _why(exc, sh.scrub))
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

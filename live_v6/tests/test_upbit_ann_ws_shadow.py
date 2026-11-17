@@ -22,6 +22,7 @@ import pytest
 from live_v6.tools import upbit_ann_ws_shadow as S
 
 from .test_ann_ws_shadow import check_logger_unit
+from .test_ann_ws_shadow import no_process_wide_log_hooks_left_behind  # noqa: F401  (autouse here as well)
 
 
 @pytest.fixture(autouse=True)
@@ -524,7 +525,10 @@ def test_redaction_takes_linear_time_on_a_long_run_that_starts_a_token_again_and
     sh, _, _ = shadow(tmp_path)
     text = 'eyJ' * 100_000                                       # 300 000 characters: ~20 s as a regular expression
     started = time.perf_counter()
-    assert sh.redact(text) == text and sh.clean({text: [text]}) == {text: [text]} and len(sh.scrub(text)) == 300
+    assert S.redact_jwts(text) == text                           # no dots: not a whole token ...
+    # ... but a run that starts with "eyJ" may be what is left of one (a header, a payload): masked, as a whole
+    assert sh.redact(text) == '[REDACTED]' and sh.clean({text: [text]}) == {'[REDACTED]': ['[REDACTED]']}
+    assert sh.scrub(text) == '[REDACTED]' and sh.redact('x' + text) == 'x' + text     # (inside a word: not a token)
     assert time.perf_counter() - started < 2.0
 
 
@@ -960,3 +964,170 @@ def test_f5_upbit_infinite_original_timestamp_is_null_in_strict_file(tmp_path, m
     assert ann['timestamp'] is None and ann['timestamp_ms'] is None
     assert ann['lag_raw_ms_timestamp'] is None and ann['lag_ms_timestamp'] is None
     assert ann['title'] == DOC['title'] and sh.write_failed == 0
+
+
+# ───────────────────────── review 2 of 0ec0d61 ─────────────────────────
+
+def test_a_row_names_the_clock_line_its_lags_were_made_with(tmp_path, monkeypatch):
+    """The module text of ann_ws_shadow says how to check lag_ms_* - against the measurement named by
+    offset_sample_ms, not only against the ones before and after the stamp."""
+    monkeypatch.setattr(S, 'RECONNECT_S', 2)
+    sh, _, clock = shadow(tmp_path, [json.dumps(DOC)])
+    sh._http_get = lambda url: (setattr(clock, 'now', clock.now + .004), {'serverTime': clock.now * 1000 + 40})[1]
+    sh.measure_clock()
+    sample = drain(sh)[0]['sample_ms']
+    sh.run_once()
+    ann = next(r for r in drain(sh) if r['k'] == 'upbit_ann')
+    assert ann['offset_sample_ms'] == sample and ann['offset_ms'] is not None
+    sh2, _, _ = shadow(tmp_path, [json.dumps(DOC)])
+    sh2.run_once()
+    ann = next(r for r in drain(sh2) if r['k'] == 'upbit_ann')
+    assert ann['offset_ms'] is None and ann['offset_sample_ms'] is None
+    for phrase in ('offset_sample_ms', 'never by file order or t', "not how long the frame did"):
+        assert phrase in S.__doc__
+
+
+@pytest.mark.parametrize('spelling', ['escaped', 'utf-16', 'utf-32', 'utf-16 cut short',
+                                      'escaped, in a string JSON cannot read'])
+def test_an_unknown_frame_is_logged_masked_whatever_its_spelling(tmp_path, monkeypatch, spelling):
+    """0ec0d61 logged an `other` row as scrub(raw): a key spelled with \\u escapes, or a UTF-16 / UTF-32 frame (a
+    bytes repr with a NUL between every two characters), went to the file as it was - and, after the fix, still
+    when the string also held an escape JSON does not know (\\q): redact_json cannot decode that one."""
+    from .test_ann_ws_shadow import _has_piece_of, _unescape
+    monkeypatch.setattr(S, 'RECONNECT_S', 2)
+    key = 'fixture-key-' + 'k' * 28
+    text = json.dumps({'type': 'pong', 'echo': 'x' * 10 + key})              # not an announcement
+    if spelling.startswith('escaped'):
+        raw = text.replace(key, ''.join('\\u%04x' % ord(c) for c in key))
+        if spelling != 'escaped':
+            raw = raw.replace('"}', ' \\q"}')
+    elif spelling == 'utf-16 cut short':
+        raw = text.encode('utf-16') + b'\x00'
+    else:
+        raw = text.encode(spelling)
+    sh, _, _ = shadow(tmp_path, [raw])
+    sh.key = key
+    sh.run_once()
+    other = next(r['raw'] for r in drain(sh) if r['k'] == 'other')
+    assert 'pong' in other and '[REDACTED]' in other
+    assert not _has_piece_of(_unescape(other), key), other
+
+
+def test_what_is_left_of_a_token_is_masked_too(tmp_path):
+    """Review 2, finding 3: only the token of this connection and a whole three-part JWT were masked. Its header and
+    payload together, the payload alone (base64url of {"access_key":"<key>",...}: it decodes to the key) or the start
+    of a token cut short stayed in the text."""
+    sh, _, _ = shadow(tmp_path)
+    token = S.jwt_token(sh.key, sh.secret)                       # another connection's: only its shape tells
+    header, payload, _ = token.split('.')
+    for text in (header + '.' + payload, payload, token[:60], 'Bearer ' + payload[:30], json.dumps({'a': payload}),
+                 'x ' + header + '.' + payload + '. y'):
+        out = sh.redact(text)
+        assert 'eyJ' not in out and sh.key not in out, (text, out)
+        for run in re.findall(r'[A-Za-z0-9_-]{8,}', out):              # nothing left in it decodes to the key
+            for skip in range(4):
+                try:
+                    decoded = unb64(run[skip:])
+                except ValueError:
+                    continue
+                assert b'fixture' not in decoded, (text, out)
+    for public in ('heyJude-and-friends-2026', 'eyJ', 'see eyJx', 'a.b.c'):           # no token: left as it is
+        assert sh.redact(public) == public
+
+
+def test_the_shortcut_of_redact_json_changes_nothing_with_tokens_either(tmp_path, monkeypatch):
+    from .test_ann_ws_shadow import _assert_shortcut_changes_nothing
+    monkeypatch.setattr(S, 'RECONNECT_S', 2)
+    sh, _, _ = shadow(tmp_path)
+    sh.run_once()                                                 # sets this connection's token
+    token = sh._token
+    header, payload, signature = token.split('.')
+    needles = [sh.key, sh.secret, token, header, payload, payload[:15], signature[:12], 'eyJ', 'eyJhbG', 'e', 'yJ',
+               header + '.' + payload, 'signature=ab12', 'SIGNATURE', '.', '-_']
+    _assert_shortcut_changes_nothing(sh, needles)
+
+
+def test_a_piece_of_a_token_glued_to_other_text_is_masked_too(tmp_path, monkeypatch):
+    """Cross-review of finding 3's fix: a payload right after another character ("x" + payload) is no run that
+    starts with "eyJ", and the signature part has no "eyJ" at all - both stayed, and the payload decodes to the
+    key. This connection's payload and signature are masked as exact values now, and the key as every payload
+    spells it (an older token's payload loses it too). Public words keep theirs."""
+    monkeypatch.setattr(S, 'RECONNECT_S', 2)
+    sh, _, _ = shadow(tmp_path)
+    sh.run_once()                                                 # sets this connection's token
+    header, payload, signature = sh._token.split('.')
+    older = S.jwt_token(sh.key, sh.secret).split('.')[1]          # the same key, another nonce
+    cut = older[:20 + len(sh.key) // 3 * 4]                       # ... cut right after the key's whole groups
+    for text in ('x' + payload, 'sig ' + signature, 'x' + older, 'x' + header + '.' + payload,
+                 json.dumps({'echo': 'x' + payload}), 'x' + cut):
+        out = sh.redact(text)
+        assert payload not in out and signature not in out and '[REDACTED]' in out, (text, out)
+        for run in re.findall(r'[A-Za-z0-9_-]{8,}', out):         # nothing left in it decodes to a piece of the key
+            for skip in range(4):
+                try:
+                    decoded = unb64(run[skip:])
+                except ValueError:
+                    continue
+                assert not any(sh.key[i:i + 6].encode() in decoded for i in range(len(sh.key) - 5)), (text, out)
+    assert sh.redact('heyJude-and-friends-2026') == 'heyJude-and-friends-2026'
+
+
+def test_a_key_spelled_with_escapes_in_a_log_message_is_masked_here_too(tmp_path):
+    from .test_ann_ws_shadow import _has_piece_of, _unescape
+    import io
+    sh, _, _ = shadow(tmp_path)
+    sh.key = 'fixture-key-' + 'k' * 28
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.addFilter(S.base.RedactingFilter(sh.redact))
+    lg = logging.Logger('crossreview.upbit.escapes')
+    lg.addHandler(handler)
+    lg.warning('server said %s', ''.join('\\u%04x' % ord(c) for c in sh.key))
+    assert '[REDACTED]' in stream.getvalue() and not _has_piece_of(_unescape(stream.getvalue()), sh.key)
+
+
+def test_the_token_pieces_are_worked_out_from_one_reading_of_the_token(tmp_path):
+    """Cross-review, second round: the receive thread may replace the token while another thread works out what to
+    mask. Read more than once, the cache could hold the old token's payload and signature under the new token's
+    name - for good: the new signature would never be masked."""
+    sh, _, _ = shadow(tmp_path)
+    tokens = iter([S.jwt_token(sh.key, sh.secret) for _ in range(100)])   # another token at every reading
+
+    class Changing(S.UpbitShadow):
+        @property
+        def _token(self):
+            return next(tokens)
+
+        @_token.setter
+        def _token(self, value):
+            pass
+
+    sh.__class__ = Changing
+    values = sh._secret_values()
+    (_, token), held = sh._token_values
+    assert held[:3] == (token, *token.split('.')[1:]) and token in values
+
+
+def test_a_short_access_key_is_masked_inside_any_payload_too(tmp_path, monkeypatch):
+    """Cross-review, second and third rounds: no piece of a payload - glued to other text, cut anywhere - may keep
+    the letters that spell the whole access key. A key of two letters has no whole group of its own, and the last
+    letters of any key share a group with what follows them: the key with that group completed covers both, and a
+    piece that holds the payload's start is masked whole. (Two letters cut right after them, with neither, are left:
+    an Upbit access key has 40 letters.) The nonce is fixed, of digits: a random one spells the three letters that
+    hold "ab" by chance now and then (about 2 runs in 100), and the test would fail for nothing."""
+    monkeypatch.setattr(S.uuid, 'uuid4', lambda: uuid.UUID('12345678-1234-4123-8123-123456789012'))
+    start_of_payload = base64.urlsafe_b64encode(b'{"access_key":"').decode()
+    for key in ('ab', 'abc', 'fixture-key', 'fixture-key-' + 'k' * 28):
+        sh = S.UpbitShadow(key, 'fixture-secret', str(tmp_path / 'log.jsonl'), connect=None,
+                           http_get=lambda url: {'serverTime': 0})
+        payload = S.jwt_token(key, 'fixture-secret').split('.')[1]     # not this connection's token (it has none)
+        assert payload.startswith(start_of_payload) and S._PAYLOAD_PIECE.fullmatch(payload)
+        spelling = payload[20:(120 + 8 * len(key) - 1) // 6 + 1]        # the letters that hold the key's bits
+        assert unb64(spelling[:len(spelling) // 4 * 4] + payload[20 + len(spelling) // 4 * 4:][:4]).startswith(
+            key.encode()) and len(spelling) == (8 * len(key) + 5) // 6
+        for begin in range(21):
+            for cut in range(21, len(payload) + 1):
+                if len(key) < 3 and begin and cut < 24:
+                    continue
+                out = sh.redact('x' + payload[begin:cut])
+                assert spelling not in out, (key, begin, cut, out)

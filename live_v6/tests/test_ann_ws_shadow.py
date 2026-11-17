@@ -6,6 +6,7 @@ import errno
 import hashlib
 import hmac
 import json
+import logging
 import os
 import pathlib
 import queue
@@ -16,10 +17,24 @@ import sys
 import threading
 import time
 from urllib.parse import parse_qsl, urlsplit
+import warnings
 
 import pytest
 
 from live_v6.tools import ann_ws_shadow as S
+
+
+@pytest.fixture(autouse=True)
+def no_process_wide_log_hooks_left_behind(monkeypatch):
+    """main() installs process-wide hooks (threading.excepthook, warnings into logging). What a test turned on is
+    turned off after it - left on, logging.captureWarnings(True) is a no-op for every later test - and what was on
+    before stays on."""
+    monkeypatch.setattr(threading, "excepthook", threading.excepthook)
+    shown = warnings.showwarning
+    yield
+    if warnings.showwarning is not shown:
+        logging.captureWarnings(False)
+
 
 DOC_PUSH = json.dumps({
     "type": "DATA", "topic": "com_announcement_en",
@@ -462,9 +477,10 @@ def test_the_age_of_an_offset_is_its_age_at_the_receive_stamp_not_when_the_push_
     stamp = (wall(), clock.now)
     clock.now += 30.0                                            # the receive thread got to it half a minute later
     assert sh._offset(*stamp)[1] == pytest.approx(10.0 + sample_age) and sh._offset()[1] == pytest.approx(40.0 + sample_age)
-    assert sh._correction(*stamp) == (pytest.approx(SERVER_AHEAD_MS, abs=0.01), pytest.approx(10.0 + sample_age), pytest.approx(4.0))
+    assert sh._correction(*stamp) == (pytest.approx(SERVER_AHEAD_MS, abs=0.01), pytest.approx(10.0 + sample_age),
+                                      pytest.approx(4.0), _drain(sh)[-1]['sample_ms'])   # which clock line it is
     clock.now += S.CLOCK_MAX_AGE_S                               # too old now - but not at that stamp
-    assert sh._correction() == (None, pytest.approx(S.CLOCK_MAX_AGE_S + 40.0 + sample_age), None)
+    assert sh._correction() == (None, pytest.approx(S.CLOCK_MAX_AGE_S + 40.0 + sample_age), None, None)
     assert sh._offset(*stamp)[0] == pytest.approx(SERVER_AHEAD_MS, abs=0.01)
 
 
@@ -702,7 +718,7 @@ def test_only_a_round_trip_of_a_quarter_second_or_less_gives_an_offset(tmp_path,
     if used:
         assert sh.offset_ms == pytest.approx(55.0, abs=1e-3) and sh.offset_rtt_ms == pytest.approx(rtt * 1000)
     else:
-        assert sh.offset_ms is None and row["skipped"] == "slow" and sh._correction() == (None, None, None)
+        assert sh.offset_ms is None and row["skipped"] == "slow" and sh._correction() == (None, None, None, None)
 
 
 def test_a_row_says_how_coarse_the_measurement_behind_its_offset_was(tmp_path, monkeypatch):
@@ -1497,15 +1513,22 @@ def _assert_main_log_filter(module, cls, monkeypatch, tmp_path, env_prefix):
             except RuntimeError:
                 logging.getLogger(name).warning('key=%s /sapi/wss?signature=abc123', self.key, exc_info=True)
     monkeypatch.setattr(cls, 'run', run)
+    monkeypatch.setattr(threading, 'excepthook', threading.excepthook)    # main() installs its own: put back after
     old_mask = os.umask(0o077)
     try:
-        module.main(['--out', str(tmp_path / 'log')])
+        assert module.main(['--out', str(tmp_path / 'log')]) == 0
+        assert threading.excepthook is S._log_thread_exception            # a thread's end goes through the filter
+        thread = threading.Thread(target=lambda: (_ for _ in ()).throw(RuntimeError('fake-log-secret in a thread')))
+        thread.start()
+        thread.join()
+        warnings.warn('fake-log-key in a warning')                         # captured into logging by main()
     finally:
+        logging.captureWarnings(False)
         root.handlers[:] = old_handlers
         os.umask(old_mask)
     output = stream.getvalue()
     assert 'fake-log-key' not in output and 'fake-log-secret' not in output and 'abc123' not in output
-    assert '[REDACTED]' in output
+    assert '[REDACTED]' in output and '[REDACTED] in a thread' in output and '[REDACTED] in a warning' in output
     if cls is not S.Shadow:
         assert 'eyJ.a.b' not in output
 
@@ -1836,4 +1859,643 @@ def test_f1_invalid_binary_json_stays_an_other_row(tmp_path, monkeypatch):
     sh.run_once()
     rows = _drain(sh)
     assert not any(r['k'] == 'ann' for r in rows)
-    assert next(r['raw'] for r in rows if r['k'] == 'other') == S.scrub(raw)
+    # logged as text (the byte that is not UTF-8 replaced), never as a bytes repr that nothing could redact in
+    assert (next(r['raw'] for r in rows if r['k'] == 'other')
+            == '{"type":"DATA","data":{"title":"\ufffd","publishDate":1}}')
+
+
+# ───────────────────────── review 2 of 0ec0d61: what the fixes keep true ─────────────────────────
+
+FAKE_KEY = "FAKEKEYa2jQ" + "k" * 53                     # 64 characters, like a real key - and fake
+FAKE_SECRET = "FAKESECRETzz" + "s" * 52
+
+
+def _timed(fn):
+    started = time.perf_counter()
+    fn()
+    return time.perf_counter() - started
+
+
+def _node_tree_frame(nodes, title="Binance Will Delist AAA"):
+    """A push whose body is a JSON node tree (as the CMS may send it): `nodes` paragraphs, ~150 bytes each."""
+    node = {"node": "element", "tag": "p", "child": [{"node": "text", "text": "Binance will delist AAA."}]}
+    body = json.dumps({"node": "root", "child": [node] * nodes})
+    data = dict(catalogId=161, catalogName="Delisting", publishDate=1, title=title, body=body)
+    return json.dumps(dict(type="DATA", topic=S.TOPIC, data=json.dumps(data)))
+
+
+def _unescape(text):
+    """What a reader can do with a logged text: undo JSON / repr escapes as often as they appear, drop NULs."""
+    for _ in range(4):
+        text = text.replace("\\\\", "\\").replace("\\x00", "").replace("\x00", "")
+        text = re.sub(r"\\u([0-9a-fA-F]{4})", lambda m: chr(int(m[1], 16)), text)
+    return text
+
+
+def _has_piece_of(text, secret, n=6):
+    return any(secret[i:i + n] in text for i in range(len(secret) - n + 1))
+
+
+@pytest.mark.parametrize("frame", ["node tree", "short strings", "short strings, one to mask"])
+def test_redacting_a_frame_costs_no_more_than_a_few_parses_of_it(tmp_path, frame):
+    """Between the stamp and the queue everything runs on the receive thread. 0ec0d61 decoded, redacted and re-encoded
+    every string of a frame and built its patterns again for each: 0.28 s for a frame of 3000 nodes (parsing it:
+    1.8 ms), 2.5 s for 1 MiB of short strings. A frame with nothing to mask is now passed on after a few scans; in
+    one that holds something, only the strings that hold it are decoded."""
+    sh, _, _ = _shadow(tmp_path)
+    sh.key, sh.secret = FAKE_KEY, FAKE_SECRET
+    if frame == "node tree":
+        raw = _node_tree_frame(3000)                                         # 456 KB
+    else:
+        title = "notice" if frame == "short strings" else "notice " + FAKE_KEY
+        raw = json.dumps(dict(type="DATA", data=json.dumps(dict(title=title, body=json.dumps(["ab"] * 90_000)))))
+    assert len(raw) > 400_000
+    parse = min(_timed(lambda: json.loads(json.loads(raw)["data"])) for _ in range(3))
+    redact = min(_timed(lambda: sh.redact_json(raw)) for _ in range(3))
+    if FAKE_KEY in raw:
+        assert redact < 20 * parse + 0.005, (redact, parse)
+    else:                                                    # nothing to mask: a few scans, not a walk over its strings
+        assert redact < 4 * parse + 0.002, (redact, parse)
+        assert sh.redact_json(raw) is raw                    # ... and handed on as it is, not taken apart and rebuilt
+    assert (FAKE_KEY in raw) == (sh.redact_json(raw) != raw) and FAKE_KEY not in sh.redact_json(raw)
+
+
+def test_the_redaction_patterns_are_built_once_per_set_of_secrets(tmp_path, monkeypatch):
+    sh, _, _ = _shadow(tmp_path)
+    built = sh._patterns()
+    sh.redact("x")
+    sh.redact_json('{"a": "b", "c": ["KEY", "SECRET"]}')
+    assert sh._patterns() is built
+    sh.key = "OTHERKEY"                                      # a secret changed: built again, and used at once
+    assert sh._patterns() is not built and sh.redact("OTHERKEY KEY") == "[REDACTED] KEY"
+    monkeypatch.setattr(S, "RECONNECT_S", 2)
+    sh.run_once()                                            # a new signature at every connection attempt
+    assert sh._signature and sh.redact(sh._signature) == "[REDACTED]"
+
+
+def _json_literal(rng, value):
+    """`value` as a JSON string literal, each character spelled at random: as itself where JSON allows it, as a
+    \\u escape (either case of hex), or as a short escape."""
+    out = ['"']
+    for ch in value:
+        r = rng.random()
+        if ch in '"\\':
+            out.append("\\" + ch if r < .7 else "\\u%04x" % ord(ch))
+        elif ch < " ":                                       # (as it is: not strict JSON, a server may send it)
+            out.append("\\u%04x" % ord(ch) if r < .4 else json.dumps(ch)[1:-1] if r < .8 else ch)
+        elif ch == "/" and r < .3:
+            out.append("\\/")
+        elif r < .08:
+            out.append(("\\u%04x" if rng.random() < .5 else "\\u%04X") % ord(ch))
+        else:
+            out.append(ch)
+    return "".join(out) + '"'
+
+
+def _fuzz_json(rng, needles, depth=0):
+    """A JSON text whose keys and strings are made of `needles` and filler; some strings are JSON texts again (as
+    the DATA of a push is), spelled with escapes of their own."""
+    filler = ["x", " ", "é", "가", '"', "\\", "/", "\n", "{", "[", "AbC", "=", ":", "'", "%3D", "0f"]
+
+    def string():
+        if depth < 2 and rng.random() < .25:
+            return _fuzz_json(rng, needles, depth + 1)
+        return "".join(rng.choice(needles if rng.random() < .3 else filler) for _ in range(rng.randrange(7)))
+
+    def value():
+        kind = rng.random()
+        if kind < .6:
+            return _json_literal(rng, string())
+        if kind < .8:
+            return "[" + ", ".join(_json_literal(rng, string()) for _ in range(rng.randrange(3))) + "]"
+        return str(rng.choice([0, 1.5, -3, 123]))
+
+    items = [f"{_json_literal(rng, string())}: {value()}" for _ in range(rng.randrange(1, 5))]
+    return "{" + ", ".join(items) + "}"
+
+
+def _assert_shortcut_changes_nothing(sh, needles, n=3000, seed=20261117):
+    """redact_json with its shortcuts must give exactly what decoding and redacting every string gives."""
+    import random
+    rng = random.Random(seed)
+    slow = type(sh).__new__(type(sh))
+    slow.__dict__.update(sh.__dict__)
+    slow._clean_as_is = lambda text, patterns=None: False                 # every string decoded and redacted
+    skipped = 0
+    for _ in range(n):
+        text = _fuzz_json(rng, needles)
+        fast = sh.redact_json(text)
+        assert fast == slow.redact_json(text), text
+        skipped += fast == text
+        try:                                                               # still one JSON text, and strict JSON
+            json.loads(text)                                               # when it came as strict JSON
+        except ValueError:
+            json.loads(fast, strict=False)
+        else:
+            json.loads(fast)
+    assert 0 < skipped < n                                                 # both kinds of text were tried
+
+
+def test_the_shortcut_of_redact_json_changes_nothing_on_random_frames(tmp_path, monkeypatch):
+    monkeypatch.setattr(S, "RECONNECT_S", 2)
+    sh, _, _ = _shadow(tmp_path)
+    sh.key, sh.secret = FAKE_KEY[:20], FAKE_SECRET[:20]
+    sh.run_once()                                                          # the signature of a connection, too
+    needles = [sh.key, sh.secret, sh.key[:7], sh.secret[5:], sh._signature, sh._signature[:20], "signature",
+               "SIGNATURE=", "Signature%3D", '"signature": "', "signature: ", "ab12" * 5, "deadbeef", "sIgNaTuRe=0f",
+               "\u017fignature=0f", "s\u0131gnature=0f"]                    # (case folding beyond ASCII: not a match)
+    _assert_shortcut_changes_nothing(sh, needles)
+
+
+@pytest.mark.parametrize("spelling", ["escaped", "utf-16", "utf-32", "utf-16 cut short",
+                                      "escaped, in a string JSON cannot read", "escaped twice, in such a string"])
+def test_an_unknown_frame_is_logged_masked_whatever_its_spelling(tmp_path, monkeypatch, spelling):
+    """0ec0d61 masked only the plain spellings in an `other` row (scrub(raw)): a key spelled with \\u escapes, or a
+    UTF-16 / UTF-32 frame (logged as a bytes repr, a NUL between every two characters), went to the file.
+    Cross-review of the fix: a string with an escape JSON does not know (\\q) is not decoded by redact_json - the
+    frame stays invalid, an `other` row - and a key spelled with \\u escapes in it (once or nested) still went."""
+    monkeypatch.setattr(S, "RECONNECT_S", 2)
+    sh, _, clock = _shadow(tmp_path)
+    sh.key = FAKE_KEY
+    text = json.dumps({"type": "PONG", "echo": "x" * 10 + FAKE_KEY})        # not an announcement
+    escaped = "".join("\\u%04x" % ord(c) for c in FAKE_KEY)
+    if spelling == "escaped":
+        raw = text.replace(FAKE_KEY, escaped)
+    elif spelling.startswith("escaped"):
+        twice = spelling.startswith("escaped twice")
+        raw = text.replace(FAKE_KEY, escaped.replace("\\", "\\\\") if twice else escaped).replace('"}', ' \\q"}')
+        with pytest.raises(ValueError):
+            json.loads(raw)
+    elif spelling == "utf-16 cut short":
+        raw = text.encode("utf-16") + b"\x00"                               # odd length: not UTF-16 any more
+    else:
+        raw = text.encode(spelling)
+    sh._connect = lambda *a, **kw: FakeWS([raw], clock)
+    sh.run_once()
+    other = next(r["raw"] for r in _drain(sh) if r["k"] == "other")
+    assert "PONG" in other and "[REDACTED]" in other
+    assert not _has_piece_of(_unescape(other), FAKE_KEY), other
+
+
+def test_what_ends_main_a_thread_or_a_warning_reaches_stderr_masked(tmp_path):
+    """The redaction sits in the logging handlers. 0ec0d61's main() did not catch what ended run(), and an exception
+    whose repr() fails (run() logs repr(e)) went to stderr - the journal - as a traceback with the key in it; so did
+    an exception that ended a thread, and a warning. Real child processes, both loggers."""
+    script = (
+        "import sys, threading, warnings\n"
+        "from live_v6.tools import ann_ws_shadow as S, upbit_ann_ws_shadow as U\n"
+        "mod, cls = (S, S.Shadow) if sys.argv[2] == 'binance' else (U, U.UpbitShadow)\n"
+        "class Evil(RuntimeError):\n"
+        "    def __repr__(self): raise ValueError('no repr')\n"
+        "    def __str__(self): return 'reflected ' + KEYS[0]\n"
+        "KEYS = []\n"
+        "def run(self):\n"
+        "    KEYS.append(self.key)\n"
+        "    t = threading.Thread(target=lambda: (_ for _ in ()).throw(RuntimeError('thread ' + self.key)))\n"
+        "    t.start(); t.join()\n"
+        "    warnings.warn('warned ' + self.key)\n"
+        "    try:\n"
+        "        raise Evil()\n"
+        "    except Evil as e:\n"
+        "        self.write(dict(k='conn', event='error', detail=self.scrub(repr(e))))\n"
+        "cls.run = run\n"
+        "mod.signal.signal = lambda *a: None\n"
+        "S._connect_no_redirect = lambda: None\n"
+        "sys.exit(mod.main(['--out', sys.argv[1]]))\n")
+    for which, names in (("binance", ("BINANCE_API_KEY", "BINANCE_API_SECRET")),
+                         ("upbit", ("UPBIT_ACCESS_KEY", "UPBIT_SECRET_KEY"))):
+        env = dict(os.environ, **{names[0]: "FAKEstderrKEY" + "q" * 27, names[1]: "FAKEstderrSECRET" + "w" * 24})
+        r = subprocess.run([sys.executable, "-c", script, str(tmp_path / f"{which}.jsonl"), which], env=env,
+                           capture_output=True, text=True, timeout=60, cwd=pathlib.Path(S.__file__).parents[2])
+        assert r.returncode == 1, r.stderr[-2000:]                          # ended by an exception: not 0
+        assert "FAKEstderr" not in r.stderr, r.stderr[-3000:]
+        for logged in ("thread [REDACTED]", "warned [REDACTED]", "shadow stopped: ValueError"):
+            assert logged in r.stderr, (which, r.stderr[-3000:])
+
+
+def test_a_string_with_a_raw_control_character_is_still_looked_into(tmp_path, monkeypatch):
+    """Not strict JSON (a raw line break inside a string), so the frame becomes an `other` row - and a key spelled
+    with \\u escapes in that string must not stay in the row. Masking does not make the frame strict JSON either
+    (parse_push reads a frame the same, whether it held a secret or not)."""
+    monkeypatch.setattr(S, "RECONNECT_S", 2)
+    escaped = "".join("\\u%04x" % ord(c) for c in FAKE_KEY)
+    raw = '{"type": "PONG", "echo": "line\nbreak ' + escaped + '"}'
+    sh, _, _ = _shadow(tmp_path, [raw])
+    sh.key = FAKE_KEY
+    with pytest.raises(ValueError):
+        json.loads(sh.redact_json(raw))
+    sh.run_once()
+    other = next(r["raw"] for r in _drain(sh) if r["k"] == "other")
+    assert "[REDACTED]" in other and not _has_piece_of(_unescape(other), FAKE_KEY), other
+
+
+@pytest.mark.parametrize("text", [
+    "signature={sig}", "Signature={sig}", "SIGNATURE={sig}", "next=%2Fsapi%2Fwss%3Ftimestamp%3D1%26signature%3D{sig}",
+    '{{"signature": "{sig}"}}', '{{"signature":"{sig}"}}', "('signature', '{sig}')", "signature: {sig}",
+    "https://api.binance.com/sapi/wss?random=1&signature={sig}&x=1"])
+def test_a_signature_value_is_masked_however_it_is_written(tmp_path, text):
+    sh, _, _ = _shadow(tmp_path)
+    sig = "ab12" * 16                                        # HMAC-SHA256 in hex: 64 characters
+    out = sh.redact(text.format(sig=sig))
+    assert "[REDACTED]" in out and not _has_piece_of(out, sig, 4), out
+
+
+@pytest.mark.parametrize("prose", ["API update: signature=HMAC-SHA256 now required", "signature: a new feature",
+                                   "Signature, faced by the bad cafe", "e-signature=feature"])
+def test_public_text_about_signatures_is_left_as_it_is(tmp_path, prose):
+    sh, _, _ = _shadow(tmp_path)
+    assert sh.redact(prose) == prose
+
+
+def test_the_signature_of_this_connection_is_masked_wherever_it_shows_up(tmp_path, monkeypatch):
+    monkeypatch.setattr(S, "RECONNECT_S", 2)
+    sh, seen, _ = _shadow(tmp_path)
+    sh.run_once()
+    sig = seen["urls"][-1].rsplit("signature=", 1)[1]
+    assert sh._signature == sig and len(sig) == 64
+    for text in (f"the server said {sig}.", json.dumps({"sig": sig}), repr(RuntimeError(("signature", sig)))):
+        assert sig[:8] not in sh.redact(text), text
+    escaped = json.dumps({"t": "x"}).replace("x", "".join("\\u%04x" % ord(c) for c in sig))
+    assert sig[:8] not in _unescape(sh.redact_json(escaped))
+
+
+def test_text_with_nothing_to_mask_reaches_the_row_and_the_file_exactly_as_it_came(tmp_path, monkeypatch):
+    """0ec0d61 re-encoded every string it decoded: an escape in a JSON-looking title came out decoded ("\\u0041" as
+    "A") and body_len counted the decoded body; public text after "signature=" was masked."""
+    monkeypatch.setattr(S, "RECONNECT_S", 2)
+    title = '{"a":"\\u0041"} API update: signature=HMAC-SHA256 now required'
+    body = '["\\/", "\\u00e9"]'
+    raw = json.dumps(dict(type="DATA", data=json.dumps(dict(title=title, body=body, publishDate=1))))
+    sh, _, _ = _shadow(tmp_path, [raw])
+    sh.run_once()
+    ann = next(r for r in _drain(sh) if r["k"] == "ann")
+    assert ann["title"] == title and ann["title_len"] == len(title) and ann["body_len"] == len(body)
+    assert json.loads(sh._json_line(dict(k="x", title='{"a":"\\u0041"}', body=body))) == \
+        dict(k="x", title='{"a":"\\u0041"}', body=body)                    # the writer boundary leaves it too
+    assert "title_len and body_len count the masked text" in S.__doc__
+
+
+def test_a_deeply_nested_string_stops_neither_the_receive_loop_nor_the_writer(tmp_path, monkeypatch):
+    """json.loads raises RecursionError, not ValueError, on deep nesting: 0ec0d61 let it out of run_once (the
+    connection was dropped) and out of the writer's last redaction (the row was lost)."""
+    monkeypatch.setattr(S, "RECONNECT_S", 2)
+    deep = "[" * 50_000 + "]" * 50_000 + " " + FAKE_KEY       # something to mask in it: it is decoded
+    raw = json.dumps(dict(type="DATA", data=json.dumps(dict(title=deep, publishDate=1))))
+    sh, _, _ = _shadow(tmp_path, [raw])
+    sh.key = FAKE_KEY
+    sh.run_once()                                             # returns: the planned reconnect, no exception
+    rows = _drain(sh)
+    ann = next(r for r in rows if r["k"] == "ann")
+    assert ann["title_len"] == len(deep) - len(FAKE_KEY) + len("[REDACTED]")
+    assert rows[-1]["event"] == "planned_reconnect"
+    sh.q.put(dict(k="future", title=deep))
+    sh.stop.set()
+    sh.writer_loop()
+    assert sh.write_failed == 0 and FAKE_KEY.encode() not in pathlib.Path(sh.out_path).read_bytes()
+
+
+def test_the_connection_logs_through_a_logger_that_never_prints_frames(tmp_path, monkeypatch, caplog):
+    """websockets prints a frame at DEBUG cut to its start and end, BEFORE any handler sees it: a key cut in half is
+    not recognised by the redaction. The connection gets a logger of its own that stays at INFO - also when the root
+    logger is at DEBUG - and still passes errors on to the (redacting) root handlers."""
+    from websockets.client import ClientProtocol
+    from websockets.uri import parse_uri
+    monkeypatch.setattr(S, "RECONNECT_S", 2)
+    sh, seen, _ = _shadow(tmp_path)
+    with caplog.at_level(logging.DEBUG):
+        sh.run_once()
+        logger = seen["kw"]["logger"]
+        assert not logger.isEnabledFor(logging.DEBUG) and logger.isEnabledFor(logging.INFO)
+        assert logger.propagate and not logger.disabled
+        assert ClientProtocol(parse_uri(S.WS_BASE), logger=logger).debug is False     # frames are not logged
+
+
+@pytest.mark.parametrize("key", ["KEY\"dq'sq" + "k" * 30, "KEY\x01\x7f" + "k" * 30, "KEY\u200b\u2028" + "k" * 30,
+                                 "KEY\\bs" + "k" * 30, "KEY'only" + "k" * 30])
+def test_a_key_is_masked_in_the_repr_of_an_exception_too(tmp_path, key):
+    """Error rows and log lines show repr(): Python escapes differently than JSON
+    (\\' \\x01 \\u200b, the other quote)."""
+    sh, _, _ = _shadow(tmp_path)
+    sh.key = key
+    for shown in (repr(RuntimeError(key)), repr(RuntimeError("a'b\"" + key)), "%r" % key, ascii(key),
+                  str(OSError(2, "x", key)), repr(OSError(2, "x", key + '"\'')), json.dumps([key])):
+        assert "k" * 30 not in sh.redact(shown), shown
+
+
+# ── HOW TO USE lag_ms, done by a reader the way the module text says it ──
+
+def _doc_reader(rows, ann, tol=20.0, follow_ms=11_000.0):
+    """'accept' when the module text says lag_ms stands, otherwise why not."""
+    if ann["lag_ms"] is None:
+        return "no lag"
+    valid = [r for r in rows if r["k"] == "clock" and r.get("offset_ms") is not None]
+    recv = ann["recv_ms"]
+    before = [c for c in valid if c["sample_ms"] + c["rtt_ms"] / 2 < recv]
+    used = [c for c in valid if c["sample_ms"] == ann["offset_sample_ms"]]
+    after = [c for c in valid if c["sample_ms"] - c["rtt_ms"] / 2 > recv]
+    if not (before and used and after):
+        return "missing"
+    b, u, a = max(before, key=lambda c: c["sample_ms"]), used[0], min(after, key=lambda c: c["sample_ms"])
+    if a["sample_ms"] - recv > follow_ms:
+        return "late"
+    span = [c for c in valid if min(b["sample_ms"], u["sample_ms"]) <= c["sample_ms"] <= a["sample_ms"]]
+    lines = [rows.index(c) for c in span]
+    if any(r.get("event") == "step" for r in rows[min(lines):max(lines) + 1]):
+        return "step"
+    if len({c.get("throttled_n") for c in span}) > 1:
+        return "throttled"
+    offsets = [ann["offset_ms"]] + [c["offset_ms"] for c in span]
+    return "accept" if max(offsets) - min(offsets) <= tol else "reject"
+
+
+TRUE_LAG_MS = 100.0
+
+
+def _first_measurement(sh, clock, wall):
+    """One measurement on the clock as it is: offset 0."""
+    def get(url):
+        clock.now += .004
+        return dict(serverTime=wall.true_ms() - 2)
+    sh._http_get = get
+    sh.measure_clock()
+
+
+def _push_inside_a_measurement(tmp_path, monkeypatch, shift_before_s, shift_at_request_s):
+    """Both local clocks lose 300 ms (no step: a slew, a VM pause) before the measurement or during its second
+    request, and the push comes in during that second request. The first request is the fastest one."""
+    monkeypatch.setattr(S, "RECONNECT_S", .001)
+    sh, _, clock, wall = _stepping(tmp_path)
+    _first_measurement(sh, clock, wall)
+    clock.now += 600
+    wall.true_shift += shift_before_s
+    n = [0]
+
+    def get(url):
+        n[0] += 1
+        if n[0] == 2:
+            wall.true_shift += shift_at_request_s
+            raw = json.dumps(dict(type="DATA", data=dict(title="notice", publishDate=wall.true_ms() + 900)))
+            sh._connect = lambda *a, **kw: FakeWS([raw], clock)
+            sh.run_once()
+        rtt = .004 if n[0] % 5 == 1 else .008
+        clock.now += rtt
+        return dict(serverTime=wall.true_ms() - rtt * 500)
+    sh._http_get = get
+    _run_clock_thread(sh, clock, until=clock.now + 30)
+    rows = _drain(sh)
+    return rows, next(r for r in rows if r["k"] == "ann")
+
+
+@pytest.mark.parametrize(("before_s", "at_request_s"), [(.3, 0), (0, .3)])
+def test_a_wrong_lag_ms_of_a_push_inside_a_measurement_is_never_accepted(tmp_path, monkeypatch, before_s, at_request_s):
+    """Review 2, finding 9/15 (and test 0): the row is corrected with the offset installed at its stamp (the one
+    before the measurement), lag_ms is 300 ms wrong. The rule of 0ec0d61 compared the measurement it took for
+    'before' (the running one, whose fastest sample came first) with the one after: equal, so it accepted the row.
+    The row now names its measurement (offset_sample_ms), and its own offset has to agree as well."""
+    rows, ann = _push_inside_a_measurement(tmp_path, monkeypatch, before_s, at_request_s)
+    assert ann["lag_ms"] == pytest.approx(TRUE_LAG_MS - 300, abs=.2)        # wrong by 300 ms
+    clocks = [r for r in rows if r["k"] == "clock" and r.get("offset_ms") is not None]
+    assert ann["offset_sample_ms"] == clocks[0]["sample_ms"]                # the measurement before the push
+    assert ann["offset_age_s"] == pytest.approx((ann["recv_ms"] - clocks[0]["sample_ms"]) / 1000, abs=.06)
+    after = min(c["sample_ms"] - c["rtt_ms"] / 2 for c in clocks if c["sample_ms"] - c["rtt_ms"] / 2 > ann["recv_ms"])
+    assert 10_000 < after - ann["recv_ms"] < 11_000                          # "a little more than 10 s"
+    assert _doc_reader(rows, ann) == "reject"
+    assert _doc_reader(rows, ann, follow_ms=10_000) == "late"               # a reader that waits for less: left out
+
+
+def test_a_measurement_whose_request_straddles_the_stamp_is_neither_before_nor_after(tmp_path, monkeypatch):
+    """Review 2, finding 13: the server stamps its time, the VM is paused 300 ms, the push is stamped right after the
+    pause, then the answer is handled - the midpoint of that request lies after the stamp, its offset is from
+    before the pause. Taken as 'after' by its midpoint, it agreed with 'before' and the wrong lag was accepted."""
+    monkeypatch.setattr(S, "RECONNECT_S", .0001)
+    sh, _, clock, wall = _stepping(tmp_path)
+    _first_measurement(sh, clock, wall)
+    clock.now += 600
+
+    class QuickWS(FakeWS):
+        def recv(self, timeout=None):
+            self.clock.now += .0005
+            if not self.script:
+                raise TimeoutError
+            return self.script.pop(0)
+    n = [0]
+
+    def get(url):
+        n[0] += 1
+        if n[0] == 1:
+            clock.now += .001
+            server = wall.true_ms()                                         # the server stamps before the pause
+            wall.true_shift += .3                                           # the pause
+            raw = json.dumps(dict(type="DATA", data=dict(title="notice",
+                                                         publishDate=wall.true_ms() + .5 - TRUE_LAG_MS)))
+            sh._connect = lambda *a, **kw: QuickWS([raw], clock)
+            sh.run_once()
+            clock.now += .004 - .0015
+            return dict(serverTime=server)
+        clock.now += .008
+        return dict(serverTime=wall.true_ms() - 4)
+    sh._http_get = get
+    _run_clock_thread(sh, clock, until=clock.now + 30)
+    rows = _drain(sh)
+    ann = next(r for r in rows if r["k"] == "ann")
+    assert ann["lag_ms"] == pytest.approx(TRUE_LAG_MS - 300, abs=.6)
+    straddling = [r for r in rows if r["k"] == "clock" and r.get("offset_ms") is not None][1]
+    assert straddling["sample_ms"] - straddling["rtt_ms"] / 2 < ann["recv_ms"] < straddling["sample_ms"]
+    assert _doc_reader(rows, ann) in ("reject", "late")
+    assert _doc_reader(rows, ann, follow_ms=60_000) == "reject"
+
+
+def test_an_offset_installed_between_the_stamp_and_the_correction_is_caught(tmp_path, monkeypatch):
+    """Review 2, test C: the receive thread stalls between its stamp and _correction; meanwhile both clocks lose
+    300 ms and a measurement completes. The row carries that NEW offset, offset_age_s 0.0 (clamped)."""
+    monkeypatch.setattr(S, "RECONNECT_S", .001)
+    sh, _, clock, wall = _stepping(tmp_path)
+    _first_measurement(sh, clock, wall)
+    clock.now += 600
+
+    def get(url):
+        clock.now += .004
+        return dict(serverTime=wall.true_ms() - 2)
+    real = sh._correction
+
+    def stalled(*a):
+        wall.true_shift += .3
+        sh._http_get = get
+        sh.measure_clock()
+        return real(*a)
+    sh._correction = stalled
+    raw = json.dumps(dict(type="DATA", data=dict(title="notice", publishDate=wall.true_ms() + 1000 - TRUE_LAG_MS)))
+    sh._connect = lambda *a, **kw: FakeWS([raw], clock)
+    sh.run_once()
+    sh._correction = real
+    clock.now += 10
+    sh.measure_clock()
+    rows = _drain(sh)
+    ann = next(r for r in rows if r["k"] == "ann")
+    assert ann["offset_age_s"] == 0.0 and ann["offset_sample_ms"] > ann["recv_ms"]
+    assert _doc_reader(rows, ann) == "reject"
+
+
+def test_an_ordinary_push_is_accepted_with_the_right_lag(tmp_path, monkeypatch):
+    monkeypatch.setattr(S, "RECONNECT_S", .001)
+    sh, _, clock, wall = _stepping(tmp_path)
+    _first_measurement(sh, clock, wall)
+    clock.now += 600
+    raw = json.dumps(dict(type="DATA", data=dict(title="notice", publishDate=wall.true_ms() + 1000 - TRUE_LAG_MS)))
+    sh._connect = lambda *a, **kw: FakeWS([raw], clock)
+    sh.run_once()
+    clock.now += .001
+    sh._http_get = lambda url: (setattr(clock, "now", clock.now + .004), dict(serverTime=wall.true_ms() - 2))[1]
+    _run_clock_thread(sh, clock, until=clock.now + 5)
+    rows = _drain(sh)
+    ann = next(r for r in rows if r["k"] == "ann")
+    assert ann["lag_ms"] == pytest.approx(TRUE_LAG_MS, abs=.2) and ann["offset_sample_ms"] is not None
+    assert _doc_reader(rows, ann) == "accept"
+
+
+def test_a_row_without_an_offset_names_no_measurement(tmp_path, monkeypatch):
+    monkeypatch.setattr(S, "RECONNECT_S", 2)
+    sh, _, _ = _shadow(tmp_path, [DOC_PUSH])
+    sh.run_once()
+    ann = next(r for r in _drain(sh) if r["k"] == "ann")
+    assert ann["offset_ms"] is None and ann["offset_sample_ms"] is None
+
+
+def test_the_module_text_says_how_to_read_rows_and_waits_without_the_claims_review_2_disproved():
+    doc = S.__doc__
+    for phrase in ("offset_sample_ms", "sample_ms + rtt_ms/2 < recv_ms", "sample_ms - rtt_ms/2 > recv_ms",
+                   "Comparing BEFORE with\nAFTER alone is NOT enough", "a little more than 10 s",
+                   "not how long the frame waited", "no lower bound", "title_len and body_len count the masked text",
+                   "open_timeout bounds neither the lookup", "a backlog of thousands of rows can take",
+                   "thousands of rows behind"):
+        assert phrase in doc + S.Shadow._shutdown.__doc__, phrase
+    for claim in ("10 s at most after a burst", "roughly below 1 ms", "as early as the previous row's receive stamp"):
+        assert claim not in doc, claim
+
+
+def test_the_stopped_row_waits_for_room_in_a_full_queue(tmp_path, monkeypatch):
+    """Review 2, finding 19: the stopped row went in with put_nowait, and a full queue cost it - the file then ended
+    like after a crash. It now waits for the writer (within the same STOP_WRITER_S as before)."""
+    sh, _, _ = _shadow(tmp_path)
+    sh.q = queue.Queue(maxsize=3)
+    for i in range(3):
+        sh.write(dict(k="x", i=i))
+
+    def behind():                                            # the writer takes its next record only in 0.2 s
+        time.sleep(.2)
+        sh._writer_worker()
+    writer = threading.Thread(target=behind, daemon=True)
+    writer.start()
+    clock_thread = threading.Thread(target=lambda: None)
+    clock_thread.start()
+    sh._shutdown(writer, clock_thread)
+    rows = [json.loads(x) for x in _file_lines(sh)]
+    assert [r.get("i", r.get("event")) for r in rows] == [0, 1, 2, "stopped"] and sh.dropped == 0
+    assert not writer.is_alive()
+
+
+def test_a_stuck_writer_costs_the_stopped_row_but_not_the_stop_budget(tmp_path, monkeypatch):
+    monkeypatch.setattr(S, "STOP_WRITER_S", .3)
+    sh, _, _ = _shadow(tmp_path)
+    sh.q = queue.Queue(maxsize=1)
+    sh.write(dict(k="x"))
+
+    class Stuck:                                             # a writer thread that never takes anything
+        def join(self, timeout=None):
+            time.sleep(timeout)
+
+    class Done:
+        def join(self, timeout=None):
+            pass
+    started = time.monotonic()
+    sh._shutdown(Stuck(), Done())
+    took = time.monotonic() - started
+    assert sh.dropped == 1 and .3 <= took < .55              # waiting for room and for the writer: STOP_WRITER_S, once
+
+
+@pytest.mark.parametrize("server_time", ["NaN", "Infinity", "-Infinity", "1e999", float("inf"), float("nan")])
+def test_a_server_time_that_is_not_a_finite_number_is_an_error_not_an_offset(tmp_path, server_time):
+    """Review 2, finding 20: float("NaN") is nan - it was stored as a valid offset (its clock line looked like a
+    normal one with offset_ms null, and the next try came after 15 min instead of 1)."""
+    sh, _, clock = _shadow(tmp_path)
+    sh._http_get = lambda url: {"serverTime": server_time}
+    waits = []
+    sh._clock_sleep = lambda wait, floor: (waits.append(wait), sh.stop.set())
+    sh.clock_loop()
+    (row,) = _drain(sh)
+    assert "error" in row and "not a finite number" in row["error"] and "offset_ms" not in row
+    assert sh.offset_ms is None and waits == [S.CLOCK_RETRY_S]
+
+
+def test_the_log_filter_never_raises_into_the_code_that_logs(tmp_path, capsys):
+    """Review 2, finding 22: a filter that raises raises into whoever logged (logging catches errors of a handler's
+    emit, not of its filters). A malformed call of some library is logged with its arguments, redacted; a record
+    that cannot be redacted at all is replaced, never let through as it is."""
+    import io
+    sh, _, _ = _shadow(tmp_path)
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.addFilter(S.RedactingFilter(sh.redact))
+    lg = logging.Logger("review2.filter")
+    lg.addHandler(handler)
+    lg.warning("two args %s %s", "KEY")                      # one argument short
+    lg.warning("fine %s", "SECRET")
+
+    def broken(text):
+        raise RuntimeError("cannot")
+    handler.filters[0].redact = broken
+    lg.warning("never shown %s", "KEY")
+    lines = stream.getvalue().splitlines()
+    assert lines[0] == "two args %s %s ('[REDACTED]',)" and lines[1] == "fine [REDACTED]"
+    assert lines[2] == "[log record dropped: it could not be redacted]" and "KEY" not in stream.getvalue()
+
+
+@pytest.mark.parametrize("levels", [1, 2])
+def test_a_key_spelled_with_escapes_in_a_log_message_is_masked(tmp_path, levels):
+    """Cross-review of the fix: the log filter masks a message as text, and nothing decodes it - a key spelled
+    \\u0046\\u0041... in a message or in an exception's text (once, or nested) went to the journal as it was."""
+    import io
+    sh, _, _ = _shadow(tmp_path)
+    sh.key = FAKE_KEY
+    escaped = "".join("\\u%04x" % ord(c) for c in FAKE_KEY)
+    if levels == 2:
+        escaped = escaped.replace("\\", "\\\\")
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.addFilter(S.RedactingFilter(sh.redact))
+    lg = logging.Logger("crossreview.escapes")
+    lg.addHandler(handler)
+    lg.warning("server said %s", escaped)
+    try:
+        raise RuntimeError("echo " + escaped)
+    except RuntimeError:
+        lg.error("failed", exc_info=True)
+    out = stream.getvalue()
+    assert out.count("[REDACTED]") >= 2 and not _has_piece_of(_unescape(out), FAKE_KEY), out
+    assert sh.redact("C:\\new\\table " + "\\u0041") == "C:\\new\\table \\u0041"   # nothing hidden: as it came
+
+
+@pytest.mark.parametrize("case", ["shows at one level only", "nested deeper than the passes", "surrogate pair"])
+def test_redact_undoes_escapes_one_level_at_a_time(tmp_path, case):
+    """Cross-review of the fix, second round: the escapes were undone all at once and only the end was masked. A key
+    that showed at one level - after a backslash - and lost its first letter to the next level (a backslash and
+    "nKEY..." become a line break and "KEY...") stayed; so did a key nested deeper than the passes go, and one
+    with a character outside the BMP that was written as a surrogate pair."""
+    bs = chr(92)
+    sh, _, _ = _shadow(tmp_path)
+    if case == "shows at one level only":
+        sh.key = "nKEYabc123" + "z" * 20
+        text = bs + "u005c" + bs + "u006e" + sh.key[1:]          # one level down: a backslash, then the key
+    elif case == "nested deeper than the passes":
+        sh.key = "KEY-abcdef012345" + "z" * 20
+        text = bs + "u004b" + sh.key[1:]
+        for _ in range(S.UNESCAPE_PASSES + 1):
+            text = text.replace(bs, bs + "u005c")
+    else:
+        sh.key = "abc" + chr(0x1F600) + "def" + "z" * 20
+        text = bs + "u0061bc" + bs + "ud83d" + bs + "ude00def" + "z" * 20
+    out = level = sh.redact(text)
+    assert "[REDACTED]" in out, out
+    for _ in range(S.UNESCAPE_PASSES + 4):                       # however far a reader undoes it: no key
+        assert sh.key not in level and sh.key[1:] not in level, (out, level)
+        level = S._unescaped_once(level)

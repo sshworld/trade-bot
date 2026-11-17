@@ -26,13 +26,15 @@ offset (null while there is no valid one). The offset is the inherited one, take
 against the BINANCE futures server: it puts this box on Binance time, and whatever
 Upbit's own clock differs from that stays inside every lag_ms_*.
 tag and tickers are made from the title as it is logged (its first 500 characters;
-title_len is the whole length). offset_rtt_ms, the clock / writer / conn rows, what
-a clock step or slewing does to lag_ms_* and how to read the file: see the module
-text of ann_ws_shadow. recv_wait_ms is this recv()'s monotonic wait in ms: near zero
-means recv_ms may only be an arrival upper bound because a frame was buffered.
-Use sample_ms > recv_ms to find a genuinely later clock measurement; file order
-and t do not decide. Discard announcements between measurements with different
-throttled_n; null throttled_n/throttled_ms means the CPU counters are unknown.
+title_len is the whole length, of the title as logged: a masked secret counts as its
+marker). offset_rtt_ms, offset_sample_ms, recv_wait_ms, the clock / writer / conn
+rows, what a clock step or slewing does to lag_ms_* and how to read the file: see
+the module text of ann_ws_shadow - the same rules hold here, with lag_ms_* for
+lag_ms. In short: which clock lines a row is checked against is decided by sample_ms
+and rtt_ms against recv_ms, never by file order or t; the row's own offset_ms (the
+measurement offset_sample_ms names) must agree with all of them; their throttled_n
+must be equal (null throttled_n/throttled_ms: the CPU counters are unknown); and
+recv_wait_ms is how long the loop waited in recv(), not how long the frame did.
 The raw timestamp is retained except that non-finite numeric values become null
 at the common strict-JSON writer boundary.
 """
@@ -64,6 +66,13 @@ _MARKETS = re.compile(r"(?<![A-Z0-9])(?:KRW|BTC|USDT|원화)(?:\s*[,/·]\s*(?:KR
 # running designation - which really reads "지정 기간 연장 안내" or "지정 안내 (기간 연장)" (19 of 813 real notices).
 _NOT_A_DESIGNATION = re.compile(r"유의종목지정(?:기간)?(?:해제|연장|취소)|\(기간연장\)")
 _JWT_RUN = re.compile(r"[A-Za-z0-9_.-]+")
+# What is left of a token that lost its other parts, or was cut: its header, or its payload - base64url of
+# {"access_key":"<the key>",...}, which decodes to the key. Both start with "eyJ" (base64 of '{"'). Linear: inside a
+# run the look-behind fails at once, so a run is matched from its start only.
+_JWT_PIECE = re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}")
+# The start of every token's payload (base64url of '{"access_key":"'): what follows it spells an access key, whatever
+# stands before it (a piece glued to other text) and wherever it was cut. Twenty fixed characters: no public word.
+_PAYLOAD_PIECE = re.compile(r"eyJhY2Nlc3Nfa2V5Ijoi[A-Za-z0-9_-]*")
 _OWN_ERRORS = ("not a private regular file", "short log write")    # OSErrors raised by the writer code itself
 
 
@@ -211,6 +220,8 @@ class StreamError(Exception):
 
 
 class UpbitShadow(base.Shadow):
+    NEEDLES = ("eyJ",)                       # every JWT, whole or a piece of one, starts with it: see _mask()
+
     def __init__(self, key, secret, out_path, *, categories=None, **kwargs):
         if not key or not secret:
             raise ValueError("UPBIT_ACCESS_KEY and UPBIT_SECRET_KEY are required")
@@ -218,16 +229,36 @@ class UpbitShadow(base.Shadow):
         super().__init__(key, secret, out_path, **kwargs)
         self.categories = categories
         self._token = ""
+        self._token_values = (None, ())                      # ((key, token), what _secret_values adds for them)
         # An isolated disabled logger prevents library DEBUG handshake dumps.
         self._ws_log = logging.Logger("upbit-shadow-transport")
         self._ws_log.disabled = True
         self._ws_log.propagate = False
 
-    def redact(self, text):
-        text = super().redact(text)
+    def _secret_values(self):
+        """Also, in every spelling: this connection's token, and its payload and signature on their own - a piece
+        glued to other text ("x" + payload) is no run that starts with "eyJ" (_JWT_PIECE) - and the access key as
+        every token's payload spells it. The payload is base64url of {"access_key":"<key>","nonce":"<uuid>"}: the key
+        starts at a whole group of it (15 bytes in), and what follows it up to the nonce is fixed, so the whole
+        groups of the key alone (a payload cut after them) and the whole key with its last group completed by what
+        follows it (all of a short key, and the last letters of any) read the same in every token. (A piece that
+        still holds the payload's start is masked whole: _PAYLOAD_PIECE.)"""
+        key, token = self.key, self._token                # read once: the receive thread may change the token
+        made_for, values = self._token_values
+        if made_for != (key, token):                      # (this is asked for every string: worked out once)
+            spelled = json.dumps(key).encode("ascii")[1:-1]          # as jwt_token's json.dumps writes it
+            whole = len(spelled) // 3 * 3
+            completed = spelled + b'","'[:-len(spelled) % 3]        # '","nonce":"' follows the key
+            in_payload = [base64.urlsafe_b64encode(run).decode("ascii") for run in (spelled[:whole], completed) if run]
+            values = (token, *(token.split(".")[1:] if token else []), *in_payload)
+            self._token_values = ((key, token), values)
+        return (*super()._secret_values(), *values)
+
+    def _mask(self, text):
+        text = super()._mask(text)
         if self._token:
             text = text.replace(self._token, "[REDACTED]")
-        return redact_jwts(text)
+        return _PAYLOAD_PIECE.sub("[REDACTED]", _JWT_PIECE.sub("[REDACTED]", redact_jwts(text)))
 
     def _append(self, line):
         """Harden the inherited writer's append: regular private files, no links.
@@ -294,7 +325,7 @@ class UpbitShadow(base.Shadow):
                         continue
                     recv_ms = self.clock() * 1000  # stamp before decoding/offset/scrub
                     recv_mono = self.mono()
-                    off, age, rtt = self._correction(recv_ms / 1000, recv_mono)  # valid for THIS stamp's clocks?
+                    off, age, rtt, sample = self._correction(recv_ms / 1000, recv_mono)  # for THIS stamp's clocks?
                     msg = decode(raw)
                     if msg is not None and "error" in msg:
                         error = msg["error"]
@@ -304,11 +335,13 @@ class UpbitShadow(base.Shadow):
                     rec = parse_push(self.clean(msg), recv_ms, off, age, rtt) if msg is not None else None
                     if rec is None:
                         other += 1
-                        if other <= base.MAX_OTHER_PER_CONN:
-                            self.write(dict(k="other", recv_ms=recv_ms, raw=self.scrub(raw)))
+                        if other <= base.MAX_OTHER_PER_CONN:     # masked as JSON text first (escapes, bytes)
+                            raw = self.scrub(self._readable(self.redact_json(raw)))
+                            self.write(dict(k="other", recv_ms=recv_ms, raw=raw))
                     else:
                         n += 1
                         rec["recv_wait_ms"] = round((recv_mono - recv_start) * 1000, 2)
+                        rec["offset_sample_ms"] = sample  # the clock line lag_ms_* were made with
                         self.write(rec)
                         self.clock_wake.set()  # measure the clock again now: was this row's offset still true?
         except StreamError:
