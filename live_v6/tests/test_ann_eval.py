@@ -93,6 +93,21 @@ def test_sigma_atr_and_h_follow_the_s2_builder():
                                      if PUB - 6000 <= SL + 1000 * k < PUB - 1000) / 5, rel=1e-15)
 
 
+def test_sigma_window_ends_before_the_publication_second_hand_computed():
+    """600 returns: 599 zeros, then +10% in the second just before floor_s(pub).
+    The +50% trade in pub's second is AFTER pub and must not enter sigma or h.
+    Sample variance = (0.1² - 0.1²/600)/599 = 0.1²/600.
+    """
+    pf = PUB // 1000 * 1000
+    m = flat_market(until=pf - 1000, p0_ticks=False)
+    m.add(pf - 1000, 110.0).add(pf + 500, 165.0)
+    r = E.Replay(m.rows, PUB, 1, PUB + HOUR, PUB + HOUR)
+    sigma = 0.1 / math.sqrt(600)
+    assert r.sigma == pytest.approx(sigma, rel=1e-12)
+    assert r.h == pytest.approx(6 * sigma, rel=1e-12)
+    assert r.h > 0.003
+
+
 def test_atr_is_wilder_smoothed_over_the_20_minute_bars_before_the_publication_minute():
     """bar m (m = 0..19) trades between 100.0 and 100+0.01(m+1) and closes at 100.0 → true range = its high−low;
     ATR = mean of the first 14, then (13×ATR + TR)/14 for the last 6 — not the plain 20-bar mean."""
@@ -267,6 +282,39 @@ def test_e2_trailing_stop_tightens_only_at_whole_seconds_from_the_peak_before_th
     # → next taker sell 102.8 (a stop of 103 already at +1 s would have closed at 102.6)
     assert (x["exit_reason"], x["exit_ms"], x["exit_price"]) == ("stop", TE + 2100, 102.8)
     assert x["net10"] == pytest.approx(2.8 - 0.1 * (1 + 1.028), rel=1e-12)
+
+
+def test_e2_med30_distance_and_previous_second_hand_computed():
+    """At entry+1s: last 30 returns contain 15 zeros, 7×1/500, 7×1/501, and 1/10.
+    med30 = (0 + 1/501)/2 = 1/1002, close = 110, ATR = 0.
+    Stop = 110 - 20×110/1002 = 107.804391...; 108.5 and 108.4 survive,
+    107.7 triggers, next opposite taker 107.6 fills. One second earlier med30=0
+    (16 zeros), so using two seconds ago or halving/removing the med30 term
+    instead triggers at 108.5 and fills at 108.4.
+    """
+    et = PUB // 1000 * 1000 + 40_000
+    m = flat_market()
+    m.tape(et - 15_000, et - 1000, lambda k: 100.2 if k % 2 == 0 else 100.0)
+    m.add(et, 100.0).add(et + 500, 110.0)
+    m.add(et + 1100, 108.5).add(et + 1200, 108.4, maker=True)
+    m.add(et + 1300, 107.7).add(et + 1400, 107.6, maker=True)
+    hi = et + E.HOLD_MS + 1000
+    r = E.Replay(m.rows, PUB, 1, hi, hi)
+    ci = (et - SL) // 1000
+    assert r.atr == 0.0
+    assert r.med30(ci - 1) == 0.0
+    assert r.med30(ci) == pytest.approx(1 / 1002, rel=1e-12)
+    assert r.close[ci] == 110.0
+    assert 110 - 20 * (1 / 1002) * 110 == pytest.approx(107.80439121756487)
+    fill = dict(filled=True, reason="", fill_id=r.T.index(et), entry_ms=et, price=100.0)
+    exit_ = r.exit_e2(fill["fill_id"], fill["price"])
+    assert exit_["signal_ms"] == et + 1300
+    x = r.trade(fill)
+    assert (x["status"], x["exit_reason"], x["exit_ms"], x["exit_price"], x["hold_ms"]) == \
+        ("filled", "stop", et + 1400, 107.6, 1400)
+    assert x["gross_pct"] == pytest.approx(7.6, rel=1e-12)
+    assert x["net10"] == pytest.approx(7.3924, rel=1e-12)  # 7.6 - 0.1×(1+1.076)
+    assert x["net15"] == pytest.approx(7.2886, rel=1e-12)  # 7.6 - 0.15×(1+1.076)
 
 
 def test_e2_time_limit_exits_on_the_first_opposite_taker_trade_at_or_after_15_minutes():
@@ -790,6 +838,88 @@ def test_body_lookup_pages_back_until_the_publication_day():
     body, how = E.Source(net=net).body("Binance Will Delist XYZ on 2026-01-01", PUB, 161)
     assert body is None and "못 찾음" in how
     assert [c[2] for c in net.calls if c[0] == "list"] == [1, 2, 3, 4, 5, 6, 7]    # page 7 already reaches the day before
+
+
+@pytest.mark.parametrize("release_delta", [0, 13_429, None])
+def test_cms_release_display_does_not_change_research_results(release_delta):
+    """The list releaseDate belongs only to the exact (detail title, publishDate) match.
+    Receipts use the same exchange-clock correction as recv_lag_ms, without the order-path extra.
+    """
+    title = "Binance Futures Will Delist USDⓈ-M FOOUSDT Perpetual Contract"
+    tree = {"node": "root", "child": [{"node": "text", "text":
+        "Binance Futures will close all positions and conduct an automatic settlement on USDⓈ-M FOOUSDT "
+        "perpetual contract at 2026-12-01 09:00 (UTC)."}]}
+    # A decoy with the same title must not contribute its releaseDate (detail publishDate differs).
+    arts = [dict(code="decoy", title=title, releaseDate=PUB + 7000)]
+    details = {"decoy": dict(title=title, publishDate=PUB - 1, body=tree)}
+    if release_delta is not None:
+        arts.append(dict(code="match", title=title, releaseDate=PUB + release_delta))
+        details["match"] = dict(title=title, publishDate=PUB, body=tree)
+
+    class Src(MemSource):
+        def perps(self):
+            return {"FOOUSDT": FOO_INFO}
+
+    def source(net):
+        src = Src(listing_market().rows, PUB + E.RESEARCH_HI_MS)
+        src.net = net
+        return src
+
+    net = CmsNet(arts, details)
+    src = source(net)
+    row = dict(title=title, publish_ms=PUB, recv_ms=PUB + 14_000.0, offset_ms=25.5, catalogId=161)
+    [x] = E.evaluate_row(row, src, 20)
+    line = E.text_line(x)
+    # Also check the values actually serialized as JSON.
+    x = json.loads(json.dumps(x))
+    if release_delta is None:
+        assert x["k"] == "skip" and "본문 없음" in x["why"]
+        assert "release_ms" not in x and "recv_release_lag_ms" not in x
+        assert "공개(releaseDate)" not in line and "수신 공개" not in line
+        assert src.release_dates == {}
+    else:
+        assert x["release_ms"] == PUB + release_delta
+        assert x["recv_release_lag_ms"] == 14_025.5 - release_delta
+        assert x["recv_lag_ms"] == 14_025.5 and x["arrival_lag_ms"] == 14_045
+        if release_delta:
+            assert " · 공개(releaseDate) 게시+13,429ms · 수신 공개+596ms" in line.splitlines()[0]
+        else:
+            assert "공개(releaseDate)" not in line and "수신 공개" not in line
+        equal_net = CmsNet([dict(code="match", title=title, releaseDate=PUB)], details)
+        [baseline] = E.evaluate_row(row, source(equal_net), 20)
+        display_fields = {"release_ms", "recv_release_lag_ms"}
+        assert {k: v for k, v in x.items() if k not in display_fields} == \
+            {k: v for k, v in baseline.items() if k not in display_fields}
+    assert net.calls == [("list", 161, 1), ("detail", "decoy")] + \
+        ([("detail", "match")] if release_delta is not None else [("list", 161, 2)])
+
+
+def test_cms_release_is_not_taken_from_a_different_detail_title():
+    title = "Binance Futures Will Delist USDⓈ-M FOOUSDT Perpetual Contract"
+    net = CmsNet([dict(code="wrong", title=title, releaseDate=PUB + 7000)],
+                 {"wrong": dict(title="other", publishDate=PUB, body={"text": "FOOUSDT"})})
+    src = E.Source(net=net)
+    assert src.body(title, PUB, 161)[0] is None
+    assert src.release_dates == {}
+
+
+def test_cms_release_missing_and_offline_metadata(tmp_path):
+    title = "Binance Futures Will Delist USDⓈ-M FOOUSDT Perpetual Contract"
+    tree = {"text": "FOOUSDT"}
+    src = E.Source(offline_dir=str(tmp_path))
+    path = tmp_path / "cms.json"
+    article = dict(title=title, publishDate=PUB, body=tree, releaseDate=PUB + 9541)
+    path.write_text(json.dumps([article]), encoding="utf-8")
+    assert src.body(title, PUB, 161) == (tree, "offline")
+    assert src.release_dates == {(title, PUB): PUB + 9541}
+    del article["releaseDate"]
+    path.write_text(json.dumps([article]), encoding="utf-8")
+    assert src.body(title, PUB, 161) == (tree, "offline")
+    assert src.release_dates == {}  # no stale release from an earlier lookup
+    net = CmsNet([dict(code="a", title=title)], {"a": article})
+    src = E.Source(net=net)
+    assert src.body(title, PUB, 161)[0] is None
+    assert src.release_dates == {}
 
 
 # ───────────────────────── log rows, CLI ─────────────────────────

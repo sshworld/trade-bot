@@ -32,7 +32,10 @@ Data (all public, GET only): GET /fapi/v1/aggTrades (first page by startTime/end
 serves only the last 48 h), older ranges from data.binance.vision daily aggTrades zips (SHA256 against .CHECKSUM),
 GET /fapi/v1/exchangeInfo, and for announcements whose rule needs the body (every delist/monitoring kind) the public
 CMS list/detail API (bundle_v5_signals.CMS) — the article with the same title and the exact publishDate, else
-"본문 없음". Unsigned requests without any key, no order/account endpoint. A pause between requests; HTTP 429/418
+"본문 없음". When that lookup matches an article, its list releaseDate is reported as release_ms and the
+clock-corrected recv−release as recv_release_lag_ms. A different releaseDate adds a display note only; all research
+windows and verdicts still use the detail publishDate. Missing releaseDate or no matching article adds no note.
+Unsigned requests without any key, no order/account endpoint. A pause between requests; HTTP 429/418
 stops everything at once (the bot may use the same IP). What is fetched: the grid start through entry + 15 min + 60 s
 first; the research horizon t_pub+81 min 2 s (window_lib HORIZON_MS) only when that does not settle the crossing or the
 closing trade (archive and offline days are read to the horizon at once — the whole day is there anyway). Nothing past
@@ -50,7 +53,7 @@ Every result is printed as soon as it is known, so a rate limit on a later symbo
                                    [--offline-ticks DIR]
 --offline-ticks DIR (tests, replays): no network at all. Ticks from DIR/<SYMBOL>.csv (aggTrades columns agg_trade_id,
 price, quantity, transact_time, is_buyer_maker; complete from the first to the last row), DIR/exchangeInfo.json
-(the exchangeInfo response or its `symbols` list), bodies from DIR/cms.json ([{title, publishDate, body}]).
+(the exchangeInfo response or its `symbols` list), bodies from DIR/cms.json ([{title, publishDate, body, releaseDate?}]).
 """
 from __future__ import annotations
 
@@ -607,6 +610,7 @@ class Source:
         self.net, self.dir = net, offline_dir
         self.now_ms = now_ms if now_ms is not None else (lambda: time.time() * 1000)
         self._perps = None
+        self.release_dates = {}        # (title, detail publishDate) → list releaseDate, display only
         self.notes = []
         self.seed_missing = set()      # (symbol, grid start) whose seed neither REST nor the daily file could give
 
@@ -755,11 +759,16 @@ class Source:
 
     def body(self, title: str, publish_ms: int, catalog_id) -> tuple[str | None, str]:
         """(body, how): the node-tree body of the article with this title and exactly this publishDate, else
-        (None, why)."""
+        (None, why). Keep the matching list releaseDate separately for display, never for research windows."""
+        key = (title, publish_ms)
+        self.release_dates.pop(key, None)
         if self.dir is not None:
             path = os.path.join(self.dir, "cms.json")
             for d in (json.load(open(path, encoding="utf-8")) if os.path.exists(path) else []):
                 if str(d.get("title") or "")[:500] == title and _int(d.get("publishDate"), -1) == publish_ms:
+                    release = _int(d.get("releaseDate"), 0)
+                    if release > 0:
+                        self.release_dates[key] = release
                     if not self._tree(d.get("body")):
                         return None, "본문 읽기 불가(오프라인 cms.json 본문이 노드 트리가 아님)"
                     return d.get("body"), "offline"
@@ -776,7 +785,12 @@ class Source:
                         continue
                     d = self.net.cms_detail(str(a["code"]))
                     got = _int(d.get("publishDate"), -1)
-                    if got == publish_ms and str(d.get("title") or "")[:500] == title and d.get("body"):
+                    if got == publish_ms and str(d.get("title") or "")[:500] == title:
+                        release = _int(a.get("releaseDate"), 0)
+                        if release > 0:
+                            self.release_dates[key] = release
+                        if not d.get("body"):
+                            continue
                         if not self._tree(d["body"]):
                             return None, f"본문 읽기 불가(CMS {a['code']} 본문이 노드 트리가 아님)"
                         return d["body"], f"CMS {a['code']}"
@@ -860,6 +874,9 @@ def iter_row(row: dict, src: Source, extra_ms: int):
             body, how = src.body(title, pub, cat)
         except FetchError as e:
             body, how = None, f"본문 없음(CMS 요청 실패: {e})"
+        release = src.release_dates.get((title, pub))
+        if release is not None:
+            base.update(release_ms=release, recv_release_lag_ms=round(recv - release, 1))
         if body is None:
             yield dict(base, k="skip", why=how, kinds=list(kinds))
             return
@@ -955,8 +972,12 @@ def _pct(v, nd=2) -> str:
 def text_line(x: dict) -> str:
     """One or two short lines for a result (Telegram-sized)."""
     head = f'공지 "{x["title"][:60]}"'
+    release = x.get("release_ms")
+    note = (f" · 공개(releaseDate) 게시{_ms(release - x['publish_ms'])}"
+            f" · 수신 공개{_ms(x['recv_release_lag_ms'])}"
+            if release is not None and release != x["publish_ms"] else "")
     if x["k"] == "skip":
-        return f"{head} · 수신 게시{_ms(x['recv_lag_ms'])} · 평가 안 함: {x['why']}"
+        return f"{head} · 수신 게시{_ms(x['recv_lag_ms'])} · 평가 안 함: {x['why']}{note}"
     if x["cross_status"] == "ok":
         react = f"첫 반응 게시{_ms(x['cross_lag_ms'])}({x['symbol']}{', 선반영' if x['pre'] else ''})"
         lead = f"앞섬 {_ms(x['lead_ms'])}"
@@ -974,6 +995,7 @@ def text_line(x: dict) -> str:
     else:
         pnl = "가상 진입 손익 —(자료 부족)"
     line = f"{head} · 수신 게시{_ms(x['recv_lag_ms'])} · {react} · {lead} · {pnl} · 판정: {x['verdict']}"
+    line += note
     if x.get("maybe_missing"):
         line += f" · 토큰 누락 가능: {', '.join(x['maybe_missing'])}"
     marks = f" · 표시 {', '.join(x['flags'])}" if x.get("flags") else ""
