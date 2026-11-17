@@ -624,18 +624,49 @@ def test_data_vision_redirects_are_refused():
     assert len(seen) == 1 and seen[0].startswith("https://data.binance.vision/")
 
 
-def test_a_missing_seed_answer_only_costs_the_seed():
-    class Net(FakeNet):
-        def agg(self, symbol, **params):
-            if params.get("limit") == 5:
-                raise E.FetchError("HTTP 400 /fapi/v1/aggTrades: too old")
-            return super().agg(symbol, **params)
-    start = 1_000_000
+class SeedNet(FakeNet):
+    """REST refuses the seed like the exchange does for a trade older than 48 h; `days` = daily files it has."""
+
+    def __init__(self, trades, days=()):
+        super().__init__(trades)
+        self.days, self.archived = dict(days), []
+
+    def agg(self, symbol, **params):
+        if params.get("limit") == 5:
+            raise E.FetchError("HTTP 400 /fapi/v1/aggTrades: trade older than 48 h")
+        return super().agg(symbol, **params)
+
+    def archive(self, symbol, day):
+        self.archived.append(day)
+        if day not in self.days:
+            raise E.FetchError("missing_archive " + day)
+        return io.BytesIO(_zip_csv(self.days[day]))
+
+
+def test_a_seed_rest_refuses_comes_from_that_days_file_like_the_research():
+    start = 1_000_000                                          # 1970-01-01: the day of start − 1 ms
     tr = _trades(start - 50, 30, 10)
-    src = E.Source(net=Net(tr), now_ms=lambda: start + HOUR)
+    before = [x for x in tr if x[0] < start]
+    src = E.Source(net=SeedNet(tr, {"1970-01-01": before}), now_ms=lambda: start + HOUR)
     rows, seed, data_end = src._rest("FOOUSDT", start, start + 100, True)
-    assert rows == [x for x in tr if start <= x[0] <= start + 100] and seed is None and data_end == start + 100
-    assert "씨앗" in src.notes[-1]
+    assert rows == [x for x in tr if start <= x[0] <= start + 100] and seed == before[-1] and data_end == start + 100
+    assert src.net.archived == ["1970-01-01"] and not src.seed_missing and "older than 48 h" in src.notes[0]
+    src = E.Source(net=SeedNet(tr), now_ms=lambda: start + HOUR)          # the day's file is not there either
+    rows, seed, _ = src._rest("FOOUSDT", start, start + 100, True)
+    assert seed is None and src.seed_missing == {("FOOUSDT", start)} and "missing_archive" in src.notes[-1]
+
+
+def test_a_baseline_left_incomplete_by_a_missing_seed_says_so():
+    """No trade in the first 30 grid seconds: only the seed fills them (the research had it from the day file)."""
+    m = Mkt().add(SL - 5000, 100.0).add(SL + 30_500, 101.0).add(SL + 40_000, 102.0).add(PUB - 3000, 101.0)
+    m.tape(PUB + 5, PUB + 2 * HOUR, lambda k: 101.0, step=10_000)
+    day = "2023-11-14"                                         # UTC day of the grid start − 1 ms
+    assert E._utc_date(SL - 1).isoformat() == day
+    ok = E.evaluate_symbol(E.Source(net=SeedNet(m.rows, {day: m.rows[:1]}), now_ms=lambda: PUB + 3 * HOUR),
+                           "FOOUSDT", 1, PUB, PUB + 1000)
+    assert ok["error"] is None and ok["p0"] == 101.0 and "seed_unavailable" not in ok["flags"]
+    bad = E.evaluate_symbol(E.Source(net=SeedNet(m.rows), now_ms=lambda: PUB + 3 * HOUR), "FOOUSDT", 1, PUB, PUB + 1000)
+    assert bad["error"] == "incomplete_pre20m" and "seed_unavailable" in bad["flags"] and bad["state"] == "불완전"
 
 
 def _zip_csv(rows, header=True):
@@ -751,8 +782,9 @@ def test_body_lookup_pages_back_until_the_publication_day():
         def cms_list(self, catalog_id, page):
             self.calls.append(("list", catalog_id, page))
             return pages[page - 1] if page <= len(pages) else []
-    net = PagedNet(None, {"t": dict(title=title, publishDate=PUB, body="ABC will be delisted")})
-    assert E.Source(net=net).body(title, PUB, 161) == ("ABC will be delisted", "CMS t")
+    tree = json.dumps({"node": "root", "child": [{"tag": "p", "text": "ABC will be delisted"}]})
+    net = PagedNet(None, {"t": dict(title=title, publishDate=PUB, body=tree)})
+    assert E.Source(net=net).body(title, PUB, 161) == (tree, "CMS t")
     assert [c[2] for c in net.calls if c[0] == "list"] == [1, 2, 3, 4, 5, 6, 7]
     net = PagedNet(None, {})
     body, how = E.Source(net=net).body("Binance Will Delist XYZ on 2026-01-01", PUB, 161)
@@ -782,19 +814,22 @@ def test_odd_offsets_and_catalog_ids_are_ignored_not_fatal():
         assert (x["k"], x["clock_offset_ms"], x["catalogId"], x["recv_lag_ms"]) == ("skip", None, None, 5.0)
     [x] = E.evaluate_row(dict(title="Hello", publish_ms=PUB, recv_ms=PUB + 5.0, offset_ms=-2.5, catalogId="161"), NoNet(), 20)
     assert (x["clock_offset_ms"], x["catalogId"], x["recv_lag_ms"]) == (-2.5, 161, 2.5)
+    for cat in (48.5, "4²", True):                    # unreadable: like the classifier, not "unknown" (title rules alone)
+        [x] = E.evaluate_row(dict(title=LIST_TITLE, publish_ms=PUB, recv_ms=PUB + 5.0, catalogId=cat), NoNet(), 20)
+        assert (x["k"], x["catalogId"], x["why"]) == ("skip", None, "매매 대상 아님(제목 규칙) — 카탈로그 값을 읽을 수 없음")
 
 
 def test_one_announcement_that_fails_oddly_does_not_stop_the_others(tmp_path, capsys, monkeypatch):
     log = tmp_path / "ann.jsonl"
     _log(log, [dict(k="ann", recv_ms=PUB + 1280.0, publish_ms=PUB, title="first"),
                dict(k="ann", recv_ms=PUB + 9280.0, publish_ms=PUB + 8000, title="second")])
-    real = E.evaluate_row
+    real = E.iter_row
 
     def flaky(row, src, extra_ms):
         if row["title"] == "first":
             raise KeyError("symbol")
         return real(row, src, extra_ms)
-    monkeypatch.setattr(E, "evaluate_row", flaky)
+    monkeypatch.setattr(E, "iter_row", flaky)
     assert E.main(["--log", str(log)], source=MemSource([], 0)) == 1
     out = capsys.readouterr().out
     assert '공지 "first"' in out and "평가 중 오류(KeyError" in out and "평가 0건 · 평가 안 함 2건" in out
@@ -866,8 +901,245 @@ def test_module_is_read_only_public_data_only():
         elif isinstance(node, ast.ImportFrom):
             mods.add("." * node.level + (node.module or ""))
     assert {m for m in mods if m.startswith("live_v6")} == {"live_v6", "live_v6.strategies"}
-    assert mods <= {"__future__", "argparse", "bisect", "csv", "datetime", "hashlib", "io", "json", "math", "os", "sys",
-                    "tempfile", "time", "zipfile", "httpx", "live_v6", "live_v6.strategies"}
+    assert mods <= {"__future__", "argparse", "bisect", "csv", "datetime", "hashlib", "io", "json", "math", "os", "re",
+                    "sys", "tempfile", "time", "zipfile", "httpx", "live_v6", "live_v6.strategies"}
     for banned in ("/fapi/v1/order", "/fapi/v1/leverage", "/fapi/v1/marginType", "/fapi/v2/account", "listenKey", "X-MBX-APIKEY",
                    "signature", "hmac", ".post(", ".put(", ".delete(", "BINANCE_API"):
         assert banned not in src
+
+
+# ───────────────────────── a rate limit stops the run from every call site ─────────────────────────
+FOO_INFO = dict(symbol="FOOUSDT", contractType="PERPETUAL", status="TRADING", onboardDate=1, quoteAsset="USDT")
+D_TITLE = "Binance Futures Will Delist USDⓈ-M FOOUSDT Perpetual Contract"
+TWO_LISTINGS = [dict(k="ann", recv_ms=PUB + 1280.0, publish_ms=PUB, title=LIST_TITLE, catalogId=48),
+                dict(k="ann", recv_ms=PUB + 9280.0, publish_ms=PUB + 8000, title=LIST_TITLE + " 2", catalogId=48)]
+
+
+def _stopped(capsys, log, src, before=()):
+    """main() stops with exit 2 at the first rate limit: `before` results, then 'stopped' — nothing after it."""
+    assert E.main(["--log", str(log), "--json"], source=src) == 2
+    lines = [json.loads(x) for x in capsys.readouterr().out.splitlines()]
+    assert [x["k"] for x in lines if x["k"] != "note"] == [*before, "stopped", "summary"]
+    assert "429" in next(x for x in lines if x["k"] == "stopped")["why"]
+    return lines
+
+
+def test_a_rate_limit_on_a_daily_file_checksum_stops_the_run(tmp_path, capsys):
+    seen = []
+
+    def h(req):
+        seen.append(req.url.path)
+        if req.url.path == E.INFO_PATH:
+            return httpx.Response(200, json=dict(symbols=[FOO_INFO]))
+        return httpx.Response(429, headers={"Retry-After": "60"})
+    net, _ = _public(h)
+    log = tmp_path / "ann.jsonl"
+    _log(log, TWO_LISTINGS)
+    _stopped(capsys, log, E.Source(net=net, now_ms=lambda: PUB + 100 * HOUR))        # older than 48 h: daily files
+    assert seen == [E.INFO_PATH, f"{E.VISION_DIR}/FOOUSDT/FOOUSDT-aggTrades-2023-11-14.zip.CHECKSUM"]
+
+
+def test_a_rate_limit_on_the_seed_request_stops_the_run(tmp_path, capsys):
+    class Net(FakeNet):
+        def agg(self, symbol, **params):
+            if params.get("limit") == 5:
+                self.calls.append(dict(params))
+                raise E.RateLimited("HTTP 429 /fapi/v1/aggTrades (Retry-After 60)")
+            return super().agg(symbol, **params)
+
+        def exchange_info(self):
+            return dict(symbols=[FOO_INFO])
+
+        def archive(self, symbol, day):
+            raise AssertionError("no daily file after a rate limit")
+    net = Net(flat_market().tape(PUB, PUB + 1_000_000, lambda k: 100.0).rows)
+    log = tmp_path / "ann.jsonl"
+    _log(log, TWO_LISTINGS)
+    _stopped(capsys, log, E.Source(net=net, now_ms=lambda: PUB + 2 * HOUR))
+    assert net.calls[-1].get("limit") == 5 and sum(c.get("limit") == 5 for c in net.calls) == 1
+
+
+def test_a_rate_limit_on_the_cms_lookup_stops_the_run(tmp_path, capsys):
+    class Net:
+        calls = 0
+
+        def cms_list(self, catalog_id, page):
+            Net.calls += 1
+            raise E.RateLimited("HTTP 429 /bapi/composite/v1/public/cms/article/list/query (Retry-After 60)")
+    log = tmp_path / "ann.jsonl"
+    _log(log, [dict(k="ann", recv_ms=PUB + 1280.0, publish_ms=PUB, title=D_TITLE, catalogId=161),
+               dict(k="ann", recv_ms=PUB + 9280.0, publish_ms=PUB + 8000, title=D_TITLE + " 2", catalogId=161)])
+    _stopped(capsys, log, E.Source(net=Net(), now_ms=lambda: PUB + 2 * HOUR))
+    assert Net.calls == 1
+
+
+def test_a_rate_limit_on_exchange_info_stops_the_run(tmp_path, capsys):
+    class Net:
+        calls = 0
+
+        def exchange_info(self):
+            Net.calls += 1
+            raise E.RateLimited("HTTP 429 /fapi/v1/exchangeInfo (Retry-After 60)")
+    log = tmp_path / "ann.jsonl"
+    _log(log, TWO_LISTINGS)
+    _stopped(capsys, log, E.Source(net=Net(), now_ms=lambda: PUB + 2 * HOUR))
+    assert Net.calls == 1
+
+
+def test_a_rate_limit_while_reading_on_to_the_horizon_stops_the_run(tmp_path, capsys):
+    class Src(MemSource):
+        def perps(self):
+            return {"FOOUSDT": FOO_INFO}
+
+        def trades(self, symbol, pub, start, end, seed=True):
+            if not seed:                                         # the second fetch (to t_pub+81 min)
+                self.asked.append((start, end, seed))
+                raise E.RateLimited("HTTP 429 /fapi/v1/aggTrades (Retry-After 60)")
+            return super().trades(symbol, pub, start, end, seed)
+    m = flat_market().add(PUB + 1500, 100.4, 3.0).add(PUB + 1600, 100.4, 3.0)       # censored first fetch (see above)
+    m.add(PUB + 1700, 100.0, 1.0, maker=True).add(PUB + 2000, 100.4, 1.0).add(PUB + 1_200_000, 100.2, 1.0, maker=True)
+    src = Src(m.rows, PUB + E.RESEARCH_HI_MS)
+    log = tmp_path / "ann.jsonl"
+    _log(log, [dict(TWO_LISTINGS[0], recv_ms=PUB + 1000.0), TWO_LISTINGS[1]])
+    _stopped(capsys, log, src)
+    assert len(src.asked) == 2 and src.asked[1][2] is False
+
+
+def test_results_already_computed_are_printed_before_a_rate_limit_stops_the_run(tmp_path, capsys):
+    """Foo has FOOUSDT and 1000FOOUSDT: the limit on the second must not lose the first's result."""
+    class Src(MemSource):
+        def perps(self):
+            return {"FOOUSDT": FOO_INFO, "1000FOOUSDT": dict(FOO_INFO, symbol="1000FOOUSDT")}
+
+        def trades(self, symbol, pub, start, end, seed=True):
+            if symbol == "1000FOOUSDT":
+                raise E.RateLimited("HTTP 429 /fapi/v1/aggTrades (Retry-After 60)")
+            return super().trades(symbol, pub, start, end, seed)
+    log = tmp_path / "ann.jsonl"
+    _log(log, TWO_LISTINGS[:1])
+    lines = _stopped(capsys, log, Src(listing_market().rows, PUB + E.RESEARCH_HI_MS), before=("eval",))
+    assert [(x["k"], x.get("symbol")) for x in lines] == [("eval", "FOOUSDT"), ("stopped", None), ("summary", None)]
+    assert lines[1]["evaluated"] == 1 and lines[0]["verdict"] == "앞섬"
+
+
+# ───────────────────────── boundaries ─────────────────────────
+def test_a_first_fetch_that_stops_before_its_end_is_not_continued_into_the_future():
+    """Run 3 min after the announcement: data only to now − 2 s. Reading on from the first fetch's END would claim the
+    unseen minutes as covered (an empty future window) and close a trade that has not happened."""
+    now = PUB + 180_000
+    m = flat_market().tape(PUB, now - 2000, lambda k: 100.0, step=100)
+    net = FakeNet(m.rows)
+    x = E.evaluate_symbol(E.Source(net=net, now_ms=lambda: now), "FOOUSDT", 1, PUB, PUB + 1000)
+    assert (x["entry_status"], x["cross_status"], x["trade_status"]) == ("filled", "unknown", "incomplete")
+    assert x["data"]["data_end_ms"] == now - 2000 and x["state"] == "불완전"
+    assert all(c["startTime"] <= now for c in net.calls if "startTime" in c)
+
+
+def test_entry_b_stops_at_the_trade_that_brings_the_notional_to_exactly_600():
+    T, P, Q, M = [AT + 1, AT + 2, AT + 3], [100.0, 100.0, 50.0], [2.0, 4.0, 1.0], [False, False, False]
+    f = bare(T, P, M, Q=Q).entry_b(AT)                       # cumulative 200, 600 (exactly), 650
+    assert (f["filled"], f["n_used"], f["fill_id"], f["entry_ms"], f["price"]) == (True, 2, 1, AT + 2, 100.0)
+
+
+def test_a_crossing_at_exactly_60_minutes_counts_and_one_ms_later_does_not():
+    m = flat_market().add(PUB + HOUR, 101.0)
+    c = E.Replay(m.rows, PUB, 1, PUB + HOUR, PUB + HOUR).cross()
+    assert (c["status"], c["t_cross"]) == ("ok", PUB + HOUR)
+    m = flat_market().add(PUB + HOUR + 1, 101.0)
+    assert E.Replay(m.rows, PUB, 1, PUB + HOUR + 1, PUB + HOUR + 1).cross()["status"] == "no_reaction"
+
+
+def test_a_crossing_at_the_arrival_ms_is_not_a_lead():
+    m = listing_market()
+    res = E.evaluate_ticks(m.rows, PUB, 1, PUB + 2250, PUB + E.RESEARCH_HI_MS, m.rows[-1][0])
+    assert res["cross"]["t_cross"] == PUB + 2250 and res["verdict"] == "뒤짐"
+    res = E.evaluate_ticks(m.rows, PUB, 1, PUB + 2249, PUB + E.RESEARCH_HI_MS, m.rows[-1][0])
+    assert res["verdict"] == "앞섬"
+
+
+def test_duplicate_or_backward_trade_ids_are_refused():
+    rows = flat_market().add(PUB + 5, 100.0).rows
+    dup = rows[:-1] + [rows[-1][:4] + (rows[-2][4],)]
+    back = rows[:-1] + [rows[-1][:4] + (rows[-2][4] - 1,)]
+    for bad in (dup, back):
+        with pytest.raises(ValueError, match="unordered_or_duplicate_ticks"):
+            E.Replay(bad, PUB, 1, PUB + HOUR, PUB + HOUR)
+
+
+def test_data_end_never_reaches_past_the_kept_ticks():
+    m = flat_market().add(PUB + 5, 100.0)
+    r = E.Replay(m.rows, PUB, 1, PUB + 10_000, PUB + HOUR)
+    assert r.data_end == PUB + 10_000 and r.cross()["status"] == "unknown"
+    res = E.evaluate_ticks(m.rows, PUB, 1, PUB + 1300, PUB + 10_000, PUB + HOUR)
+    assert (res["cross"]["status"], res["state"], res["verdict"]) == ("unknown", "불완전", "판정 불가")
+
+
+def test_a_receipt_well_before_publication_is_a_clock_error_not_a_lead():
+    class Src(MemSource):
+        def perps(self):
+            return {"FOOUSDT": FOO_INFO}
+    row = dict(title=LIST_TITLE, publish_ms=PUB, recv_ms=PUB - 30_000.0, catalogId=48)
+    [x] = E.evaluate_row(row, Src(listing_market().rows, PUB + E.RESEARCH_HI_MS), 20)
+    assert x["recv_lag_ms"] == -30_000.0 and x["cross_status"] == "ok" and x["p0"] is not None     # the market's side
+    assert "recv_before_publish" in x["flags"] and (x["state"], x["verdict"]) == ("불완전", "판정 불가")
+    assert all(x[k] is None for k in E.ARRIVAL_FIELDS)            # no lead / entry / P&L from a wrong receipt time
+    line = E.text_line(x)
+    assert "recv_before_publish" in line and "앞섬 —" in line and "시계 오류" in line and "앞섬 +" not in line
+    [y] = E.evaluate_row(dict(row, recv_ms=PUB - 400.0), Src(listing_market().rows, PUB + E.RESEARCH_HI_MS), 20)
+    assert "recv_before_publish" not in y["flags"] and y["verdict"] == "앞섬"           # within the clock tolerance
+
+
+# ───────────────────────── bodies and the classifier's reasons ─────────────────────────
+def test_a_cms_body_that_is_not_a_node_tree_is_unreadable(tmp_path):
+    """The D sleeve reads a CMS body as flatten_body(json.loads(body)); text that is not such a tree is not searched."""
+    title = D_TITLE
+    arts = [dict(code="a", title=title, releaseDate=PUB)]
+    deep = '{"child": ' + "[" * 20000 + "]" * 20000 + "}"
+    for bad in ("FOOUSDT will be delisted", "[1, 2]", '{"child": [', "null", deep, ["FOOUSDT"]):
+        net = CmsNet(arts, {"a": dict(title=title, publishDate=PUB, body=bad)})
+        body, how = E.Source(net=net).body(title, PUB, 161)
+        assert body is None and "노드 트리" in how
+        (tmp_path / "cms.json").write_text(json.dumps([dict(title=title, publishDate=PUB, body=bad)]), encoding="utf-8")
+        body, how = E.Source(offline_dir=str(tmp_path)).body(title, PUB, 161)
+        assert body is None and "노드 트리" in how
+    tree = {"node": "root", "child": [{"tag": "p", "text": "Binance Futures will close FOOUSDT"}]}
+    for good in (json.dumps(tree), tree):
+        net = CmsNet(arts, {"a": dict(title=title, publishDate=PUB, body=good)})
+        assert E.Source(net=net).body(title, PUB, 161) == (good, "CMS a")
+
+
+def test_a_skipped_announcement_says_the_classifiers_reason():
+    class Src(MemSource):
+        def __init__(self, body):
+            super().__init__([], 0)
+            self.b = body
+
+        def body(self, title, publish_ms, catalog_id):
+            return self.b, "CMS x"
+    t = "Binance Will Extend the Monitoring Tag to Include More Tokens on 2026-11-17"
+    tree = json.dumps({"node": "root", "child": [{"tag": "p", "text": "The tokens to be added to the Monitoring Tag list are: Foo (FOO)"}]})
+    [x] = E.evaluate_row(dict(title=t, publish_ms=PUB, recv_ms=PUB + 900.0, catalogId=49), Src(tree), 20)
+    assert x["k"] == "skip" and x["why"].startswith("모니터링 태그: 판정 보류(사람 확인)")
+    t2 = "Binance Will Delist ETH/BTC Margin Pairs"
+    [y] = E.evaluate_row(dict(title=t2, publish_ms=PUB, recv_ms=PUB + 900.0, catalogId=161), Src(tree), 20)
+    assert y["k"] == "skip" and "사람 판단" in y["why"] and "사람 판단" in E.text_line(y)
+
+
+def test_a_futures_delist_contract_written_without_usdt_is_marked_not_guessed():
+    fix = json.loads((pathlib.Path(__file__).parent / "fixtures" / "ann_cases.json").read_text(encoding="utf-8"))
+    c = next(c for c in fix["cases"] if "MEMEFI" in c["title"])            # the real notice (p00d hand-added MEMEFI)
+    [ann] = E.AN.classify(c["title"], c["body"], 161)
+    assert ann.tokens == ("DEFI",) and E.missing_contracts(ann, c["title"], c["body"]) == ["MEMEFI"]
+    other = E.AN.Ann("futures_delist", -1, ("FOO",))
+    assert E.missing_contracts(other, D_TITLE, "the COIN-M FOOUSD perpetual contract and FOOUSDC perpetual contract") == []
+    assert E.missing_contracts(E.AN.Ann("spot_listing", 1, ("DEFI",)), c["title"], c["body"]) == []
+
+    class Src(MemSource):
+        def body(self, title, publish_ms, catalog_id):
+            return c["body"], "CMS x"
+
+        def perps(self):
+            return {"DEFIUSDT": dict(FOO_INFO, symbol="DEFIUSDT")}
+    [x] = E.evaluate_row(dict(title=c["title"], publish_ms=c["publishDate"], recv_ms=c["publishDate"] + 900.0,
+                              catalogId=161), Src([], 0), 20)
+    assert x["symbol"] == "DEFIUSDT" and x["maybe_missing"] == ["MEMEFI"] and "토큰 누락 가능: MEMEFI" in E.text_line(x)

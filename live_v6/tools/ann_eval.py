@@ -15,6 +15,9 @@ ported to plain Python (no numpy on the bot box):
            of data = 무반응; t_cross < t_pub = 선반영.
   arrival  our receipt on the exchange clock (recv_ms + the logger's clock offset when it had one, else recv_ms) plus
            --arrival-extra-ms (the assumed order path), floored to the ms. A trade at the arrival ms is already gone.
+           A receipt more than 500 ms before publishDate is a clock error: flag recv_before_publish, state 불완전,
+           no 앞섬/뒤짐 verdict (판정 불가) and none of the numbers measured from the arrival (lead, entry, exit, P&L,
+           50 ms notional); p0, h and the market's crossing do not depend on it and stay.
   entry B  "vwap2s" (window_lib.entry_B): same-direction taker trades in (arrival, arrival+2 s], in time order, until
            their notional first reaches 600 USDT (that trade counted whole) → their Σp·q/Σq. Under 600 USDT = no fill.
   exit E2  study.Replay.exit 'E2', 15 min: stop entry∓3×ATR at once; after every whole second since the entry it
@@ -34,7 +37,14 @@ stops everything at once (the bot may use the same IP). What is fetched: the gri
 first; the research horizon t_pub+81 min 2 s (window_lib HORIZON_MS) only when that does not settle the crossing or the
 closing trade (archive and offline days are read to the horizon at once — the whole day is there anyway). Nothing past
 the horizon is ever used (a trade whose 15 min end after it is 불완전, as in the research), and a range reaching the
-present counts as covered only up to now − 2 s (an hour that has not happened yet is not "no reaction").
+present counts as covered only up to now − 2 s (an hour that has not happened yet is not "no reaction"). The seed (last
+trade before the grid) comes by fromId; when that request fails (aggTrades serves only the last 48 h, and a quiet
+symbol's previous trade can be older) it is read from that UTC day's data.binance.vision file, as the research did; if
+that fails too, a result whose pre-publication grid is then incomplete carries the flag seed_unavailable.
+Bodies: a CMS body must be a node tree (JSON object), as the D sleeve reads it; the classifier's reason is reported for
+every announcement it does not trade (explain()), and a futures delist that names a contract without "USDT" right
+before "perpetual contract(s)" carries maybe_missing (information: the rule, like the D sleeve, does not read it).
+Every result is printed as soon as it is known, so a rate limit on a later symbol keeps the earlier ones.
 
   python -m live_v6.tools.ann_eval --log ann_ws_shadow.jsonl [--since MS] [--arrival-extra-ms N] [--json]
                                    [--offline-ticks DIR]
@@ -53,6 +63,7 @@ import io
 import json
 import math
 import os
+import re
 import sys
 import tempfile
 import time
@@ -93,6 +104,11 @@ PAUSE_S = 1.0                   # between two requests: <= 60 aggTrades calls (w
 MAX_PAGES = 3000                # 3 M trades per symbol and stage, then 불완전
 CMS_PAGES = 60                  # list pages per catalog (50 each); paging also stops once past publish_ms − 1 day
 DEFAULT_EXTRA_MS = 20           # assumed receipt → order at the matching engine (Tokyo box, Tokyo fapi)
+RECV_EARLY_MS = 500             # a receipt this much before publishDate is a clock error (the logger's offset may be
+                                # off by up to half its 1 s RTT limit): 'recv_before_publish', state 불완전, no lead verdict
+ARRIVAL_FIELDS = ("lead_ms", "entry_status", "entry_ms", "entry_price", "avail2s_usdt", "exit_ms", "exit_price",
+                  "exit_reason", "hold_ms", "trade_status", "gross_pct", "net10_pct", "net15_pct", "avail50_usdt")
+UNSUFFIXED = re.compile(r"\b([A-Z][A-Z0-9]{1,19}|[0-9]+[A-Z][A-Z0-9]*)\s+(?i:perpetual\s+contracts?)\b")
 COLS = ("agg_trade_id", "price", "quantity", "first_trade_id", "last_trade_id", "transact_time", "is_buyer_maker")
 
 
@@ -166,7 +182,8 @@ class Replay:
     ValueError with the research's reason when the data cannot give a baseline (no_trades, incomplete_pre10m, ...)."""
 
     def __init__(self, rows, pub: int, s: int, hi: int, data_end: int):
-        self.pub, self.s, self.hi, self.data_end = int(pub), int(s), int(hi), int(data_end)
+        self.pub, self.s, self.hi = int(pub), int(s), int(hi)
+        self.data_end = min(int(data_end), self.hi)             # window_lib: min(hi, data_end) — nothing past hi is kept
         sl = self.sl = grid_start(self.pub)
         ml = sl + 1000
         lo = self.pub - KEEP_MS
@@ -591,6 +608,7 @@ class Source:
         self.now_ms = now_ms if now_ms is not None else (lambda: time.time() * 1000)
         self._perps = None
         self.notes = []
+        self.seed_missing = set()      # (symbol, grid start) whose seed neither REST nor the daily file could give
 
     # ── trades ──
     def whole_days(self, start: int) -> bool:
@@ -664,8 +682,21 @@ class Source:
                 prev = [x for x in self.net.agg(symbol, fromId=max(rows[0][4] - 5, 0), limit=5) if x[0] < start]
                 seed = prev[-1] if prev else None
             except FetchError as e:
-                self.notes.append(f"{symbol}: 격자 시작 전 체결(씨앗)을 못 받음 — {e}")
+                seed = self._seed_from_archive(symbol, start, e)
         return rows, seed, data_end
+
+    def _seed_from_archive(self, symbol, start, err):
+        """The seed REST could not give — aggTrades serves only the last 48 h (developers.binance.com), and a quiet
+        symbol's previous trade can be older; any failure of that request lands here. The research took it from the
+        daily file of the UTC day of (start − 1 ms): read that file from data.binance.vision. If that fails too (not
+        published yet, missing), the symbol is marked (seed_missing) and its result says so when the pre-publication
+        grid is incomplete."""
+        self.notes.append(f"{symbol}: 격자 시작 전 체결(씨앗)을 REST 로 못 받음 — {err} — data.binance.vision 일 파일로 재시도")
+        n = len(self.notes)
+        _, seed, _ = self._archive(symbol, start, start - 1)
+        if len(self.notes) > n:                         # the day's file could not be read (its note says why)
+            self.seed_missing.add((symbol, start))
+        return seed                                     # read but no trade that day before start: none, as in the research
 
     def _archive(self, symbol, start, end):
         """Daily files from the day of (start − 1 ms) — the research's rule, so a grid starting at midnight still gets
@@ -709,12 +740,28 @@ class Source:
         return self._perps
 
     # ── CMS body ──
+    @staticmethod
+    def _tree(b) -> bool:
+        """A CMS article body is a node tree (a JSON object). Anything else cannot be read the D sleeve's way
+        (bundle_paper: flatten_body(json.loads(body))) and is not taken as plain text either."""
+        if isinstance(b, dict):
+            return True
+        if not isinstance(b, str) or not b.lstrip().startswith("{"):
+            return False
+        try:
+            return isinstance(json.loads(b), dict)
+        except (ValueError, RecursionError):
+            return False
+
     def body(self, title: str, publish_ms: int, catalog_id) -> tuple[str | None, str]:
-        """(body, how): the article with this title and exactly this publishDate, else (None, why)."""
+        """(body, how): the node-tree body of the article with this title and exactly this publishDate, else
+        (None, why)."""
         if self.dir is not None:
             path = os.path.join(self.dir, "cms.json")
             for d in (json.load(open(path, encoding="utf-8")) if os.path.exists(path) else []):
                 if str(d.get("title") or "")[:500] == title and _int(d.get("publishDate"), -1) == publish_ms:
+                    if not self._tree(d.get("body")):
+                        return None, "본문 읽기 불가(오프라인 cms.json 본문이 노드 트리가 아님)"
                     return d.get("body"), "offline"
             return None, "본문 없음(오프라인 cms.json 에 없음)"
         cats = [catalog_id] if isinstance(catalog_id, int) else list(AN.D_CATALOGS)
@@ -730,6 +777,8 @@ class Source:
                     d = self.net.cms_detail(str(a["code"]))
                     got = _int(d.get("publishDate"), -1)
                     if got == publish_ms and str(d.get("title") or "")[:500] == title and d.get("body"):
+                        if not self._tree(d["body"]):
+                            return None, f"본문 읽기 불가(CMS {a['code']} 본문이 노드 트리가 아님)"
                         return d["body"], f"CMS {a['code']}"
                     seen.append(f"{a['code']} publishDate {got}")
                 dates = [x for x in (_int(a.get("releaseDate"), 0) for a in arts) if x > 0]
@@ -766,19 +815,6 @@ def read_log(path: str, since_ms=None) -> list[dict]:
     return sorted(out.values(), key=lambda x: (int(x["publish_ms"]), float(x["recv_ms"])))
 
 
-def _catalog(v):
-    """catalogId as logged: an int (or a digit string) → int; anything else → None."""
-    if isinstance(v, bool):
-        return None
-    if isinstance(v, int):
-        return v
-    if isinstance(v, float) and math.isfinite(v) and v.is_integer():
-        return int(v)
-    if isinstance(v, str) and v.strip().isascii() and v.strip().isdigit():
-        return int(v)
-    return None
-
-
 def _finite(v):
     """A logged number as a finite float, else None (bools, strings, NaN, ±inf, ints too big for a float)."""
     if isinstance(v, bool) or not isinstance(v, (int, float)):
@@ -790,21 +826,34 @@ def _finite(v):
     return v if math.isfinite(v) else None
 
 
-def evaluate_row(row: dict, src: Source, extra_ms: int) -> list[dict]:
-    """Results for one logged announcement: one dict per (Ann, symbol), or one 'skip' dict saying why there is none."""
+def missing_contracts(ann, title: str, body) -> list[str]:
+    """futures_delist only, information: tokens written right before "perpetual contract(s)" without a quote suffix
+    that the rule did not read (p00d hand-added MEMEFI from "DEFIUSDT and MEMEFI perpetual contracts"; the rule and
+    the D sleeve read only XXXUSDT). In the 40 real futures-delist bodies this marks MEMEFI and nothing else."""
+    if ann.kind != AN.FUTURES_DELIST:
+        return []
+    found = [m.group(1) for text in (title, AN.body_text(body) or "") for m in UNSUFFIXED.finditer(text)]
+    return sorted({w for w in found if not re.search(r"(?:USDT|USDC|USD|BUSD)$", w) and w not in ann.tokens})
+
+
+def iter_row(row: dict, src: Source, extra_ms: int):
+    """Results for one logged announcement, each as soon as it is known (a rate limit on a later symbol keeps the
+    earlier ones): one dict per (Ann, symbol), or one 'skip' dict saying why there is none."""
     title = str(row.get("title") or "")
     pub = int(row["publish_ms"])
-    cat = _catalog(row.get("catalogId"))
+    cat = AN.catalog(row.get("catalogId"))                  # as the classifier reads it: an unreadable id selects nothing
     off = _finite(row.get("offset_ms"))
     recv = float(row["recv_ms"]) + (off if off is not None else 0.0)
     if not math.isfinite(recv):
         off, recv = None, float(row["recv_ms"])
-    base = dict(k="eval", title=title, catalogId=cat, publish_ms=pub, recv_ms=float(row["recv_ms"]),
+    base = dict(k="eval", title=title, catalogId=None if cat == AN.BAD_CATALOG else cat, publish_ms=pub,
+                recv_ms=float(row["recv_ms"]),
                 clock_offset_ms=off, recv_lag_ms=round(recv - pub, 1),
                 arrival_extra_ms=extra_ms)
     kinds = AN.title_kinds(title, cat)                       # catalog None (unknown): the title rules alone decide
     if not kinds:
-        return [dict(base, k="skip", why="매매 대상 아님(제목 규칙)")]
+        yield dict(base, k="skip", why=AN.explain(title, None, cat)[1])
+        return
     body, how = (None, "본문 불필요")
     if AN.needs_body(title, cat):
         try:
@@ -812,26 +861,39 @@ def evaluate_row(row: dict, src: Source, extra_ms: int) -> list[dict]:
         except FetchError as e:
             body, how = None, f"본문 없음(CMS 요청 실패: {e})"
         if body is None:
-            return [dict(base, k="skip", why=how, kinds=list(kinds))]
-    anns = AN.classify(title, body, cat)
+            yield dict(base, k="skip", why=how, kinds=list(kinds))
+            return
+    anns, why = AN.explain(title, body, cat)
     if not anns:
-        return [dict(base, k="skip", why="매매 대상 아님(토큰 없음·제외 공지·애매)", kinds=list(kinds), body=how)]
-    out = []
+        yield dict(base, k="skip", why=why, kinds=list(kinds), body=how)
+        return
     arrival = int(math.floor(recv + extra_ms))
+    early = recv < pub - RECV_EARLY_MS
     try:
         perps = src.perps()
     except FetchError as e:
-        return [dict(base, k="skip", why=f"exchangeInfo 요청 실패: {e}", kinds=list(kinds), body=how)]
+        yield dict(base, k="skip", why=f"exchangeInfo 요청 실패: {e}", kinds=list(kinds), body=how)
+        return
     for ann in anns:
+        miss = missing_contracts(ann, title, body)
         syms = AN.symbols(ann, perps, pub, require_trading=False)
         if not syms:
-            out.append(dict(base, k="skip", why="선물 심볼 없음", kind=ann.kind, tokens=list(ann.tokens), body=how))
+            yield dict(base, k="skip", why="선물 심볼 없음", kind=ann.kind, tokens=list(ann.tokens), body=how,
+                       maybe_missing=miss)
             continue
         for sym in syms:
-            out.append(dict(base, **evaluate_symbol(src, sym, ann.direction, pub, arrival), kind=ann.kind,
-                            direction=ann.direction, symbol=sym, tokens=list(ann.tokens), reasons=list(ann.reasons),
-                            body=how, arrival_ms=arrival, arrival_lag_ms=arrival - pub))
-    return out
+            res = evaluate_symbol(src, sym, ann.direction, pub, arrival)
+            if early:              # our receipt time is wrong: nothing measured from it (lead, entry, exit, P&L)
+                res.update({k: None for k in ARRIVAL_FIELDS}, flags=res["flags"] + ["recv_before_publish"],
+                           state="불완전", verdict="판정 불가" if res["verdict"] in ("앞섬", "뒤짐") else res["verdict"])
+            yield dict(base, **res, kind=ann.kind, direction=ann.direction, symbol=sym, tokens=list(ann.tokens),
+                       reasons=list(ann.reasons), body=how, arrival_ms=arrival, arrival_lag_ms=arrival - pub,
+                       maybe_missing=miss)
+
+
+def evaluate_row(row: dict, src: Source, extra_ms: int) -> list[dict]:
+    """iter_row as a list."""
+    return list(iter_row(row, src, extra_ms))
 
 
 def evaluate_symbol(src: Source, sym: str, s: int, pub: int, arrival: int) -> dict:
@@ -852,7 +914,7 @@ def evaluate_symbol(src: Source, sym: str, s: int, pub: int, arrival: int) -> di
     res = evaluate_ticks(rows, pub, s, arrival, end, data_end)
     cross, trade = res["cross"] or {}, res["trade"] or {}
     unsettled = cross.get("status") == "unknown" or trade.get("status") == "censored" or res["error"] == "no_trades"
-    if unsettled and data_end >= end and end < full:
+    if unsettled and data_end >= end and end < full:     # only a first fetch that reached its end is continued
         try:
             more, data_end2, _ = src.trades(sym, pub, end + 1, full, seed=False)
         except FetchError as e:
@@ -861,6 +923,8 @@ def evaluate_symbol(src: Source, sym: str, s: int, pub: int, arrival: int) -> di
         else:
             rows, end, data_end = rows + [x for x in more if x[0] > end], full, data_end2
             res = evaluate_ticks(rows, pub, s, arrival, end, data_end)
+    if (sym, start) in getattr(src, "seed_missing", ()) and res["error"] in ("incomplete_pre20m", "incomplete_pre10m"):
+        res["flags"].append("seed_unavailable")          # the research had that day's file; here it could not be read
     return _result(res, arrival, dict(source=how, n_rows=len(rows), data_end_ms=data_end, end_ms=end))
 
 
@@ -901,22 +965,28 @@ def text_line(x: dict) -> str:
     else:
         react, lead = f"첫 반응 모름({x['symbol']}, 자료 부족)", "앞섬 —"
     ts = x["trade_status"]
-    if ts == "filled":
+    if "recv_before_publish" in (x.get("flags") or []):
+        pnl = "가상 진입 —(수신 시각이 게시보다 앞섬: 시계 오류)"
+    elif ts == "filled":
         pnl = f"가상 진입 손익 {_pct(x['net10_pct'], 1)}(10bp)"
     elif ts == "unfilled":
         pnl = "가상 진입 미체결(2초 600 USDT 미달)"
     else:
         pnl = "가상 진입 손익 —(자료 부족)"
     line = f"{head} · 수신 게시{_ms(x['recv_lag_ms'])} · {react} · {lead} · {pnl} · 판정: {x['verdict']}"
+    if x.get("maybe_missing"):
+        line += f" · 토큰 누락 가능: {', '.join(x['maybe_missing'])}"
+    marks = f" · 표시 {', '.join(x['flags'])}" if x.get("flags") else ""
     if x.get("p0") is None:
-        return line + f"\n  자료 {x['state']}: {x.get('error')}"
+        return line + f"\n  자료 {x['state']}: {x.get('error')}{marks}"
     hold = "—" if x["hold_ms"] is None else f"{x['hold_ms'] / 60000:.1f}분"
     detail = (f"  p0 {x['p0']:.8g} · h {100 * x['h']:.2f}% · 도착 게시{_ms(x['arrival_lag_ms'])}(수신+{x['arrival_extra_ms']}ms 가정"
               f"{'' if x['clock_offset_ms'] is not None else ', 시계 보정 없음'}) · 진입 "
               f"{'—' if x['entry_price'] is None else format(x['entry_price'], '.8g')} → 청산 "
               f"{'—' if x['exit_price'] is None else format(x['exit_price'], '.8g')} {x['exit_reason'] or ''} 보유 {hold}"
               f" · 순손익 {_pct(x['net10_pct'])}/{_pct(x['net15_pct'])}(10/15bp) · 50ms 안 p0±0.5% 이내 대금 "
-              f"{'—' if x['avail50_usdt'] is None else format(x['avail50_usdt'], ',.0f')} USDT · 자료 {x['state']}({x['data']['source']})")
+              f"{'—' if x['avail50_usdt'] is None else format(x['avail50_usdt'], ',.0f')} USDT · 자료 {x['state']}({x['data']['source']})"
+              f"{marks}")
     return line + "\n" + detail
 
 
@@ -941,24 +1011,28 @@ def main(argv=None, *, source: Source | None = None, out=None) -> int:
         print(f"공지 {len(rows)}건 · 도착 = 수신(거래소 시계) + {a.arrival_extra_ms}ms 가정 · 진입 2초 가중(600 USDT)·청산 E2 15분 "
               f"(창 지도 정의)", file=out)
     code, n_eval, n_skip = 0, 0, 0
+
+    def emit(x):
+        nonlocal n_eval, n_skip
+        n_eval += x["k"] == "eval"
+        n_skip += x["k"] == "skip"
+        if a.json:
+            print(json.dumps(x, ensure_ascii=False), file=out)
+        elif x["k"] == "eval" or x.get("kinds") or x.get("kind") or x.get("failed"):
+            print(text_line(x), file=out)
+
     try:
         for row in rows:
             try:
-                results = evaluate_row(row, src, a.arrival_extra_ms)
+                for x in iter_row(row, src, a.arrival_extra_ms):     # each result printed as soon as it is known
+                    emit(x)
             except RateLimited:
                 raise
             except Exception as e:  # pylint: disable=broad-exception-caught  # an odd answer: report it, go on
                 code = 1
-                results = [dict(k="skip", title=str(row.get("title") or ""), publish_ms=row["publish_ms"],
-                                recv_ms=row["recv_ms"], recv_lag_ms=round(row["recv_ms"] - row["publish_ms"], 1),
-                                why=f"평가 중 오류({type(e).__name__}: {e})", failed=True)]
-            for x in results:
-                n_eval += x["k"] == "eval"
-                n_skip += x["k"] == "skip"
-                if a.json:
-                    print(json.dumps(x, ensure_ascii=False), file=out)
-                elif x["k"] == "eval" or x.get("kinds") or x.get("kind") or x.get("failed"):
-                    print(text_line(x), file=out)
+                emit(dict(k="skip", title=str(row.get("title") or ""), publish_ms=row["publish_ms"],
+                          recv_ms=row["recv_ms"], recv_lag_ms=round(row["recv_ms"] - row["publish_ms"], 1),
+                          why=f"평가 중 오류({type(e).__name__}: {e})", failed=True))
     except RateLimited as e:
         code = 2
         msg = f"요청 한도 응답으로 즉시 중단: {e} — 여기까지 평가 {n_eval}건"
