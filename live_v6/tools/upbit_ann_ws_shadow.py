@@ -4,12 +4,38 @@ Run as a module with --out PATH; UPBIT_ACCESS_KEY / UPBIT_SECRET_KEY required.
 Only network destinations: private announcement WebSocket and the inherited
 public Binance futures clock. All categories by default; --categories trade,wallet
 filters explicitly. Records retain CREATED and UPDATED separately, without dedup.
+
+One {"k":"upbit_ann"} row per push. It carries THREE lags, and they are not three
+readings of one thing (docs.upbit.com/kr/reference/websocket-announcement, read
+2026-11-17):
+  first_listed_at  "최초 게시 시각 (KST)", ISO 8601; whole seconds in the doc example.
+                   In an UPDATED push it is still the FIRST publication: its lag is
+                   then the age of the notice (days), not a delivery time.
+  listed_at        "최종 게시 시각 (KST)", "공지사항이 갱신되는 경우 함께 갱신됩니다", ISO 8601;
+                   whole seconds in the doc example. If the real value is cut to
+                   the second as well, its lag reads up to 999 ms too long.
+  timestamp        "타임스탬프 (ms)" - the doc does not say of what, and in its example
+                   it is another day than the two ISO times. If it is the moment
+                   the push was made, its lag leaves out publication -> push.
+Which of them is "the" lag is not known before real pushes are in: look at
+timestamp_ms - listed_at_ms first (spread evenly over 0..999 ms means listed_at is
+cut to the second), and never read lag_ms_timestamp alone as "the notice came
+after N ms".
+lag_raw_ms_<field> = receive stamp - that time; lag_ms_<field> adds the clock
+offset (null while there is no valid one). The offset is the inherited one, taken
+against the BINANCE futures server: it puts this box on Binance time, and whatever
+Upbit's own clock differs from that stays inside every lag_ms_*.
+tag and tickers are made from the title as it is logged (its first 500 characters;
+title_len is the whole length). offset_rtt_ms, the clock / writer / conn rows, what
+a clock step or slewing does to lag_ms_* and how to read the file: see the module
+text of ann_ws_shadow.
 """
 from __future__ import annotations
 
 import argparse
 import base64
 from datetime import datetime
+import errno
 import hashlib
 import hmac
 import json
@@ -19,7 +45,6 @@ import os
 import re
 import signal
 import stat
-import threading
 import uuid
 
 from . import ann_ws_shadow as base
@@ -28,8 +53,33 @@ WS_URL = "wss://api.upbit.com/websocket/v1/private"
 CATEGORIES = ("notice", "trade", "wallet", "maintenance", "digital_asset", "nft", "service", "event")
 PING_S = 30.0
 RECONNECT_S = 23 * 3600.0
-_JWT = re.compile(r"eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 _MARKETS = re.compile(r"(?<![A-Z0-9])(?:KRW|BTC|USDT|원화)(?:\s*[,/·]\s*(?:KRW|BTC|USDT|원화))*\s*마켓")
+# "유의 종목 지정" in a title that does NOT designate anything: release, cancellation, and the extension of a
+# running designation - which really reads "지정 기간 연장 안내" or "지정 안내 (기간 연장)" (19 of 813 real notices).
+_NOT_A_DESIGNATION = re.compile(r"유의종목지정(?:기간)?(?:해제|연장|취소)|\(기간연장\)")
+_JWT_RUN = re.compile(r"[A-Za-z0-9_.-]+")
+_OWN_ERRORS = ("not a private regular file", "short log write")    # OSErrors raised by the writer code itself
+
+
+def redact_jwts(text: str) -> str:
+    """Every JWT-shaped piece of `text` replaced by [REDACTED]: exactly what the pattern
+    eyJ[A-Za-z0-9_-]*\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+ matches, found in ONE pass. As a regular expression that
+    pattern scans a long run of such characters again from every "eyJ" in it: 48 KiB of "eyJeyJ..." kept the
+    receive thread (and, through the interpreter lock, the other threads) busy for 0.6 s, and four times as long
+    for every doubling - a frame may be 1 MiB.
+    Here a run is split at its dots; a part that holds "eyJ" and is followed by two non-empty parts is a token."""
+    def run(m):
+        parts, out, i = m.group().split("."), [], 0
+        while i < len(parts):
+            at = parts[i].find("eyJ")
+            if at >= 0 and i + 2 < len(parts) and parts[i + 1] and parts[i + 2]:
+                out.append(parts[i][:at] + "[REDACTED]")
+                i += 3
+            else:
+                out.append(parts[i])
+                i += 1
+        return ".".join(out)
+    return _JWT_RUN.sub(run, text)
 
 
 def jwt_token(key: str, secret: str) -> str:
@@ -53,11 +103,11 @@ def subscription(categories=None) -> str:
 
 def classify_upbit_title(title: str) -> str | None:
     # p76 events: both legacy '마켓 디지털 자산 추가' and '신규 거래지원'.
-    # p109 designation only: release and mere caution aren't designations.
+    # p109 designation only: release, an extended period and mere caution aren't designations.
     t = re.sub(r"\s+", "", title)
     if "거래지원종료" in t:
         return "upbit_delist"
-    if "유의종목지정" in t and not re.search(r"유의종목지정(?:해제|연장|취소)", t):
+    if "유의종목지정" in t and not _NOT_A_DESIGNATION.search(t):
         return "upbit_warning"
     if "거래지원취소" in t:
         # A listing that was called off - for one of the coins in the title or for all of them (real case: notice
@@ -122,20 +172,26 @@ def decode(raw):
         return None
 
 
-def parse_push(raw, recv_ms: float, offset_ms: float | None, offset_age_s=None):
+def parse_push(raw, recv_ms: float, offset_ms: float | None, offset_age_s=None, offset_rtt_ms=None):
+    """One row from a pushed frame, or None when it is not an announcement. Whatever the frame holds, the row is
+    small and quick to make: the title is cut to TITLE_MAX characters BEFORE it is classified and searched for
+    tickers (both take quadratic time on some long titles - 2 s for 40 000 characters of "KRW, KRW, ...", with
+    every other thread waiting), every other echoed field is cut too, and title_len tells when the title was."""
     msg = raw if isinstance(raw, dict) else decode(raw)
     if msg is None or msg.get("type") != "announcement":
         return None
-    title = str(msg.get("title") or "")
-    rec = dict(k="upbit_ann", recv_ms=round(recv_ms, 1),
-               offset_ms=offset_ms, offset_age_s=offset_age_s, title=title[:500],
-               tag=classify_upbit_title(title), tickers=extract_tickers(title), keys=sorted(msg))
+    whole = str(msg.get("title") or "")
+    title = whole[:base.TITLE_MAX]
+    rec = dict(k="upbit_ann", recv_ms=round(recv_ms, 1), offset_ms=offset_ms, offset_age_s=offset_age_s,
+               offset_rtt_ms=None if offset_rtt_ms is None else round(offset_rtt_ms, 1),
+               title=title, title_len=len(whole), tag=classify_upbit_title(title), tickers=extract_tickers(title),
+               keys=[k[:base.KEY_MAX] for k in sorted(str(k) for k in msg)[:base.KEYS_MAX]])
     for field in ("event_type", "uuid", "category", "url", "stream_type"):
-        rec[field] = msg.get(field)
+        rec[field] = base.short(msg.get(field))
     for field in ("first_listed_at", "listed_at", "timestamp"):
         value = msg.get(field)
         ms = to_ms(value)
-        rec[field] = value
+        rec[field] = base.short(value)
         rec[field + "_ms"] = ms
         rec["lag_raw_ms_" + field] = None if ms is None else round(recv_ms - ms, 1)
         rec["lag_ms_" + field] = None if ms is None or offset_ms is None else round(recv_ms + offset_ms - ms, 1)
@@ -156,7 +212,6 @@ class UpbitShadow(base.Shadow):
         super().__init__(key, secret, out_path, **kwargs)
         self.categories = categories
         self._token = ""
-        self._producers_done = threading.Event()
         # An isolated disabled logger prevents library DEBUG handshake dumps.
         self._ws_log = logging.Logger("upbit-shadow-transport")
         self._ws_log.disabled = True
@@ -168,7 +223,7 @@ class UpbitShadow(base.Shadow):
             if value:
                 text = text.replace(value, "[REDACTED]")
                 text = text.replace(json.dumps(value)[1:-1], "[REDACTED]")
-        return _JWT.sub("[REDACTED]", text)
+        return redact_jwts(text)
 
     def scrub(self, text):
         return base.scrub(self.redact(text))
@@ -216,16 +271,15 @@ class UpbitShadow(base.Shadow):
             finally:
                 if fd >= 0:
                     os.close(fd)
-        except OSError:
-            # Inherited writer logs OSError; don't expose path/credential text.
-            raise OSError("secure log append failed") from None
-
-    def _writer_worker(self):
-        # Reuse writer_loop; drain again after producers finish to close its
-        # stop/empty race when SIGTERM arrives just before a final enqueue.
-        super().writer_loop()
-        self._producers_done.wait()
-        super().writer_loop()
+        except OSError as exc:
+            # The inherited writer logs this error. Its text must not carry the path (or anything else of the
+            # original text) - but WHICH error it was is what tells a full disk from a permission problem, so the
+            # errno stays: "PermissionError: [Errno 13] secure log append failed (EACCES)".
+            if isinstance(exc.errno, int):
+                name = errno.errorcode.get(exc.errno, "errno %d" % exc.errno)
+                raise OSError(exc.errno, "secure log append failed (%s)" % name) from None
+            own = exc.args[0] if exc.args and exc.args[0] in _OWN_ERRORS else "no errno"
+            raise OSError("secure log append failed (%s)" % own) from None
 
     def run_once(self):
         self._token = jwt_token(self.key, self.secret)  # fresh nonce per attempt
@@ -253,13 +307,14 @@ class UpbitShadow(base.Shadow):
                     except TimeoutError:
                         continue
                     recv_ms = self.clock() * 1000  # stamp before decoding/offset/scrub
-                    off, age = self._offset(recv_ms / 1000, self.mono())  # valid for THIS stamp's clocks?
+                    off, age, rtt = self._correction(recv_ms / 1000, self.mono())  # valid for THIS stamp's clocks?
                     msg = decode(raw)
                     if msg is not None and "error" in msg:
                         error = msg["error"]
-                        self.write(dict(k="upbit_error", recv_ms=recv_ms, error=error))
+                        # redact, THEN cut (a secret cut in half would no longer be recognised)
+                        self.write(dict(k="upbit_error", recv_ms=recv_ms, error=base.short(self.clean(error))))
                         raise StreamError(isinstance(error, dict) and error.get("name") == "INVALID_AUTH")
-                    rec = parse_push(self.clean(msg), recv_ms, off, age) if msg is not None else None
+                    rec = parse_push(self.clean(msg), recv_ms, off, age, rtt) if msg is not None else None
                     if rec is None:
                         other += 1
                         if other <= base.MAX_OTHER_PER_CONN:
@@ -267,6 +322,7 @@ class UpbitShadow(base.Shadow):
                     else:
                         n += 1
                         self.write(rec)
+                        self.clock_wake.set()  # measure the clock again now: was this row's offset still true?
         except StreamError:
             raise
         except Exception as exc:
@@ -277,10 +333,7 @@ class UpbitShadow(base.Shadow):
             raise ConnectionError(self.scrub(repr(exc))) from None
 
     def run(self):
-        writer = threading.Thread(target=self._writer_worker, name="upbit-ann-writer", daemon=True)
-        clock = threading.Thread(target=self.clock_loop, name="upbit-ann-clock", daemon=True)
-        writer.start()
-        clock.start()
+        writer, clock = self._start_workers("upbit-ann")
         backoff, reject_wait = 2.0, 600.0
         try:
             while not self.stop.is_set():
@@ -309,11 +362,7 @@ class UpbitShadow(base.Shadow):
                     self.write(dict(k="conn", event="backoff", seconds=wait))
                     self.stop.wait(wait)
         finally:
-            self.stop.set()
-            clock.join(timeout=6.0)
-            self.write(dict(k="conn", event="stopped", dropped=self.dropped, write_failed=self.write_failed))
-            self._producers_done.set()
-            writer.join(timeout=2.0)
+            self._shutdown(writer, clock)  # inherited: "stopped" row last, and the writer empties the queue again
 
 
 def main(argv=None):

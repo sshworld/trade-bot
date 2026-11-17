@@ -8,7 +8,9 @@ import hmac
 import json
 import os
 import pathlib
+import queue
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -81,6 +83,40 @@ def test_parse_push_without_publish_date_keeps_the_row():
     raw = json.dumps({"type": "DATA", "topic": "t", "data": json.dumps({"title": "x", "publishDate": True})})
     rec = S.parse_push(raw, 5.0, 0.0)
     assert rec["lag_ms"] is None and rec["lag_raw_ms"] is None and rec["title"] == "x"
+
+
+def test_parse_push_says_how_coarse_the_offset_of_its_corrected_lag_is():
+    rec = S.parse_push(DOC_PUSH, 1753257633903.0, 108.0, 12.0, 240.04)
+    assert rec["lag_ms"] == pytest.approx(2608.0) and rec["offset_rtt_ms"] == 240.0     # may be 120 ms off: says so
+    assert S.parse_push(DOC_PUSH, 1753257633903.0, 40.0, 12.0)["offset_rtt_ms"] is None
+    assert S.parse_push(DOC_PUSH, 1753257633903.0, None)["offset_rtt_ms"] is None
+
+
+def test_short_keeps_a_small_value_as_it_is_and_logs_only_the_start_of_a_big_one():
+    for value in (161, 0, -2.5, True, None, "Delisting", "", {"name": "X"}, [1, "a"]):
+        assert S.short(value) == value and type(S.short(value)) is type(value)
+    assert S.short("x" * 501) == "x" * 500 == "x" * S.FIELD_MAX
+    assert S.short({"message": "m" * 1000}) == '{"message": "' + "m" * 487      # the start of its JSON text
+    assert S.short(10 ** 600) == "1" + "0" * 499 and S.short(["가"] * 400, 8) == '["가", "가'
+
+
+def test_a_row_stays_small_whatever_the_frame_holds():
+    big = 1_000_000                                              # the socket accepts frames of up to 1 MiB
+    data = {"catalogId": [7] * big, "catalogName": "c" * big, "publishDate": 1753257631403, "title": "t" * big,
+            "body": "b" * big, **{f"k{i:04d}" + "x" * 500: 1 for i in range(300)}}
+    rec = S.parse_push(json.dumps({"type": "DATA", "topic": "x" * big, "data": json.dumps(data)}),
+                       1753257633903.0, 40.0, 12.0, 4.0)
+    assert len(json.dumps(rec)) < 8000                           # rows of 1 MB would soon empty both 20 MiB files
+    assert rec["lag_raw_ms"] == pytest.approx(2500.0) and rec["lag_ms"] == pytest.approx(2540.0)   # still measured
+    assert rec["topic"] == "x" * 500 and rec["catalogName"] == "c" * 500
+    assert rec["catalogId"] == ("[" + "7, " * 200)[:500]         # not a scalar: the start of its JSON text
+    assert rec["title"] == "t" * S.TITLE_MAX and rec["title_len"] == big and rec["body_len"] == big
+    assert rec["keys"][:3] == ["body", "catalogId", "catalogName"] and len(rec["keys"]) == S.KEYS_MAX == 30
+    assert {len(k) for k in rec["keys"][3:]} == {S.KEY_MAX} == {100}
+    plain = S.parse_push(DOC_PUSH, 1753257633903.0, 40.0)        # an ordinary push is logged exactly as before
+    assert (plain["topic"], plain["catalogId"], plain["catalogName"]) == ("com_announcement_en", 161, "Delisting")
+    assert plain["title"] == "Binance Will Delist AAA, BBB on 2025-07-25" and plain["title_len"] == len(plain["title"])
+    assert plain["keys"] == sorted(json.loads(json.loads(DOC_PUSH)["data"]))
 
 
 # ───────────────────────── stream loop (fake socket, fake clock) ─────────────────────────
@@ -342,11 +378,13 @@ def test_a_wall_clock_step_voids_the_offset_is_logged_once_and_wakes_a_new_measu
     _drain(sh)
     ann, _ = _one_push(sh, script, wall)
     assert ann["lag_raw_ms"] == pytest.approx(60.0, abs=0.2) and ann["lag_ms"] == pytest.approx(100.0, abs=0.2)
-    assert not sh.clock_wake.is_set()
+    assert ann["offset_rtt_ms"] == pytest.approx(4.0)            # ... with an offset that is good to 2 ms
+    sh.clock_wake.clear()                                        # (set by the push itself: tested further down)
 
     wall.shift += jump_s                                         # date -s / makestep: only the wall clock moves
     ann, rows = _one_push(sh, script, wall)
     assert ann["lag_ms"] is None and ann["offset_ms"] is None    # NOT 100 +/- 5000 ms with a "fresh" offset
+    assert ann["offset_age_s"] is None and ann["offset_rtt_ms"] is None
     assert ann["lag_raw_ms"] == pytest.approx(60.0 + jump_s * 1000, abs=0.2)     # the raw lag is still recorded
     steps = [r for r in rows if r["k"] == "clock" and r.get("event") == "step"]
     assert len(steps) == 1 and steps[0]["delta_ms"] == pytest.approx(jump_s * 1000, abs=0.2)
@@ -402,17 +440,61 @@ def test_run_once_checks_the_offset_against_the_clocks_of_the_receive_stamp(tmp_
     monkeypatch.setattr(S, "RECONNECT_S", 2.5)
     sh, script, clock, wall = _stepping(tmp_path)
     sh.measure_clock()
-    seen, real = [], sh._offset
+    seen, real = [], sh._correction
 
     def spy(*a):
         seen.append(a)
         return real(*a)
 
-    sh._offset = spy
+    sh._correction = spy
     ann, _ = _one_push(sh, script, wall)
     ((stamp_wall, stamp_mono),) = seen
     assert stamp_wall * 1000 == pytest.approx(ann["recv_ms"], abs=0.1)
     assert stamp_mono == pytest.approx(clock.now - 2.0)          # the mono clock at the receive, two timeouts ago
+
+
+def test_the_age_of_an_offset_is_its_age_at_the_receive_stamp_not_when_the_push_gets_handled(tmp_path):
+    sh, _, clock, wall = _stepping(tmp_path)
+    sh.measure_clock()
+    clock.now += 10.0
+    stamp = (wall(), clock.now)
+    clock.now += 30.0                                            # the receive thread got to it half a minute later
+    assert sh._offset(*stamp)[1] == pytest.approx(10.0) and sh._offset()[1] == pytest.approx(40.0)
+    assert sh._correction(*stamp) == (pytest.approx(SERVER_AHEAD_MS, abs=0.01), pytest.approx(10.0), pytest.approx(4.0))
+    clock.now += S.CLOCK_MAX_AGE_S                               # too old now - but not at that stamp
+    assert sh._correction() == (None, pytest.approx(S.CLOCK_MAX_AGE_S + 40.0), None)
+    assert sh._offset(*stamp)[0] == pytest.approx(SERVER_AHEAD_MS, abs=0.01)
+
+
+@pytest.mark.parametrize("fastest_is_after_the_step", [False, True])
+def test_an_offset_belongs_to_the_clock_of_the_sample_it_came_from_when_a_step_falls_into_the_measurement(
+        tmp_path, fastest_is_after_the_step):
+    """Five samples, the wall clock stepped between the 2nd and the 3rd. Whichever sample wins, its offset must
+    never be applied to a stamp from the other side of the step - not even right after the measurement."""
+    sh, _, clock, wall = _stepping(tmp_path)
+    before, n = (wall(), clock.now), [0]
+
+    def http_get(url):
+        n[0] += 1
+        rtt = 0.004 if (n[0] >= 3) == fastest_is_after_the_step else 0.008
+        clock.now += rtt
+        answer = {"serverTime": wall.true_ms() - rtt * 500 + SERVER_AHEAD_MS}
+        if n[0] == 2:
+            wall.shift += 5.0                                    # after the 2nd answer, before the 3rd request
+        return answer
+
+    sh._http_get = http_get
+    sh.measure_clock()
+    after = (wall(), clock.now)
+    assert n[0] == S.CLOCK_SAMPLES and sh.offset_rtt_ms == pytest.approx(4.0)
+    if fastest_is_after_the_step:                                # the offset is the stepped clock's ...
+        assert sh._offset(*after)[0] == pytest.approx(SERVER_AHEAD_MS - 5000.0, abs=0.01)
+        assert sh._offset(*before) == (None, None)               # ... and not for a stamp from before the step
+        assert not [r for r in _drain(sh) if r.get("event") == "step"]
+    else:                                                        # the offset is the old clock's: void at once
+        assert sh.offset_ms == pytest.approx(SERVER_AHEAD_MS, abs=0.01)
+        assert sh._offset(*after) == (None, None) and sh.clock_wake.is_set()      # NOT 40 ms on a clock 5 s off
+        assert [r["delta_ms"] for r in _drain(sh) if r.get("event") == "step"] == [pytest.approx(5000.0, abs=0.01)]
 
 
 def _run_clock_thread(sh, clock, until, plan=()):
@@ -526,6 +608,256 @@ def test_a_step_seen_while_receiving_wakes_the_real_sleeping_clock_thread(tmp_pa
     assert [r["delta_ms"] for r in _drain(sh) if r.get("event") == "step"] == [pytest.approx(5000.0, abs=20.0)]
 
 
+# ───────────────────────── a measurement that fails: not 15 minutes without an offset ─────────────────────────
+
+@pytest.mark.parametrize("how", ["error", "slow"])
+def test_a_measurement_that_leaves_no_usable_offset_is_tried_again_after_a_minute_not_after_15(tmp_path, how):
+    sh, _, clock, wall = _stepping(tmp_path)
+    t0, ok, calls = clock.now, sh._http_get, []
+
+    def http_get(url):
+        calls.append(clock.now)
+        if len(calls) == S.CLOCK_SAMPLES + 3 and how == "error":
+            raise RuntimeError("ReadTimeout('timed out')")       # the 3rd of 5 requests: the measurement is given up
+        if S.CLOCK_SAMPLES < len(calls) <= 2 * S.CLOCK_SAMPLES and how == "slow":
+            clock.now += 0.3                                     # every request of that measurement: 304 ms
+        return ok(url)
+
+    sh._http_get = http_get
+
+    def step():
+        wall.shift += 5.0
+
+    starts = _run_clock_thread(sh, clock, until=t0 + 1200.0, plan=[(t0 + 100.0, step)])
+    # start; at once after the step - that one fails; a minute later (not 15: lag_ms is null all that time); then
+    # the normal cadence
+    assert starts == pytest.approx([t0, t0 + 100.0, t0 + 100.0 + S.CLOCK_RETRY_S, t0 + 160.0 + S.CLOCK_S], abs=3.0)
+    assert S.CLOCK_RETRY_S == 60.0 and S.CLOCK_S == 900.0
+    rows = [r for r in _drain(sh) if r["k"] == "clock"]
+    kinds = ["offset" if "offset_ms" in r else r.get("event") or r.get("skipped") or "error" for r in rows]
+    assert kinds == ["offset", "step", how, "offset", "offset"] and ("error" in rows[2]) == (how == "error")
+    assert rows[3]["drift_ms"] is None                           # the step had voided the offset before it
+    assert sh._offset()[0] == pytest.approx(SERVER_AHEAD_MS - 5000.0, abs=0.01)
+
+
+def test_a_first_measurement_that_fails_is_tried_again_after_a_minute(tmp_path):
+    sh, _, clock, _ = _stepping(tmp_path)
+    t0, ok, calls = clock.now, sh._http_get, []
+
+    def http_get(url):
+        calls.append(clock.now)
+        if len(calls) == 1:
+            raise OSError("Temporary failure in name resolution")
+        return ok(url)
+
+    sh._http_get = http_get
+    assert _run_clock_thread(sh, clock, until=t0 + 1000.0) == pytest.approx([t0, t0 + 60.0, t0 + 960.0], abs=1.5)
+
+
+@pytest.mark.parametrize("refused", ["429 Too Many Requests", "418 I'm a teapot"])
+def test_a_ban_is_an_hour_also_when_there_is_no_offset_to_correct_with(tmp_path, refused):
+    sh, _, clock, _ = _stepping(tmp_path)
+    t0, ok, calls = clock.now, sh._http_get, []
+
+    def http_get(url):
+        calls.append(clock.now)
+        if len(calls) == 1:                                      # the very first request: no offset yet
+            raise RuntimeError(f"Client error '{refused}' for url 'https://fapi.binance.com/fapi/v1/time'")
+        return ok(url)
+
+    sh._http_get = http_get
+    starts = _run_clock_thread(sh, clock, until=t0 + 4000.0, plan=[(t0 + 500.0, sh.clock_wake.set)])
+    assert starts == pytest.approx([t0, t0 + 3600.0], abs=1.5)   # not a minute later, and not when a push asks
+
+
+def test_a_failed_measurement_keeps_the_15_minute_cadence_while_the_last_offset_is_still_good(tmp_path):
+    sh, _, clock, _ = _stepping(tmp_path)
+    t0, ok, calls = clock.now, sh._http_get, []
+
+    def http_get(url):
+        calls.append(clock.now)
+        if len(calls) == S.CLOCK_SAMPLES + 1:
+            raise RuntimeError("ReadTimeout('timed out')")
+        return ok(url)
+
+    sh._http_get = http_get
+    assert _run_clock_thread(sh, clock, until=t0 + 2000.0) == pytest.approx([t0, t0 + 900.0, t0 + 1800.0], abs=1.5)
+    assert sh._offset()[0] == pytest.approx(SERVER_AHEAD_MS, abs=0.01)
+
+
+@pytest.mark.parametrize(("rtt", "used"), [(0.24, True), (0.26, False), (0.3, False), (0.9, False)])
+def test_only_a_round_trip_of_a_quarter_second_or_less_gives_an_offset(tmp_path, rtt, used):
+    sh, _, clock = _shadow(tmp_path)
+
+    def http_get(url):
+        clock.now += rtt
+        return {"serverTime": (clock.now - rtt / 2) * 1000 + 55}
+
+    sh._http_get = http_get
+    sh.measure_clock()
+    row = _drain(sh)[-1]
+    assert S.CLOCK_MAX_RTT_S == 0.25 and row["rtt_ms"] == pytest.approx(rtt * 1000)
+    if used:
+        assert sh.offset_ms == pytest.approx(55.0, abs=1e-3) and sh.offset_rtt_ms == pytest.approx(rtt * 1000)
+    else:
+        assert sh.offset_ms is None and row["skipped"] == "slow" and sh._correction() == (None, None, None)
+
+
+def test_a_row_says_how_coarse_the_measurement_behind_its_offset_was(tmp_path, monkeypatch):
+    """An offset is accepted up to a round trip of 0.25 s, and then it can be 125 ms off. The clock line says so
+    (rtt_ms) - and so does every announcement row that was corrected with it, without a join."""
+    monkeypatch.setattr(S, "RECONNECT_S", 2.5)
+    sh, script, clock, wall = _stepping(tmp_path)
+    sh.measure_clock()                                           # a good one first: 4 ms
+    ann, _ = _one_push(sh, script, wall)
+    assert ann["lag_ms"] == pytest.approx(100.0, abs=0.2) and ann["offset_rtt_ms"] == pytest.approx(4.0)
+
+    def http_get(url):                                           # then 240 ms, the server stamping at 95 % of it
+        clock.now += 0.240
+        return {"serverTime": wall.true_ms() - 12 + SERVER_AHEAD_MS}
+
+    sh._http_get = http_get
+    sh.measure_clock()
+    row = _drain(sh)[-1]
+    assert row["rtt_ms"] == pytest.approx(240.0) and row["offset_ms"] == pytest.approx(SERVER_AHEAD_MS + 108.0, abs=0.1)
+    assert row["drift_ms"] == pytest.approx(108.0, abs=0.1)      # the clock did not move: the measurement is coarse
+    ann, _ = _one_push(sh, script, wall)
+    assert ann["lag_ms"] == pytest.approx(208.0, abs=0.2)        # true lag: 100 ms
+    assert ann["offset_rtt_ms"] == pytest.approx(240.0)          # ... and the row itself says: good to 120 ms only
+
+
+# ───────────────────────── what the step test cannot see: slewing, a VM paused from outside ─────────────────────────
+
+def test_a_clock_line_says_how_far_its_offset_is_from_the_one_it_replaces(tmp_path):
+    sh, _, clock, wall = _stepping(tmp_path)
+
+    def measured():
+        sh.measure_clock()
+        return _drain(sh)[-1]
+
+    assert measured()["drift_ms"] is None                        # nothing to compare with
+    clock.now += 900.0
+    assert measured()["drift_ms"] == pytest.approx(0.0, abs=0.01)
+    wall.true_shift += 0.3                                       # the box lost 300 ms against the exchange, no step
+    row = measured()
+    assert row["drift_ms"] == pytest.approx(300.0, abs=0.01) and row["offset_ms"] == pytest.approx(340.0, abs=0.1)
+    wall.shift += 5.0                                            # a step voids the offset: its own line says so
+    assert sh._offset() == (None, None)
+    assert measured()["drift_ms"] is None                        # ... and the next offset has nothing to drift from
+
+
+def test_a_pause_that_stops_both_clocks_is_not_a_step_and_the_measurement_after_the_push_gives_it_away(
+        tmp_path, monkeypatch):
+    """A hypervisor pauses the VM for 0.3 s (or chrony slews 0.3 s away): wall clock and monotonic clock stay
+    together, so nothing is voided and the corrected lag is a number that is 300 ms wrong. The file must hold what
+    it takes to notice: every announcement asks for a measurement, and that one tells how far the offset moved."""
+    monkeypatch.setattr(S, "RECONNECT_S", 2.5)
+    sh, script, clock, wall = _stepping(tmp_path)
+    sh.measure_clock()
+    _drain(sh)
+    clock.now += 30.0
+    wall.true_shift += 0.3                                       # the exchange went on for 0.3 s, this box did not
+    ann, rows = _one_push(sh, script, wall)
+    assert ann["lag_ms"] == pytest.approx(-200.0, abs=0.2) and ann["lag_raw_ms"] == pytest.approx(-240.0, abs=0.2)
+    assert ann["offset_ms"] == pytest.approx(SERVER_AHEAD_MS, abs=0.1)        # true lag: 100 ms. Wrong, and not null
+    assert not [r for r in rows if r.get("event") == "step"]
+    assert sh.clock_wake.is_set()                                # so: the push asks for a measurement ...
+    sh.measure_clock()                                           # (what the woken clock thread does)
+    (after,) = [r for r in _drain(sh) if r["k"] == "clock"]
+    assert after["drift_ms"] == pytest.approx(300.0, abs=0.01)   # ... which says: do not trust the row before me
+    assert ann["lag_raw_ms"] + after["offset_ms"] == pytest.approx(100.0, abs=0.3)    # the rule of the module text
+    for needle in ("drift_ms", "SLEWING", "pauses the VM", "HOW TO USE lag_ms"):      # which has to state all this
+        assert needle in S.__doc__, needle
+
+
+def test_only_an_announcement_asks_for_a_measurement_other_frames_do_not(tmp_path, monkeypatch):
+    monkeypatch.setattr(S, "RECONNECT_S", 2.5)
+    sh, script, _, wall = _stepping(tmp_path)
+    sh.measure_clock()
+    script[:] = ["not json", json.dumps({"type": "COMMAND", "data": "SUCCESS", "subType": "SUBSCRIBE"})]
+    sh.run_once()
+    assert not sh.clock_wake.is_set() and [r["k"] for r in _drain(sh)] == ["clock", "conn", "other", "other", "conn"]
+    _one_push(sh, script, wall)
+    assert sh.clock_wake.is_set()
+
+
+def test_a_measurement_asked_for_by_a_push_comes_at_once_but_never_within_10_s_of_the_last_one(tmp_path):
+    sh, _, clock, _ = _stepping(tmp_path)
+    t0 = clock.now
+    starts = _run_clock_thread(sh, clock, until=t0 + 1300.0,     # what run_once does after an announcement row
+                               plan=[(t0 + 300.0, sh.clock_wake.set), (t0 + 303.0, sh.clock_wake.set)])
+    assert starts == pytest.approx([t0, t0 + 300.0, t0 + 300.0 + S.CLOCK_MIN_GAP_S, t0 + 310.0 + S.CLOCK_S], abs=1.5)
+    rows = _drain(sh)
+    assert [r.get("drift_ms", "-") for r in rows] == [None] + [pytest.approx(0.0, abs=0.01)] * 3      # no step rows
+
+
+def test_a_push_during_a_rate_limit_ban_does_not_cut_the_ban_short(tmp_path):
+    sh, _, clock, _ = _stepping(tmp_path)
+    t0, ok, calls = clock.now, sh._http_get, []
+
+    def http_get(url):
+        calls.append(clock.now)
+        if len(calls) == S.CLOCK_SAMPLES + 1:
+            raise RuntimeError("Client error '418 I'm a teapot' for url 'https://fapi.binance.com/fapi/v1/time'")
+        return ok(url)
+
+    sh._http_get = http_get
+    starts = _run_clock_thread(sh, clock, until=t0 + 5000.0, plan=[(t0 + 1000.0, sh.clock_wake.set)])
+    assert starts == pytest.approx([t0, t0 + 900.0, t0 + 900.0 + 3600.0], abs=1.5)
+
+
+def test_the_measurement_after_an_announcement_follows_it_within_moments_on_real_threads(tmp_path, monkeypatch):
+    """Real clocks, real threads, the real clock_loop and run_once. The box is 300 ms behind the exchange without
+    any step (the exchange is moved here; the box's own two clocks stay together): the announcement row is wrong by
+    300 ms, and the clock line that follows it within moments - not 15 minutes later - shows it."""
+    monkeypatch.setattr(S, "CLOCK_MIN_GAP_S", 0.0)
+    monkeypatch.setattr(S, "CLOCK_POLL_S", 60.0)
+    monkeypatch.setattr(S, "RECONNECT_S", 0.3)
+    behind, done = [0.0], threading.Semaphore(0)
+
+    def server_ms():
+        return (time.time() + behind[0]) * 1000
+
+    class WS(FakeWS):
+        def __init__(self):
+            self.sent = False
+
+        def recv(self, timeout=None):
+            if self.sent:
+                time.sleep(0.02)
+                raise TimeoutError
+            self.sent = True
+            return json.dumps({"type": "DATA", "topic": S.TOPIC, "data": json.dumps(
+                {"publishDate": server_ms() - 100.0, "title": "Binance Will Delist AAA"})})
+
+    sh = S.Shadow("KEY", "SECRET", str(tmp_path / "out.jsonl"), connect=lambda url, **kw: WS(),
+                  http_get=lambda url: {"serverTime": server_ms()})
+    real = sh.measure_clock
+
+    def measure():
+        real()
+        done.release()
+
+    sh.measure_clock = measure
+    t = threading.Thread(target=sh.clock_loop, daemon=True)
+    t.start()
+    try:
+        assert done.acquire(timeout=20)                          # the measurement at start: offset 0
+        behind[0] = 0.3
+        sh.run_once()                                            # one push, published 100 ms before it arrives
+        assert done.acquire(timeout=20)                          # woken by the push
+    finally:
+        sh.stop.set()
+        sh.clock_wake.set()
+        t.join(20)
+    rows = _drain(sh)
+    (ann,) = [r for r in rows if r["k"] == "ann"]
+    after = [r for r in rows[rows.index(ann):] if r["k"] == "clock"][0]
+    assert ann["lag_ms"] == pytest.approx(-200.0, abs=30.0)      # 300 ms wrong, and nothing in the row says so
+    assert after["drift_ms"] == pytest.approx(300.0, abs=30.0) and 0.0 <= after["t"] - ann["t"] < 5.0
+    assert ann["lag_raw_ms"] + after["offset_ms"] == pytest.approx(100.0, abs=30.0)
+
+
 # ───────────────────────── file output ─────────────────────────
 
 def test_append_refuses_a_symlink_and_rotates_at_the_size_cap(tmp_path, monkeypatch):
@@ -621,6 +953,124 @@ def test_the_stopped_row_carries_the_number_of_unwritten_records(tmp_path):
     assert last["event"] == "stopped" and last["write_failed"] == 3 and last["dropped"] == 0
 
 
+def test_only_a_disk_error_makes_the_writer_pause_any_other_failure_goes_straight_on(tmp_path):
+    sh, _, _ = _shadow(tmp_path)
+    errors, pauses = [ValueError("a bad record"), OSError(errno.ENOSPC, "No space left on device")], []
+
+    def failing(line):
+        raise errors.pop(0)
+
+    sh._append = failing
+    sh.stop.wait = pauses.append                                 # (the loop itself waits on the queue, not on this)
+    sh.write(dict(k="x", i=0))
+    sh.write(dict(k="x", i=1))
+    sh.stop.set()
+    sh.writer_loop()
+    assert pauses == [30.0] and errors == [] and sh.write_failed == 2     # one pause: for the full disk only
+
+
+def test_records_that_find_the_queue_full_are_counted_and_the_file_says_so(tmp_path):
+    sh, _, _ = _shadow(tmp_path)
+    sh.q = queue.Queue(maxsize=3)                                # (10 000 in real life: the writer is stuck for long)
+    for i in range(10):
+        sh.write(dict(k="x", i=i))                               # never blocks, never raises: this is the receive loop
+    assert sh.dropped == 7 and sh.q.qsize() == 3
+    sh.stop.set()
+    sh.writer_loop()
+    for i in range(10, 15):
+        sh.write(dict(k="x", i=i))
+    sh.writer_loop()
+    rows = [json.loads(x) for x in _file_lines(sh)]
+    assert [(r.get("event"), r.get("n"), r.get("total"), r.get("i")) for r in rows] == [
+        ("dropped", 7, 7, None), (None, None, None, 0), (None, None, None, 1), (None, None, None, 2),
+        ("dropped", 2, 9, None), (None, None, None, 10), (None, None, None, 11), (None, None, None, 12)]
+    assert all(r["k"] == "writer" and "t" in r for r in rows if r.get("event")) and sh.dropped == 9
+    assert sh.write_failed == 0                                  # a different loss: these never got to the writer
+
+
+def test_rows_enqueued_after_stop_still_reach_the_file_the_stopped_row_last(tmp_path):
+    """SIGTERM while recv() is under way: the writer sees stop and an empty queue and would be gone - before the
+    push that this recv() still returns, and before the "stopped" row. Real writer thread, the real run()."""
+    sh, _, clock = _shadow(tmp_path)
+    sh.clock_loop = lambda: None
+    left, real_loop = threading.Event(), sh.writer_loop
+
+    def writer_loop():
+        real_loop()
+        left.set()
+
+    sh.writer_loop = writer_loop
+
+    class WS(FakeWS):
+        def recv(self, timeout=None):
+            sh.stop.set()                                        # the signal handler, while this recv() waits
+            assert left.wait(10)                                 # the writer: stop is set, queue empty -> loop left
+            return DOC_PUSH                                      # ... and only now the push comes in
+
+    sh._connect = lambda url, **kw: WS([], clock)
+    sh.run()
+    rows = [json.loads(x) for x in _file_lines(sh)]
+    assert [(r["k"], r.get("event")) for r in rows] == [("conn", "open"), ("ann", None), ("conn", "stopped")]
+    assert rows[-1]["dropped"] == 0 and rows[-1]["write_failed"] == 0 and sh.q.empty()
+
+
+def test_run_ends_with_the_stopped_row_even_when_it_ends_with_an_exception(tmp_path):
+    sh, _, _ = _shadow(tmp_path)
+    sh.clock_loop = lambda: None
+
+    def run_once():
+        raise Fatal()                                            # not an Exception: run() does not catch it
+
+    sh.run_once = run_once
+    with pytest.raises(Fatal):
+        sh.run()
+    assert [json.loads(x)["event"] for x in _file_lines(sh)] == ["stopped"] and sh.stop.is_set()
+
+
+def test_sigterm_ends_the_real_process_with_status_0_and_the_stopped_row_in_the_file(tmp_path):
+    """No mock but the socket: the child runs the real run() with its real threads, gets SIGTERM while it waits in
+    recv() - as `systemctl stop` sends it - and must leave a complete file behind."""
+    out = tmp_path / "out.jsonl"
+    script = (
+        "import signal, sys, threading, time\n"
+        "from live_v6.tools import ann_ws_shadow as S\n"
+        "class WS:\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, *a): return False\n"
+        "    def ping(self, data=None):\n"
+        "        ev = threading.Event(); ev.set(); return ev\n"
+        "    def recv(self, timeout=None):\n"
+        "        time.sleep(timeout); raise TimeoutError\n"
+        "sh = S.Shadow('K', 'S', sys.argv[1], connect=lambda url, **kw: WS(),\n"
+        "              http_get=lambda url: {'serverTime': time.time() * 1000})\n"
+        "signal.signal(signal.SIGTERM, lambda *_: sh.stop.set())\n"       # as main() does
+        "sh.run()\n")
+    p = subprocess.Popen([sys.executable, "-c", script, str(out)], stderr=subprocess.PIPE, text=True,
+                         cwd=pathlib.Path(S.__file__).parents[2])
+    try:
+        deadline = time.monotonic() + 20
+        while not (out.exists() and b'"open"' in out.read_bytes()):       # connected: it is inside recv() now
+            if time.monotonic() > deadline or p.poll() is not None:
+                p.kill()
+                pytest.fail("the child never connected: " + p.communicate()[1][-2000:])
+            time.sleep(0.02)
+        time.sleep(0.3)
+        p.send_signal(signal.SIGTERM)
+        try:
+            code = p.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            code = "still running 20 s after SIGTERM"
+        assert code == 0, p.communicate()[1][-2000:]
+    finally:
+        if p.poll() is None:
+            p.kill()
+        p.communicate()
+    rows = [json.loads(x) for x in out.read_bytes().split(b"\n") if x]
+    assert rows[-1]["event"] == "stopped" and rows[-1]["dropped"] == 0 and rows[-1]["write_failed"] == 0
+    assert [r.get("event") for r in rows if r["k"] == "conn"] == ["open", "stopped"]
+
+
 def test_a_record_torn_by_a_full_disk_is_closed_before_the_next_one(tmp_path, monkeypatch):
     sh, _, _ = _shadow(tmp_path)
     sh.write(dict(k="ann", title="first"))
@@ -654,6 +1104,46 @@ def test_the_first_record_after_a_restart_does_not_join_a_torn_last_line(tmp_pat
     assert pathlib.Path(sh.out_path).read_bytes() == b'{"k": "conn"}\n{"k": "ann", "tit\n{"k": "clock"}\n{"k": "x"}\n'
 
 
+def _rows_that_parse(lines):
+    """The reading rule of the module text: line by line, a line that does not parse is skipped."""
+    rows = []
+    for line in lines:
+        try:
+            rows.append(json.loads(line))
+        except ValueError:                                       # (UnicodeDecodeError is one)
+            pass
+    return rows
+
+
+def test_a_line_torn_inside_a_character_is_skipped_by_a_reader_that_follows_the_module_text(tmp_path, monkeypatch):
+    sh, _, _ = _shadow(tmp_path)
+    sh.write(dict(k="ann", title="업비트 신규 거래지원 안내"))
+    sh.write(dict(k="ann", title="다음 공지"))
+    real, calls = os.write, []
+
+    def write(fd, data):
+        calls.append(len(data))
+        if len(calls) == 1:
+            return real(fd, data[:24])                           # ends after the first of the three bytes of "업"
+        if len(calls) == 2:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real(fd, data)
+
+    monkeypatch.setattr(os, "write", write)
+    sh.stop.set()
+    sh.writer_loop()
+    raw = pathlib.Path(sh.out_path).read_bytes()
+    assert raw.split(b"\n")[0] == b'{"k": "ann", "title": "\xec'
+    with pytest.raises(UnicodeDecodeError):                      # the FILE is not valid UTF-8 any more: reading it
+        with open(sh.out_path, encoding="utf-8") as f:           # as text fails before there is a line to skip
+            list(f)
+    expected = [("writer", None, 1), ("ann", "다음 공지", None)]
+    assert [(r["k"], r.get("title"), r.get("n")) for r in _rows_that_parse(raw.split(b"\n"))] == expected
+    with open(sh.out_path, encoding="utf-8", errors="replace") as f:
+        assert [(r["k"], r.get("title"), r.get("n")) for r in _rows_that_parse(f)] == expected
+    assert "as BYTES" in S.__doc__ and 'errors="replace"' in S.__doc__ and "UnicodeDecodeError" in S.__doc__
+
+
 class Fatal(BaseException):
     """What `except Exception` does not catch."""
 
@@ -682,6 +1172,89 @@ def test_a_dying_writer_thread_takes_the_exit_path(tmp_path, monkeypatch):
     t.start()
     t.join(10)
     assert not t.is_alive() and codes == [S.EXIT_WRITER_DEAD] and S.EXIT_WRITER_DEAD not in (0, None)
+
+
+class Unprintable(Exception):
+    """An exception that cannot even be turned into text."""
+
+    def __str__(self):
+        raise Unprintable()
+
+
+def test_an_exception_that_cannot_be_printed_costs_one_record_not_the_writer_thread(tmp_path, monkeypatch, caplog):
+    sh, _, _ = _shadow(tmp_path)
+    codes, real, n = [], sh._append, [0]
+    monkeypatch.setattr(S.os, "_exit", codes.append)
+
+    def append(line):
+        n[0] += 1
+        if n[0] == 1:
+            raise Unprintable()
+        real(line)
+
+    sh._append = append
+    sh.write(dict(k="x", i=0))
+    sh.write(dict(k="x", i=1))
+    sh.stop.set()
+    sh.writer_loop()                                             # used to end here, without the exit: alive and silent
+    rows = [json.loads(x) for x in _file_lines(sh)]
+    assert codes == [] and [(r["k"], r.get("n"), r.get("i")) for r in rows] == [("writer", 1, None), ("x", None, 1)]
+    assert "write failed: Unprintable" in caplog.text
+
+
+def test_a_log_call_that_fails_does_not_end_the_writer_thread_either(tmp_path, monkeypatch):
+    sh, _, _ = _shadow(tmp_path)
+    codes, real, n = [], sh._append, [0]
+    monkeypatch.setattr(S.os, "_exit", codes.append)
+
+    def warning(*a, **k):
+        raise RuntimeError("logging is broken")
+
+    monkeypatch.setattr(S.log, "warning", warning)
+
+    def append(line):
+        n[0] += 1
+        if n[0] == 1:
+            raise ValueError("a bad record")
+        real(line)
+
+    sh._append = append
+    sh.write(dict(k="x", i=0))
+    sh.write(dict(k="x", i=1))
+    sh.stop.set()
+    sh.writer_loop()
+    assert codes == [] and [json.loads(x).get("i") for x in _file_lines(sh)] == [None, 1] and sh.write_failed == 1
+
+
+@pytest.mark.parametrize("broken", ["the log call", "the text of the exception"])
+def test_nothing_stands_between_a_dying_writer_thread_and_the_exit(tmp_path, monkeypatch, broken):
+    """The exit is what makes systemd start a new logger. It must not depend on being able to SAY why."""
+    sh, _, _ = _shadow(tmp_path)
+    codes = []
+    monkeypatch.setattr(S.os, "_exit", codes.append)
+
+    class Dying(BaseException):
+        def __str__(self):
+            if broken == "the text of the exception":
+                raise Dying()
+            return "dying"
+
+    def critical(*a, **k):
+        raise RuntimeError("logging is broken")
+
+    if broken == "the log call":
+        monkeypatch.setattr(S.log, "critical", critical)
+
+    def append(line):
+        raise Dying()
+
+    sh._append = append
+    sh.write(dict(k="x"))
+    try:
+        sh.writer_loop()
+    except BaseException:  # noqa: BLE001  only because os._exit is a mock here: the real one does not return
+        pass
+    assert codes == [S.EXIT_WRITER_DEAD]
 
 
 def test_a_dead_writer_thread_ends_the_real_process_with_a_failure_code(tmp_path):
@@ -790,15 +1363,17 @@ def check_logger_unit(name, *, module, env_file, hidden=()):
     svc = {k: v[0] for k, v in unit["Service"].items()}
     for key, value in ISOLATION.items():
         assert svc.get(key) == value, key
-    # the bot's group must not open the trading keys or the bot state; no "-": a missing path fails the start
-    assert svc["InaccessiblePaths"].split() == ["/etc/tradebot", "/var/lib/live_v6-live", *hidden]
+    # the bot's group must not open the trading keys or the bot state; no "-": a missing path fails the start.
+    # Nor the bot's alert log and the CI logs (the directory the CI import sandbox denies too); with "-": that
+    # directory was not checked on the server, and a logger that does not start measures nothing
+    assert svc["InaccessiblePaths"].split() == ["/etc/tradebot", "/var/lib/live_v6-live", "-/var/log/tradebot", *hidden]
     assert svc["EnvironmentFile"] == env_file                    # exactly one, and not optional ("-" prefix)
     assert svc["StateDirectory"] == stem
     assert svc["ExecStart"] == (f"/opt/tradebot/.venv/bin/python -m live_v6.tools.{module} "
                                 f"--out /var/lib/{stem}/{module}.jsonl")
-    assert int(svc["TimeoutStopSec"]) >= 10
+    assert int(svc["TimeoutStopSec"]) >= 10 > S.STOP_CLOCK_S + S.STOP_WRITER_S + 1 + 3   # recv 1 s, close_timeout 3 s
     for needle in ("systemd-analyze verify", "systemd-analyze security", f"/var/lib/private/{stem}",
-                   "DynamicUser", "EnvironmentFile", "Migrate", "Verify", "Remove"):
+                   "DynamicUser", "EnvironmentFile", "Migrate", "Verify", "Remove", "/var/log/tradebot"):
         assert needle in header, needle
     return header, svc
 
@@ -807,6 +1382,20 @@ def test_binance_logger_unit_runs_isolated_from_the_bot():
     _, svc = check_logger_unit("tradebot-ann-shadow.service", module="ann_ws_shadow",
                                env_file="/etc/tradebot/live.env")
     assert svc["TimeoutStopSec"] == "10"
+
+
+def test_binance_logger_unit_does_not_claim_that_the_logger_is_kept_from_the_trading_keys():
+    """It is handed the bot's own env file. The unit hides the bot's key FILE; the key pair is in the logger."""
+    text = (DEPLOY / "tradebot-ann-shadow.service").read_text(encoding="utf-8")
+    header, unit = unit_file(DEPLOY / "tradebot-ann-shadow.service")
+    assert unit["Service"]["EnvironmentFile"] == ["/etc/tradebot/live.env"]
+    assert 'os.environ["BINANCE_API_KEY"]' in pathlib.Path(S.__file__).read_text(encoding="utf-8")
+    assert "keys and state are not even readable" not in text and "is the only writable place" not in text
+    for needle in ("does NOT do", "BINANCE_API_KEY / BINANCE_API_SECRET into the environment of this process",
+                   "the bot's UID can change what this unit runs"):
+        assert needle in header, needle
+    comment = [line for line in text.splitlines() if line.startswith("# isolation:")]
+    assert len(comment) == 1 and "/tmp" in comment[0] and "PrivateTmp" in comment[0]
 
 
 @pytest.mark.parametrize("line", ["User=tradebot", "Group=tradebot", "ReadWritePaths=/var/lib/live_v6-live",

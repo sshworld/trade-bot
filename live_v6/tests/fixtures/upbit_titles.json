@@ -4222,6 +4222,120 @@
         "AAVE",
         "MASK"
       ]
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 6696,
+      "title": "멀티버스엑스(EGLD) 거래 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 6668,
+      "title": "만트라(MANTRA) 거래 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 6589,
+      "title": "만트라(MANTRA) 거래 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 6588,
+      "title": "질리카(ZIL) 거래 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 6492,
+      "title": "질리카(ZIL) 거래 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 6231,
+      "title": "커널다오(KERNEL) 거래 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 5935,
+      "title": "플로우(FLOW) 거래 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 5174,
+      "title": "신세틱스(SNX) 거래 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 4750,
+      "title": "다드(DAD) 거래 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 4068,
+      "title": "플레이댑(PLA) 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 4045,
+      "title": "썸씽(SSX) 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 3437,
+      "title": "베이직(BASIC) 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 3319,
+      "title": "랠리(RLY) 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 3303,
+      "title": "페이코인(PCI) 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 3216,
+      "title": "웨이브(WAVES) 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 3198,
+      "title": "카바(KAVA) 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 3127,
+      "title": "위믹스(WEMIX), 카바(KAVA) 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 3108,
+      "title": "위믹스(WEMIX) 유의 종목 지정 기간 연장 안내",
+      "expected": null
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 1267,
+      "title": "리퍼리움(RFR) 유의 종목 지정 안내 (기간 연장)",
+      "expected": null
     }
   ]
 }

@@ -7,11 +7,14 @@
 # tradebot-ann-shadow.service, which uses the same ones):
 #   DynamicUser=yes with NO User= line; SupplementaryGroups=tradebot only to read the code below /opt/tradebot;
 #   InaccessiblePaths= hides what that group could open: the bot's env files and state (no "-": a missing path
-#   fails the start) and the Binance logger's data ("-": that directory may be absent, or already out of reach
-#   below /var/lib/private once that unit is migrated); EnvironmentFile= is read by the service manager as root
+#   fails the start), the bot's alert log and the CI logs in /var/log/tradebot ("-": not checked on the server)
+#   and the Binance logger's data ("-": that directory may be absent, or already out of reach below
+#   /var/lib/private once that unit is migrated); EnvironmentFile= is read by the service manager as root
 #   before the sandbox exists, so upbit.env can stay 0600 root; ProtectProc=invisible + ProcSubset=pid hide the
 #   processes of other users. With DynamicUser the data is /var/lib/private/tradebot-upbit-ann-shadow and
 #   /var/lib/tradebot-upbit-ann-shadow is a symlink to it.
+# NOT covered: tradebot owns /opt/tradebot/app (where the "current" link is) and the venv, so the bot's UID can
+# change what this unit runs at its next start - and that code is started with the Upbit keys in its environment.
 #
 # Keys (once). For an existing env file, edit it; DO NOT run the install /dev/null command again (it empties it):
 #   sudo install -m 600 -o root -g root /dev/null /etc/tradebot/upbit.env
@@ -76,7 +79,7 @@ PrivateDevices=true
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictAddressFamilies=AF_INET AF_INET6
-InaccessiblePaths=/etc/tradebot /var/lib/live_v6-live -/var/lib/tradebot-ann-shadow
+InaccessiblePaths=/etc/tradebot /var/lib/live_v6-live -/var/log/tradebot -/var/lib/tradebot-ann-shadow
 ProtectProc=invisible
 ProcSubset=pid
 MemoryMax=200M

@@ -9,6 +9,8 @@ import json
 import logging
 import os
 from pathlib import Path
+import random
+import re
 import socket
 import stat
 import sys
@@ -90,6 +92,24 @@ def test_parse_all_raw_timestamps_timezone_offsets_and_lags():
     assert r['lag_ms_timestamp'] is None and r['lag_raw_ms_timestamp'] == -200
 
 
+def test_the_three_lags_of_one_push_are_three_different_measurements():
+    """docs.upbit.com/kr/reference/websocket-announcement: first_listed_at = first publication, listed_at = latest
+    publication (renewed when the notice is updated) - whole seconds in the doc's example - and timestamp is just
+    "타임스탬프 (ms)". Which one is "the" lag is unknown until real pushes are in; the module text has to say so."""
+    second = 1784014594000                                       # 2026-07-14T16:36:34+09:00
+    push = dict(DOC, first_listed_at='2026-07-14T16:36:34+09:00', listed_at='2026-07-14T16:36:34+09:00',
+                timestamp=second + 950)
+    r = S.parse_push(push, second + 1000, 0.0, 5.0, 4.0)
+    assert (r['lag_ms_listed_at'], r['lag_ms_timestamp']) == (1000, 50)       # one push: "1 s" or "50 ms"
+    assert r['offset_rtt_ms'] == 4.0 and S.parse_push(push, second + 1000, None)['offset_rtt_ms'] is None
+    days = 3 * 86_400_000                                        # the notice is updated three days later
+    update = dict(push, event_type='UPDATED', listed_at='2026-07-17T16:36:34+09:00', timestamp=second + days + 950)
+    r = S.parse_push(update, second + days + 1000, 0.0)
+    assert r['lag_ms_first_listed_at'] == days + 1000 and r['lag_ms_listed_at'] == 1000   # the AGE of the notice
+    for needle in ('first_listed_at', 'whole seconds', 'UPDATED', 'lag_ms_timestamp alone', 'BINANCE'):
+        assert needle in S.__doc__, needle
+
+
 @pytest.mark.parametrize('value', [None, True, False, 'broken', '2026-07-14T07:36:34', float('nan'), float('inf'), {}, []])
 def test_bad_timestamp_is_null(value):
     assert S.to_ms(value) is None
@@ -119,8 +139,33 @@ def test_all_research_event_titles(row):
     ('예시(XYZ) 유의 종목 지정 취소 안내', None),
     ('BTC, USDT 마켓 이벤트', None),
     ('KRW 입출금 점검', None),
+    # how the extension of a running designation REALLY reads (notices 6696, 3127, 1267) - not "지정 연장"
+    ('멀티버스엑스(EGLD) 거래 유의 종목 지정 기간 연장 안내', None),
+    ('위믹스(WEMIX), 카바(KAVA) 유의 종목 지정 기간 연장 안내', None),
+    ('리퍼리움(RFR) 유의 종목 지정 안내 (기간 연장)', None),
+    ('멀티버스엑스(EGLD) 거래 유의 종목 지정 안내', 'upbit_warning'),             # ... and the designation itself
+    ('예시(XYZ) 거래 유의 종목 지정 안내 (입출금 중단 기간 연장)', 'upbit_warning'),    # (made up) still a designation
 ])
 def test_classifier_boundaries(title, tag):
+    assert S.classify_upbit_title(title) == tag
+
+
+def test_an_extended_warning_period_is_not_tagged_as_a_new_designation():
+    extended = [r for r in TITLE_FIXTURE['rows'] if '유의 종목' in r['title'] and '연장' in r['title']]
+    assert len(extended) == 19 and len({r['title'] for r in extended}) == 17      # real notices, with their ids
+    assert all(r['expected'] is None and S.classify_upbit_title(r['title']) is None for r in extended)
+    designations = [r for r in TITLE_FIXTURE['rows'] if r['expected'] == 'upbit_warning']
+    assert len(designations) == 81 and not any('연장' in r['title'] or '해제' in r['title'] for r in designations)
+
+
+@pytest.mark.parametrize(('title', 'tag'), [
+    ('예시(XYZ) 거래지원 종료 안내 (가나다(ABC) 거래지원 취소 안내)', 'upbit_delist'),
+    ('예시(XYZ) 거래 유의 종목 지정 안내 (가나다(ABC) 거래지원 취소 안내)', 'upbit_warning'),
+])
+def test_a_title_that_also_cancels_a_listing_keeps_its_delist_or_warning_tag(title, tag):
+    # No real title says both (none among 4 813), so nothing but the code decides this: one tag per notice, the first
+    # match wins - delist, warning, cancelled listing. Pinned here so that the order is changed on purpose, with this
+    # test, and not by moving an `if`.
     assert S.classify_upbit_title(title) == tag
 
 
@@ -176,9 +221,65 @@ def test_ticker_extraction_takes_linear_time_on_a_hostile_title(group):
     # capitals took ~8 s with `[A-Z0-9]*[A-Z][A-Z0-9]*`) would stop the measurement for hours
     title = '예시(XYZ) 신규 거래지원 안내 (KRW 마켓) (' + group + ')'
     started = time.perf_counter()
+    tickers = S.extract_tickers(title)                           # the pattern itself, on all of it (parse_push cuts)
     rec = S.parse_push(dict(DOC, title=title), 1784014594500, None)
     assert time.perf_counter() - started < 2.0
-    assert rec['tickers'] == ['XYZ'] and rec['tag'] == 'upbit_list_krw'
+    assert tickers == ['XYZ'] and rec['tickers'] == ['XYZ'] and rec['tag'] == 'upbit_list_krw'
+
+
+# What used to take quadratic time somewhere between the socket and the queue, each at a size that took ~10 s:
+HOSTILE = {
+    'market list without 마켓': ('title', lambda: '신규 거래지원 ' + 'KRW, ' * 16_000),      # classifying the title
+    'many different tickers': ('title', lambda: ''.join(f'(A{i})' for i in range(50_000))),  # collecting tickers
+    'start of many tokens, title': ('title', lambda: 'eyJ' * 70_000),                        # redacting JWTs
+    'start of many tokens, url': ('url', lambda: 'https://upbit.com/x?' + 'eyJ' * 70_000),
+    'start of many tokens, extra field': ('note', lambda: ['eyJ' * 70_000]),
+}
+
+
+@pytest.mark.parametrize('shape', sorted(HOSTILE))
+def test_a_huge_frame_is_handled_in_a_moment_and_leaves_a_small_row(tmp_path, monkeypatch, shape):
+    """Everything between recv() and the queue runs on the receive thread and holds the interpreter lock: while it
+    crawls over one frame, no ping is sent, nothing is written, and pushes behind it get their stamp late."""
+    monkeypatch.setattr(S, 'RECONNECT_S', 2)
+    field, make = HOSTILE[shape]
+    sh, _, _ = shadow(tmp_path, [json.dumps(dict(DOC, **{field: make()}))])
+    started = time.perf_counter()
+    sh.run_once()
+    assert time.perf_counter() - started < 2.0
+    ann = next(r for r in drain(sh) if r['k'] == 'upbit_ann')
+    assert len(json.dumps(ann)) < 4000 and ann['lag_raw_ms_timestamp'] is not None
+
+
+def test_a_row_stays_small_whatever_the_frame_holds():
+    big = 1_000_000                                              # the socket accepts frames of up to 1 MiB
+    doc = dict(DOC, title=DOC['title'] + '가' * big, url=DOC['url'] + 'a' * big, uuid='u' * big, category=['c'] * big,
+               event_type={'e': 'e' * big}, stream_type='s' * big, first_listed_at='9' * big,
+               listed_at=DOC['listed_at'] + ' ' * big, **{f'k{i:04d}' + 'x' * 300: 1 for i in range(2000)})
+    r = S.parse_push(doc, 1784014594500, 40, 5, 4)
+    assert len(json.dumps(r, ensure_ascii=False).encode()) < 12_000
+    assert r['lag_ms_timestamp'] == 240 and r['timestamp'] == DOC['timestamp']       # what was measured is all there
+    assert r['title'] == doc['title'][:500] and r['title_len'] == len(doc['title'])
+    assert r['url'] == doc['url'][:500] and r['uuid'] == 'u' * 500 and r['stream_type'] == 's' * 500
+    assert r['category'] == ('[' + '"c", ' * 100)[:500] and r['event_type'] == '{"e": "' + 'e' * 493   # JSON text, cut
+    assert r['first_listed_at'] == '9' * 500 and r['first_listed_at_ms'] is None
+    assert r['listed_at'] == doc['listed_at'][:500] and r['listed_at_ms'] is None    # not a time any more: no lag
+    assert len(r['keys']) == S.base.KEYS_MAX == 30 and max(map(len, r['keys'])) == S.base.KEY_MAX == 100
+    plain = S.parse_push(DOC, 1784014594500, 40, 5, 4)           # an ordinary push: every field as it came
+    assert all(plain[k] == v for k, v in DOC.items() if k != 'type') and plain['keys'] == sorted(DOC)
+    assert plain['title_len'] == len(DOC['title'])
+
+
+def test_tag_and_tickers_come_from_the_title_as_it_is_logged_and_title_len_tells_when_that_is_not_all_of_it():
+    head = '예시(XYZ) 신규 거래지원 안내 (KRW 마켓)'
+    title = head + ' ' * 500 + '(가나다(ABC) 거래지원 취소 안내)'      # what makes it a cancelled listing is cut off
+    r = S.parse_push(dict(DOC, title=title), 1784014594500, None)
+    assert r['title'] == title[:500] and r['title_len'] == len(title) > S.base.TITLE_MAX == 500
+    assert (r['tag'], r['tickers']) == (S.classify_upbit_title(r['title']), S.extract_tickers(r['title']))
+    assert (r['tag'], r['tickers']) == ('upbit_list_krw', ['XYZ'])
+    assert S.classify_upbit_title(title) == 'upbit_list_cancel'      # what the whole title would have been tagged
+    # ... which no real title comes near: the longest of 4 813 has 176 characters
+    assert max(len(row['title']) for row in TITLE_FIXTURE['rows']) < 200
 
 
 HEMI = '헤미(HEMI), 유즈리스(USELESS) 신규 거래지원 안내 (BTC, USDT 마켓) (헤미(HEMI) 거래지원 취소 안내)'
@@ -395,6 +496,57 @@ def test_credentials_redacted_before_truncation_in_every_field(tmp_path, monkeyp
     assert 'Authorization' not in caplog.text
 
 
+# what redact_jwts replaces, as the pattern it used to be (quadratic on a long run that holds "eyJ" again and again)
+JWT_PATTERN = re.compile(r'eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+')
+
+
+@pytest.mark.parametrize('text', [
+    '', 'eyJ', 'eyJ.a', 'eyJ.a.b', 'xeyJ.a.b', 'eyJa.b.c.d.e', 'eyJ..a.b', 'eyJ.a..b', 'a.eyJ.b.c', '.eyJ.a.b.',
+    'eyJ.a.', 'eyJ.eyJ.eyJ.eyJ.eyJ', 'eyJ.eyJ.eyJ.eyJ.eyJ.eyJ.eyJ', 'x.eyJ.a.eyJ.b.c', 'eyJ.a.b.eyJ.c.d',
+    'eyJ.a.b eyJ.c.d', 'eyj.a.b', 'eyJ-_.a-_.b-_', '가eyJ.a.b나', '"eyJ.a.b"', 'eyJeyJ.a.b', 'aeyJbeyJ.c.d', 'a.b.c',
+    '...', 'eyJ.a.b...eyJ.c.d', 'Authorization: Bearer eyJhbGciOiJIUzUxMiJ9.eyJhY2Nlc3Nfa2V5IjoiayJ9.c2lnbmF0dXJl, next',
+])
+def test_jwt_redaction_replaces_exactly_what_the_pattern_did(text):
+    assert S.redact_jwts(text) == JWT_PATTERN.sub('[REDACTED]', text)
+
+
+def test_jwt_redaction_replaces_exactly_what_the_pattern_did_on_random_text():
+    rng = random.Random(20261117)
+    pieces = ['eyJ', 'eyJ', 'e', 'y', 'J', '.', '.', '.', 'a', 'B', '7', '-', '_', ' ', '"', '가', '\n']
+    for _ in range(5000):
+        text = ''.join(rng.choice(pieces) for _ in range(rng.randrange(40)))
+        assert S.redact_jwts(text) == JWT_PATTERN.sub('[REDACTED]', text), repr(text)
+    token = S.jwt_token('fixture-key', 'fixture-secret')
+    assert S.redact_jwts('x' * 490 + token + '.tail') == 'x' * 490 + '[REDACTED].tail'
+
+
+def test_redaction_takes_linear_time_on_a_long_run_that_starts_a_token_again_and_again(tmp_path):
+    sh, _, _ = shadow(tmp_path)
+    text = 'eyJ' * 100_000                                       # 300 000 characters: ~20 s as a regular expression
+    started = time.perf_counter()
+    assert sh.redact(text) == text and sh.clean({text: [text]}) == {text: [text]} and len(sh.scrub(text)) == 300
+    assert time.perf_counter() - started < 2.0
+
+
+def test_an_error_frame_is_redacted_first_and_then_cut_to_a_small_row(tmp_path):
+    sh, _, _ = shadow(tmp_path)
+    jwt = S.jwt_token('another-key', 'another-secret')           # not this connection's token: only its shape tells
+    message = 'm' * 440 + jwt + ' ' + sh.secret + 'm' * 1_000_000     # both lie across the place where the cut falls
+    frame = json.dumps({'error': {'name': 'INVALID_PARAM', 'message': message}})
+    sh._connect = lambda url, **kw: FakeWS(sh.clock, [frame])
+    with pytest.raises(S.StreamError):
+        sh.run_once()
+    row = next(r for r in drain(sh) if r['k'] == 'upbit_error')
+    assert isinstance(row['error'], str) and len(row['error']) == S.base.FIELD_MAX == 500
+    assert row['error'].startswith('{"name": "INVALID_PARAM", "message": "mmm') and '[REDACTED]' in row['error']
+    assert 'eyJ' not in row['error'] and sh.secret[:6] not in row['error']         # no half of a secret either
+    small = {'name': 'INVALID_AUTH', 'message': 'no'}
+    sh._connect = lambda url, **kw: FakeWS(sh.clock, [json.dumps({'error': small})])
+    with pytest.raises(S.StreamError):
+        sh.run_once()
+    assert next(r for r in drain(sh) if r['k'] == 'upbit_error')['error'] == small    # an ordinary one: as it came
+
+
 def test_actual_websockets_redirect_loop_makes_one_attempt_only(monkeypatch):
     import websockets.sync.client as client
     from websockets.datastructures import Headers
@@ -455,8 +607,45 @@ def test_wall_clock_step_nulls_every_corrected_lag_and_keeps_the_raw_ones(tmp_pa
     ann = next(r for r in rows if r['k'] == 'upbit_ann')
     for field in ('first_listed_at', 'listed_at', 'timestamp'):
         assert ann['lag_ms_' + field] is None and ann['lag_raw_ms_' + field] is not None
-    assert ann['offset_ms'] is None and ann['offset_age_s'] is None
+    assert ann['offset_ms'] is None and ann['offset_age_s'] is None and ann['offset_rtt_ms'] is None
     assert [r['delta_ms'] for r in rows if r.get('event') == 'step'] == [pytest.approx(5000, abs=.2)]
+    assert sh.clock_wake.is_set()
+
+
+def test_a_pause_of_both_clocks_is_no_step_and_the_measurement_after_the_push_gives_it_away(tmp_path, monkeypatch):
+    """Inherited, and the same for all three lags: a VM paused from outside (or a slewed clock) leaves wall and
+    monotonic clock together. Nothing is voided, every lag_ms_* is a number that is 300 ms wrong - so the push asks
+    for a clock measurement, and that row says how far the offset has moved."""
+    monkeypatch.setattr(S, 'RECONNECT_S', 2)
+    sh, _, clock = shadow(tmp_path, [json.dumps(dict(DOC, timestamp=1784014594400))])
+    lost = [0.0]                                                 # seconds the exchange went on while this box stood
+    sh.clock = lambda: clock.now + 1784014593.48 - 1000.0        # the box clock: the push arrives at ...594.500
+    def get(url):
+        clock.now += .004
+        return {'serverTime': (sh.clock() + lost[0]) * 1000 - 2}
+    sh._http_get = get
+    sh.measure_clock()
+    assert drain(sh)[-1]['drift_ms'] is None and sh._offset()[0] == pytest.approx(0, abs=.01)
+    lost[0] = .3
+    sh.run_once()
+    rows = drain(sh)
+    ann = next(r for r in rows if r['k'] == 'upbit_ann')
+    assert ann['lag_ms_timestamp'] == pytest.approx(100, abs=.2)     # on a clock that is 300 ms behind: really 400
+    assert ann['offset_rtt_ms'] == pytest.approx(4) and not [r for r in rows if r.get('event') == 'step']
+    assert sh.clock_wake.is_set()
+    sh.measure_clock()
+    after = drain(sh)[-1]
+    assert after['drift_ms'] == pytest.approx(300, abs=.01)
+    assert ann['lag_raw_ms_timestamp'] + after['offset_ms'] == pytest.approx(400, abs=.3)
+
+
+def test_only_an_announcement_asks_for_a_clock_measurement(tmp_path, monkeypatch):
+    monkeypatch.setattr(S, 'RECONNECT_S', 2)
+    sh, _, _ = shadow(tmp_path, ['junk', '{"status":"UP"}'])
+    sh.run_once()
+    assert not sh.clock_wake.is_set()
+    sh._connect = lambda url, **kw: FakeWS(sh.clock, [json.dumps(DOC)])
+    sh.run_once()
     assert sh.clock_wake.is_set()
 
 
@@ -464,11 +653,11 @@ def test_offset_is_checked_against_the_clocks_of_the_receive_stamp(tmp_path, mon
     monkeypatch.setattr(S, 'RECONNECT_S', 2)
     sh, _, clock = shadow(tmp_path, [json.dumps(DOC)])
     sh.measure_clock()
-    seen, real = [], sh._offset
+    seen, real = [], sh._correction
     def spy(*args):
         seen.append(args)
         return real(*args)
-    sh._offset = spy
+    sh._correction = spy
     original = S.decode
     def decode(raw):
         clock.now += .25                                         # slow parsing after the stamp must not matter
@@ -600,6 +789,28 @@ def test_receive_enqueue_has_no_file_io_and_worker_drains_shutdown(tmp_path):
     assert rows[-1]['event'] == 'stopped'
 
 
+def test_rows_enqueued_after_the_writer_saw_stop_and_an_empty_queue_still_reach_the_file(tmp_path):
+    """The race itself, made on purpose with the real writer thread and the real run(): SIGTERM while recv() waits,
+    the writer leaves its loop, and only then the push of that recv() and the "stopped" row are enqueued."""
+    sh, _, clock = shadow(tmp_path)
+    sh.clock_loop = lambda: None
+    left, real_loop = threading.Event(), sh.writer_loop
+    def writer_loop():
+        real_loop()
+        left.set()
+    sh.writer_loop = writer_loop
+    class WS(FakeWS):
+        def recv(self, timeout):
+            sh.stop.set()
+            assert left.wait(10)
+            return json.dumps(DOC)
+    sh._connect = lambda url, **kw: WS(clock)
+    sh.run()
+    rows = [json.loads(line) for line in Path(sh.out_path).read_text(encoding='utf-8').splitlines()]
+    assert [(r['k'], r.get('event')) for r in rows] == [('conn', 'open'), ('upbit_ann', None), ('conn', 'stopped')]
+    assert S.UpbitShadow._writer_worker is S.base.Shadow._writer_worker and sh.q.empty()
+
+
 def test_disk_error_does_not_kill_writer_or_reveal_path(tmp_path, caplog):
     sh, _, _ = shadow(tmp_path)
     sh.out_path = str(tmp_path/'fixture-secret'/'missing')
@@ -607,6 +818,58 @@ def test_disk_error_does_not_kill_writer_or_reveal_path(tmp_path, caplog):
     sh.stop.set()
     sh.writer_loop()
     assert 'secure log append failed' in caplog.text and sh.secret not in caplog.text
+
+
+@pytest.mark.parametrize(('code', 'kind'), [
+    (errno.ENOSPC, 'OSError'), (errno.EACCES, 'PermissionError'), (errno.EROFS, 'OSError'), (errno.EDQUOT, 'OSError'),
+    (errno.ELOOP, 'OSError'), (errno.EISDIR, 'IsADirectoryError'), (errno.ENOENT, 'FileNotFoundError'),
+])
+def test_the_journal_tells_which_error_stopped_a_write_but_never_the_path(tmp_path, monkeypatch, caplog, code, kind):
+    sh, _, _ = shadow(tmp_path)
+    sh.out_path = str(tmp_path / 'fixture-secret-dir' / 'log.jsonl')
+    def refuse(path, flags, mode=0o777):
+        raise OSError(code, os.strerror(code), path)                 # as the system raises it: with the path
+    monkeypatch.setattr(os, 'open', refuse)
+    with pytest.raises(OSError) as raised:
+        sh._append('x\n')
+    assert raised.value.errno == code and raised.value.filename is None      # still an OSError: the writer pauses
+    sh.write({'k': 'one'})
+    sh.stop.set()
+    sh.writer_loop()
+    name = errno.errorcode[code]
+    assert f'write failed: {kind}: [Errno {code}] secure log append failed ({name})' in caplog.text
+    assert 'fixture-secret-dir' not in caplog.text and str(tmp_path) not in caplog.text
+
+
+def test_the_journal_tells_a_link_a_directory_and_a_short_write_apart_on_a_real_disk(tmp_path, monkeypatch, caplog):
+    def journal(name, prepare=lambda sh, folder: None):
+        sh, _, _ = shadow(tmp_path / name)
+        (tmp_path / name).mkdir()
+        prepare(sh, tmp_path / name)
+        caplog.clear()
+        sh.write({'k': 'one'})
+        sh.stop.set()
+        sh.writer_loop()
+        assert sh.write_failed == 1 and str(tmp_path) not in caplog.text
+        return caplog.text
+    def symlink(sh, folder):
+        (folder / 'victim').write_text('v')
+        os.symlink(folder / 'victim', sh.out_path)
+    def hardlink(sh, folder):
+        (folder / 'victim').write_text('v')
+        os.link(folder / 'victim', sh.out_path)
+    assert 'secure log append failed (ELOOP)' in journal('symlink', symlink)
+    text = journal('directory', lambda sh, folder: os.mkdir(sh.out_path))
+    assert 'IsADirectoryError' in text and 'secure log append failed (EISDIR)' in text
+    assert 'OSError: secure log append failed (not a private regular file)' in journal('hardlink', hardlink)
+    with monkeypatch.context() as patch:
+        patch.setattr(os, 'write', lambda fd, data: 0)
+        assert 'OSError: secure log append failed (short log write)' in journal('short')
+    with monkeypatch.context() as patch:                         # an OSError without errno that is not the writer's own
+        def odd(path, flags, mode=0o777):
+            raise OSError('text that names ' + path)
+        patch.setattr(os, 'open', odd)
+        assert 'OSError: secure log append failed (no errno)' in journal('odd')
 
 
 def test_cli_refuses_missing_keys_and_bad_categories_before_connect(monkeypatch, tmp_path):
@@ -654,7 +917,8 @@ def test_ast_import_and_endpoint_allowlist():
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             assert node.func.id not in {'exec','eval','__import__'}
         elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == 'base':
-            assert node.attr in {'Shadow','scrub','MAX_FILE_BYTES','MAX_OTHER_PER_CONN','Rejected','_connect_no_redirect','_http_get'}
+            assert node.attr in {'Shadow','scrub','MAX_FILE_BYTES','MAX_OTHER_PER_CONN','Rejected','_connect_no_redirect',
+                                 '_http_get', 'short','TITLE_MAX','KEYS_MAX','KEY_MAX'}    # (the size limits of a row)
     urls = [n.value for n in ast.walk(tree) if isinstance(n,ast.Constant) and isinstance(n.value,str) and n.value.startswith(('https://','wss://'))]
     assert urls == [S.WS_URL]
     for forbidden in ('/v1/orders','/v1/accounts','/v1/withdraws','/fapi/v1/order','/fapi/v1/balance','/sapi/v1/'):

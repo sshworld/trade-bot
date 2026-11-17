@@ -7,21 +7,41 @@ possible from this box depends on one number we do not have: when does the push 
 What it does: connects to the announcement stream (signed with the account API key - the only use of the key; no
 order or account endpoint is imported or called) and appends one JSON line per pushed announcement:
   {"k":"ann","recv_ms":…,"publish_ms":…,"lag_raw_ms":…,"lag_ms":…,"offset_ms":…,"offset_age_s":…,
-   "catalogId":…,"catalogName":…,"title":…,"tag":…}
+   "offset_rtt_ms":…,"catalogId":…,"catalogName":…,"title":…,"title_len":…,"tag":…}
 `lag_raw_ms` = local receive time - publishDate; `lag_ms` adds the measured clock offset to the Binance server
-(null while no valid offset is known). {"k":"clock"} lines record that offset (GET /fapi/v1/time, public, every
-15 min, in a side thread), {"k":"conn"} lines record connects / closes / errors.
+(null while no valid offset is known). `offset_rtt_ms` is the round trip of the time request that offset came
+from: the offset, and with it `lag_ms`, can be off by half of it. {"k":"clock"} lines record every measurement of
+the offset (GET /fapi/v1/time, public, in a side thread: every 15 min and right after every announcement),
+{"k":"conn"} lines record connects / closes / errors. What a row echoes from a frame is cut to a fixed size
+(`title` to 500 characters - `title_len` is its whole length - and the tag is made from the title as logged).
 
-An offset only holds for the wall clock it was measured on. If the system time is stepped afterwards (date -s,
-chrony makestep, a resumed VM) the wall clock moves against the monotonic clock: more than 50 ms of that voids the
-offset - `lag_ms` is null until the next measurement, `lag_raw_ms` goes on - and one
-{"k":"clock","event":"step","delta_ms":…} line says so; the side thread measures again at once.
+An offset only holds for the wall clock it was measured on. If the system time is STEPPED afterwards (date -s,
+chrony makestep, a guest agent that sets the time of the VM) the wall clock moves against the monotonic clock:
+more than 50 ms of that voids the offset - `lag_ms` is null until the next measurement, `lag_raw_ms` goes on -
+and one {"k":"clock","event":"step","delta_ms":…} line says so; the side thread measures again at once.
+NOT seen that way is an error that moves both clocks alike: chrony SLEWING the time (how it corrects in normal
+operation; Linux: CLOCK_MONOTONIC "is affected by frequency adjustments") and a hypervisor that pauses the VM
+("the guest OS has no idea that there was a big gap in the time": both clocks stand still, then run on, late by
+the pause). `lag_ms` is then a number, not null, and it is wrong by that error until the next measurement. Two
+things in the file show it: the measurement that follows every announcement (not during a 429 / 418 ban, and at
+most one per 10 s), and `drift_ms` of a clock line = its offset minus the offset it replaces (null: there was
+none, or a step had voided it).
+HOW TO USE lag_ms. The offset that held when an announcement came in lies between the offset_ms of the clock line
+before it and of the first one after it, each of them good to half its rtt_ms - unless a step line lies between
+those two lines: then leave the row out. The line after normally follows within a second (compare the t of both
+rows), so lag_raw_ms + ITS offset_ms is the best single value. lag_ms (made with the line before) stands if the
+two offsets differ by little: drift_ms of the line after says by how much. If they differ by more than the
+question allows (say 20 ms for a decision about 0.2 s) and the line after came late, leave the row out.
 
 The receive loop only receives, stamps the time and enqueues; a writer thread does the file I/O, so a slow disk
 never inflates the measured lag. That thread survives any single record and a full disk; records it could not
-write are counted in a {"k":"writer","event":"lost","n":…} line, and a line torn by a failed write is closed
-before the next record. Read the file line by line and skip a line that does not parse. If the writer thread
-dies anyway the process exits with status 70 so that systemd starts it again.
+write are counted in a {"k":"writer","event":"lost","n":…} line, records that found the queue full (the writer was
+stuck for that long) in a {"k":"writer","event":"dropped","n":…} line, and a line torn by a failed write is
+closed before the next record. On a normal stop the last line is {"k":"conn","event":"stopped",…}.
+HOW TO READ the file: split it into lines as BYTES (or open it with errors="replace") and skip a line that does
+not parse. A torn line can end inside a multi-byte character, and then the file as a whole is not valid UTF-8:
+iterating over open(path, encoding="utf-8") raises UnicodeDecodeError before there is a line to skip.
+If the writer thread dies anyway the process exits with status 70 so that systemd starts it again.
 
 Spec (developers.binance.com/en/docs/products/announcements/general-info and /docs/cms/announcement, read 2026-11-17):
   URL   wss://api.binance.com/sapi/wss?random=R&topic=T&recvWindow=W&timestamp=TS&signature=S   header X-MBX-APIKEY
@@ -62,14 +82,21 @@ CLOCK_MAX_RTT_S = 0.25        # a slower best sample is not a usable offset (its
 CLOCK_MAX_AGE_S = 3600.0      # lag_ms is null when the last valid offset is older
 CLOCK_STEP_S = 0.05           # wall clock moved this much against the monotonic clock since the offset: it is void
 CLOCK_POLL_S = 1.0            # the clock thread looks for such a step this often (every push looks for it too)
-CLOCK_MIN_GAP_S = 10.0        # a step is re-measured at once, but never more often (the bot shares the IP weight)
+CLOCK_MIN_GAP_S = 10.0        # after a step or a push: measured at once, but never more often (the bot shares the IP)
+CLOCK_RETRY_S = 60.0          # next try after a measurement that left no usable offset (lag_ms is null until then)
 EXIT_WRITER_DEAD = 70         # exit status when the writer thread died (sysexits EX_SOFTWARE); systemd restarts us
+STOP_CLOCK_S = 2.0            # on stop: how long to wait for the clock thread to end ...
+STOP_WRITER_S = 2.0           # ... and then for the writer thread to finish the file (see _shutdown)
 RECV_WINDOW_MS = 30000        # doc maximum is 60000
 BACKOFF_MAX_S = 60.0          # ordinary reconnects
 REJECT_BACKOFF_S = 600.0      # the server answered the handshake with an HTTP error: never hammer it
 REJECT_BACKOFF_MAX_S = 3600.0
 MAX_FILE_BYTES = 20 * 1024 * 1024
 MAX_OTHER_PER_CONN = 20       # unknown frames logged per connection (the rest are only counted)
+TITLE_MAX = 500               # characters of a title that are logged (and classified)
+FIELD_MAX = 500               # characters of any other field echoed from a frame: one row can never fill the file
+KEYS_MAX = 30                 # field names of a frame that are logged ...
+KEY_MAX = 100                 # ... and characters of each
 
 log = logging.getLogger("live_v6.ann_ws_shadow")
 _URL = re.compile(r"\b(wss?|https?)://([^\s/?#'\"]+)([^\s?#'\"]*)[^\s'\"]*")
@@ -78,6 +105,27 @@ _URL = re.compile(r"\b(wss?|https?)://([^\s/?#'\"]+)([^\s?#'\"]*)[^\s'\"]*")
 def scrub(text) -> str:
     """Error text safe to store: URLs lose their query (the signed connection URL must never reach the log)."""
     return _URL.sub(r"\1://\2\3", str(text))[:300]
+
+
+def _why(e: BaseException) -> str:
+    """An exception as log text. One that cannot be printed (its __str__ raises) still has a type name."""
+    try:
+        return scrub(f"{type(e).__name__}: {e}")
+    except Exception:  # noqa: BLE001
+        return type(e).__name__
+
+
+def short(value, limit: int = FIELD_MAX):
+    """A value echoed from a frame, small enough to log whatever the server sent: a string is cut to `limit`
+    characters; anything else stays as it is while its JSON text is that short and becomes the cut text otherwise.
+    A row has to stay small: the log is two files of 20 MiB, and a few rows of 1 MiB each (the largest frame the
+    socket accepts) would push every earlier measurement out of both."""
+    if isinstance(value, str):
+        return value[:limit]
+    if value is None or isinstance(value, (bool, float)):
+        return value
+    text = json.dumps(value, ensure_ascii=False)
+    return value if len(text) <= limit else text[:limit]
 
 
 def signed_url(secret: str, *, topic: str = TOPIC, now_ms: int | None = None, rnd: str | None = None,
@@ -103,8 +151,11 @@ def classify_title(title: str) -> str | None:
     return None
 
 
-def parse_push(raw, recv_ms: float, offset_ms: float | None, offset_age_s: float | None = None) -> dict | None:
-    """One log record from a pushed frame, or None when the frame is not an announcement (command acks etc.)."""
+def parse_push(raw, recv_ms: float, offset_ms: float | None, offset_age_s: float | None = None,
+               offset_rtt_ms: float | None = None) -> dict | None:
+    """One log record from a pushed frame, or None when the frame is not an announcement (command acks etc.).
+    Every field that echoes the frame is cut to a fixed size; the tag is made from the title as it is logged, and
+    `title_len` tells when that is not the whole title."""
     try:
         msg = json.loads(raw)
     except (TypeError, ValueError):
@@ -121,15 +172,18 @@ def parse_push(raw, recv_ms: float, offset_ms: float | None, offset_age_s: float
         return None
     pub = data.get("publishDate")
     pub = float(pub) if isinstance(pub, (int, float)) and not isinstance(pub, bool) else None
-    title = str(data.get("title") or "")
+    whole = str(data.get("title") or "")
+    title = whole[:TITLE_MAX]
     raw_lag = None if pub is None else round(recv_ms - pub, 1)
     lag = None if raw_lag is None or offset_ms is None else round(raw_lag + offset_ms, 1)
     return dict(k="ann", recv_ms=round(recv_ms, 1), publish_ms=pub, lag_raw_ms=raw_lag, lag_ms=lag,
                 offset_ms=None if offset_ms is None else round(offset_ms, 1),
                 offset_age_s=None if offset_age_s is None else round(offset_age_s, 1),
-                topic=msg.get("topic"), catalogId=data.get("catalogId"), catalogName=data.get("catalogName"),
-                title=title[:500], tag=classify_title(title), body_len=len(str(data.get("body") or "")),
-                keys=sorted(str(k) for k in data.keys())[:30])
+                offset_rtt_ms=None if offset_rtt_ms is None else round(offset_rtt_ms, 1),
+                topic=short(msg.get("topic")), catalogId=short(data.get("catalogId")),
+                catalogName=short(data.get("catalogName")), title=title, title_len=len(whole),
+                tag=classify_title(title), body_len=len(str(data.get("body") or "")),
+                keys=[k[:KEY_MAX] for k in sorted(str(k) for k in data)[:KEYS_MAX]])
 
 
 class Rejected(Exception):
@@ -148,14 +202,17 @@ class Shadow:
         self.offset_ms: float | None = None
         self.offset_at: float | None = None          # monotonic time of the last VALID offset
         self.offset_ref: float | None = None         # wall clock - monotonic clock when that offset was measured
-        self.clock_wake = threading.Event()          # a clock step voided the offset: measure again now
+        self.offset_rtt_ms: float | None = None      # round trip of the sample it came from (its error: half of this)
+        self.clock_wake = threading.Event()          # measure again now: a step voided the offset / a push came
         self._clock_lock = threading.Lock()          # offset_* are written by the clock thread, voided by any thread
         self.order = "url"
         self.stop = threading.Event()
         self.q: queue.Queue = queue.Queue(maxsize=10000)
         self.dropped = 0                             # records that did not fit into the queue
+        self._dropped_told = 0                       # ... of which the file tells already
         self.write_failed = 0                        # records the writer thread could not write
         self._unreported = 0                         # ... of which the file does not tell yet
+        self._producers_done = threading.Event()     # run() is over: nothing is enqueued any more
 
     # ── output (writer thread; the receive loop never touches the disk) ──
     def write(self, rec: dict):
@@ -203,13 +260,19 @@ class Shadow:
             self._append(json.dumps(dict(k="writer", event="lost", n=self._unreported, total=self.write_failed,
                                          t=round(self.clock(), 3))) + "\n")
             self._unreported = 0
+        dropped = self.dropped                 # read once: the other threads go on counting
+        if dropped != self._dropped_told:      # records that found the queue full: they never got to this thread
+            self._append(json.dumps(dict(k="writer", event="dropped", n=dropped - self._dropped_told, total=dropped,
+                                         t=round(self.clock(), 3))) + "\n")
+            self._dropped_told = dropped
         self._append(json.dumps(rec, ensure_ascii=False) + "\n")
 
     def writer_loop(self):
-        """Body of the writer thread. No single record ends it: whatever goes wrong with one is counted, said in
-        the file with the next line that can be written, and the loop goes on. Should the thread die all the same,
-        nothing would be logged any more while the process looks alive - so the process ends, non-zero, and
-        systemd (Restart=always) starts a new one."""
+        """The writer thread's loop, until stop is set and the queue is empty. No single record ends it: whatever
+        goes wrong with one is counted, said in the file with the next line that can be written, and the loop goes
+        on. Should the thread die all the same, nothing would be logged any more while the process looks alive - so
+        the process ends, non-zero, and systemd (Restart=always) starts a new one. Nothing may stand between that
+        death and the exit: not a log call that fails, not an exception that cannot be printed."""
         try:
             while not (self.stop.is_set() and self.q.empty()):
                 try:
@@ -221,13 +284,25 @@ class Shadow:
                 except Exception as e:  # noqa: BLE001  one record is lost, never the thread
                     self.write_failed += 1
                     self._unreported += 1
-                    log.warning("write failed: %s", scrub(f"{type(e).__name__}: {e}"))
+                    try:
+                        log.warning("write failed: %s", _why(e))
+                    except Exception:  # noqa: BLE001  not being able to say so is no reason to stop writing
+                        pass
                     if isinstance(e, OSError):     # disk full / permission: keep measuring, do not spin
                         self.stop.wait(30.0)
         except BaseException as e:  # noqa: BLE001  whatever ends this thread must end the process
-            log.critical("writer thread died, exiting with status %d: %s", EXIT_WRITER_DEAD,
-                         scrub(f"{type(e).__name__}: {e}"))
-            os._exit(EXIT_WRITER_DEAD)
+            try:
+                log.critical("writer thread died, exiting with status %d: %s", EXIT_WRITER_DEAD, _why(e))
+            finally:
+                os._exit(EXIT_WRITER_DEAD)
+
+    def _writer_worker(self):
+        """Body of the writer thread. writer_loop alone leaves as soon as stop is set and the queue is empty for a
+        moment - while run() has yet to enqueue the "stopped" row, and a push that the last recv() was still
+        waiting for. So: once run() says that nothing is enqueued any more, the queue is emptied a second time."""
+        self.writer_loop()
+        self._producers_done.wait()
+        self.writer_loop()
 
     # ── clock offset (side thread) ──
     def measure_clock(self):
@@ -238,7 +313,10 @@ class Shadow:
         +402 ms) where a kept-alive one read 0 +/- 1 ms at a 4 ms round trip. So the first request only warms the
         connection up and the smallest round trip wins.
         The offset is kept together with `wall clock - monotonic clock` of the very sample it came from (offset_ref):
-        that difference only changes when the system time is stepped, which is what _offset() watches for."""
+        that difference only changes when the system time is stepped, which is what _correction() watches for.
+        The clock line also says how far this offset is from the one it replaces (drift_ms): the box clock moved
+        that much against the exchange without a step having been seen (slewing, a paused VM) - or the two
+        measurements were that bad (each can be off by rtt / 2)."""
         best = None
         for _ in range(CLOCK_SAMPLES):
             m0, t0 = self.mono(), self.clock()
@@ -251,62 +329,74 @@ class Shadow:
             self.write(dict(k="clock", skipped="slow", rtt_ms=round(rtt * 1000, 1)))
             return
         with self._clock_lock:
-            self.offset_ms, self.offset_at, self.offset_ref = offset, self.mono(), ref
-        self.write(dict(k="clock", offset_ms=round(offset, 1), rtt_ms=round(rtt * 1000, 1), n=CLOCK_SAMPLES))
+            before = self.offset_ms            # None: never measured, or voided by a step (its line says by how much)
+            self.offset_ms, self.offset_at, self.offset_ref, self.offset_rtt_ms = offset, self.mono(), ref, rtt * 1000
+        self.write(dict(k="clock", offset_ms=round(offset, 1), rtt_ms=round(rtt * 1000, 1), n=CLOCK_SAMPLES,
+                        drift_ms=None if before is None else round(offset - before, 1)))
 
     def clock_loop(self):
         while not self.stop.is_set():
-            wait, floor = CLOCK_S, CLOCK_MIN_GAP_S
-            self.clock_wake.clear()            # a step seen from here on asks for the measurement after this one
+            wait, floor, banned = CLOCK_S, CLOCK_MIN_GAP_S, False
+            self.clock_wake.clear()            # a wake from here on asks for the measurement after this one
             try:
                 self.measure_clock()
             except Exception as e:  # noqa: BLE001  the offset only refines lag_ms
                 self.write(dict(k="clock", error=scrub(repr(e))))
-                if any(code in str(e) for code in ("429", "418")):
-                    wait = floor = 3600.0      # rate-limited / banned IP: stay away for an hour, clock step or not
+                banned = any(code in str(e) for code in ("429", "418"))
+            if banned:
+                wait = floor = 3600.0          # rate-limited / banned IP: stay away for an hour, clock step or not
+            elif self._offset()[0] is None:
+                wait = CLOCK_RETRY_S           # failed or too slow, and nothing to correct with: not 15 min of null
             self._clock_sleep(wait, floor)
 
     def _clock_sleep(self, wait: float, floor: float):
-        """Until the next measurement is due: `wait` seconds from now, or as soon as a clock step voided the offset
-        (clock_wake) - but then not before `floor` seconds, so that a clock that keeps jumping cannot turn into a
-        burst of requests. Looks for a step itself every CLOCK_POLL_S: on a quiet stream the offset is measured
-        again before the next push needs it, not after."""
+        """Until the next measurement is due: `wait` seconds from now, or as soon as one is asked for (clock_wake:
+        a clock step voided the offset, or an announcement came in and its offset is to be checked) - but then not
+        before `floor` seconds, so that a clock that keeps jumping or a burst of pushes cannot turn into a burst of
+        requests. Looks for a step itself every CLOCK_POLL_S: on a quiet stream the offset is measured again
+        before the next push needs it, not after."""
         start = self.mono()
         while not self.stop.is_set():
             woken = self.clock_wake.is_set()
             left = (min(floor, wait) if woken else wait) - (self.mono() - start)
             if left < 0.001:                   # due (a wait shorter than this could spin without getting anywhere)
                 return
-            if woken:                          # a step is known already; nothing to watch for until the floor
+            if woken:                          # a measurement is due at the floor anyway; nothing to watch for
                 self.stop.wait(left)
             else:
                 self.clock_wake.wait(min(CLOCK_POLL_S, left))
                 self._offset()
 
     def _offset(self, wall: float | None = None, mono: float | None = None):
-        """(offset_ms, age_s) for a message whose receive stamp is `wall`, with the monotonic clock read right after
-        it as `mono` (without them: for this very moment). offset_ms is None when there is nothing to correct with:
-        never measured, older than CLOCK_MAX_AGE_S, or the wall clock was stepped since the measurement.
-        A step is seen as the wall clock having moved against the monotonic clock (slewing moves both, a step only
-        the wall clock). It voids the offset until the next measurement, is logged once, and wakes the clock
-        thread. The stamp gets the same test: an offset measured after a step is not for a stamp taken before it.
+        """(offset_ms, age_s) of _correction()."""
+        return self._correction(wall, mono)[:2]
+
+    def _correction(self, wall: float | None = None, mono: float | None = None):
+        """(offset_ms, age_s, rtt_ms) for a message whose receive stamp is `wall`, with the monotonic clock read
+        right after it as `mono` (without them: for this very moment). rtt_ms is the round trip of the measurement
+        the offset came from. offset_ms is None when there is nothing to correct with: never measured, older than
+        CLOCK_MAX_AGE_S, or the wall clock was stepped since the measurement.
+        A step is seen as the wall clock having moved against the monotonic clock. It voids the offset until the
+        next measurement, is logged once, and wakes the clock thread. The stamp gets the same test: an offset
+        measured after a step is not for a stamp taken before it. What moves BOTH clocks is not seen: slewing, a
+        VM paused from outside (see the module text for what the file offers instead).
         Called for every push right after its receive stamp, and by the clock thread while it waits."""
         with self._clock_lock:
             if self.offset_ms is None or self.offset_at is None or self.offset_ref is None:
-                return None, None
+                return None, None, None
             now_mono, now_wall = self.mono(), self.clock()
             step = (now_wall - now_mono) - self.offset_ref
             if abs(step) > CLOCK_STEP_S:
                 self.offset_ms = self.offset_ref = None
                 self.write(dict(k="clock", event="step", delta_ms=round(step * 1000, 1)))
                 self.clock_wake.set()
-                return None, None
+                return None, None, None
             if wall is None or mono is None:
                 mono = now_mono
             elif abs((wall - mono) - self.offset_ref) > CLOCK_STEP_S:
-                return None, None              # stamped on the clock as it was before a step; the offset is newer
+                return None, None, None        # stamped on the clock as it was before a step; the offset is newer
             age = max(mono - self.offset_at, 0.0)
-            return (self.offset_ms, age) if age <= CLOCK_MAX_AGE_S else (None, age)
+            return (self.offset_ms, age, self.offset_rtt_ms) if age <= CLOCK_MAX_AGE_S else (None, age, None)
 
     # ── stream ──
     def run_once(self):
@@ -340,8 +430,8 @@ class Shadow:
                 except TimeoutError:
                     continue
                 recv_ms = self.clock() * 1000          # stamp first, everything else afterwards
-                off, age = self._offset(recv_ms / 1000, self.mono())
-                rec = parse_push(raw, recv_ms, off, age)
+                off, age, rtt = self._correction(recv_ms / 1000, self.mono())
+                rec = parse_push(raw, recv_ms, off, age, rtt)
                 if rec is None:
                     other += 1
                     if other <= MAX_OTHER_PER_CONN:
@@ -349,32 +439,54 @@ class Shadow:
                     continue
                 n += 1
                 self.write(rec)
+                self.clock_wake.set()                  # measure the clock again now: was this row's offset still true?
+
+    def _start_workers(self, name: str):
+        """(writer thread, clock thread), started."""
+        writer = threading.Thread(target=self._writer_worker, name=name + "-writer", daemon=True)
+        clock = threading.Thread(target=self.clock_loop, name=name + "-clock", daemon=True)
+        writer.start()
+        clock.start()
+        return writer, clock
+
+    def _shutdown(self, writer, clock):
+        """End of run(). The "stopped" row is the last one that is enqueued, and when this returns it and all rows
+        before it are in the file - unless the writer is stuck, which is waited for only for STOP_WRITER_S.
+        Budget: the last recv() ends within 1 s, closing the socket takes up to 3 s (close_timeout), then these
+        two waits: 8 s at most, under the TimeoutStopSec of the units (10 s, 15 s)."""
+        self.stop.set()
+        self.clock_wake.set()                  # out of its wait now, not at the next look-out
+        clock.join(timeout=STOP_CLOCK_S)       # its rows first (it only takes longer when a time request hangs)
+        self.write(dict(k="conn", event="stopped", dropped=self.dropped, write_failed=self.write_failed))
+        self._producers_done.set()
+        writer.join(timeout=STOP_WRITER_S)
 
     def run(self):
-        threading.Thread(target=self.writer_loop, name="ann-writer", daemon=True).start()
-        threading.Thread(target=self.clock_loop, name="ann-clock", daemon=True).start()
+        writer, clock = self._start_workers("ann")
         backoff, rejects = 1.0, 0
-        while not self.stop.is_set():
-            started = self.mono()
-            try:
-                self.run_once()
-                rejects = 0
-            except Rejected as e:
-                rejects += 1
-                self.write(dict(k="conn", event="rejected", status=e.status, order=self.order))
-                # maybe the other signing order is the right one: alternate on every rejection (the order that
-                # connects sticks). After the first quick retry the waits are minutes, so this never hammers.
-                self.order = "alpha" if self.order == "url" else "url"
-                backoff = 5.0 if rejects == 1 else min(REJECT_BACKOFF_S * 2 ** (rejects - 2), REJECT_BACKOFF_MAX_S)
+        try:
+            while not self.stop.is_set():
+                started = self.mono()
+                try:
+                    self.run_once()
+                    rejects = 0
+                except Rejected as e:
+                    rejects += 1
+                    self.write(dict(k="conn", event="rejected", status=e.status, order=self.order))
+                    # maybe the other signing order is the right one: alternate on every rejection (the order that
+                    # connects sticks). After the first quick retry the waits are minutes, so this never hammers.
+                    self.order = "alpha" if self.order == "url" else "url"
+                    backoff = (5.0 if rejects == 1
+                               else min(REJECT_BACKOFF_S * 2 ** (rejects - 2), REJECT_BACKOFF_MAX_S))
+                    self.stop.wait(backoff)
+                    continue
+                except Exception as e:  # noqa: BLE001  reconnect on any stream error
+                    rejects = 0
+                    self.write(dict(k="conn", event="error", detail=scrub(repr(e))))
+                backoff = 1.0 if self.mono() - started > 60 else min(backoff * 2, BACKOFF_MAX_S)
                 self.stop.wait(backoff)
-                continue
-            except Exception as e:  # noqa: BLE001  reconnect on any stream error
-                rejects = 0
-                self.write(dict(k="conn", event="error", detail=scrub(repr(e))))
-            backoff = 1.0 if self.mono() - started > 60 else min(backoff * 2, BACKOFF_MAX_S)
-            self.stop.wait(backoff)
-        self.write(dict(k="conn", event="stopped", dropped=self.dropped, write_failed=self.write_failed))
-        time.sleep(0.2)                        # let the writer flush the last lines
+        finally:
+            self._shutdown(writer, clock)
 
 
 _HTTP = None                  # one kept-alive client for the public time endpoint (see measure_clock)

@@ -11,12 +11,27 @@
 #                          tradebot:tradebot). ProtectSystem=strict keeps all of it read-only for this service.
 #   InaccessiblePaths=     What that group could open besides the code: /etc/tradebot (live.env is 640
 #                          root:tradebot) and the bot's state. No "-" prefix: a missing path fails the start.
+#                          And /var/log/tradebot: the bot's alert log (alerts-live.jsonl, the full text of its
+#                          Telegram messages) and the CI deploy logs - the CI import sandbox denies the same
+#                          directory (ci_deploy.sh, SANDBOX_DENY). With a "-" ("ignored when they do not
+#                          exist"): who may read that directory on the server was not checked, and this logger
+#                          needs nothing there (it logs to the journal).
 #   EnvironmentFile=       Still delivers the key: the file is "read from the file system of the service manager,
 #                          before any file system changes like bind mounts take place" - by root, not by this UID.
 #   ProtectProc=invisible  Processes of other users are hidden in /proc.   ProcSubset=pid: only /proc/<pid> is left.
 #   StateDirectory=        With DynamicUser the data is /var/lib/private/tradebot-ann-shadow (/var/lib/private is
 #                          closed to unprivileged users) and /var/lib/tradebot-ann-shadow is a symlink to it, so
 #                          the path in ExecStart holds. At every start the files are handed to that start's UID.
+#
+# What all of this does NOT do - read it before relying on the list above:
+#   - It keeps this service away from the BOT (its process, its key file, its state and logs). It does not keep
+#     the trading keys away from this service: EnvironmentFile=/etc/tradebot/live.env puts the bot's own
+#     BINANCE_API_KEY / BINANCE_API_SECRET into the environment of this process. Whoever takes over the logger
+#     has them. Closing that takes a key of its own without trading permission, in an env file of its own (as
+#     the Upbit logger has): the owner's decision, and whether the announcement stream accepts such a key has
+#     not been tried (the Binance doc only says "The API requires a user's API Key").
+#   - The other direction is open as well: tradebot owns /opt/tradebot/app (where the "current" link is) and the
+#     venv (as seen on the server 2026-11-17), so the bot's UID can change what this unit runs at its next start.
 #
 # Check first (a line that names this unit is a finding; a clean file prints none):
 #   sudo systemd-analyze verify /opt/tradebot/app/current/live_v6/deploy/tradebot-ann-shadow.service
@@ -76,7 +91,8 @@ Restart=always
 RestartSec=30
 KillSignal=SIGTERM
 TimeoutStopSec=10
-# isolation: its own state directory is the only writable place; the bot's keys and state are not even readable
+# isolation: nothing is writable but its own state directory and the private /tmp and /var/tmp of PrivateTmp=;
+# the bot's key FILE, state and logs cannot even be read. The key PAIR is in this process all the same (header).
 StateDirectory=tradebot-ann-shadow
 StateDirectoryMode=0700
 UMask=0077
@@ -88,7 +104,7 @@ PrivateDevices=true
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictAddressFamilies=AF_INET AF_INET6
-InaccessiblePaths=/etc/tradebot /var/lib/live_v6-live
+InaccessiblePaths=/etc/tradebot /var/lib/live_v6-live -/var/log/tradebot
 ProtectProc=invisible
 ProcSubset=pid
 MemoryMax=200M
