@@ -1,18 +1,73 @@
-# /etc/systemd/system/tradebot-ann-shadow.service — announcement WebSocket SHADOW latency logger.
+# /etc/systemd/system/tradebot-ann-shadow.service — Binance announcement WebSocket SHADOW latency logger.
 # Read-only: subscribes to Binance announcement pushes and logs when they reach this box. It never places,
-# changes or cancels an order and cannot write to the bot's state directory (its own StateDirectory only).
-# Install (ops + sudo), after the release that contains live_v6/tools/ann_ws_shadow.py is deployed:
+# changes or cancels an order.
+#
+# Isolation from the live bot (which runs as User=tradebot with the trading keys in its environment). What each
+# directive does is taken from the systemd 255 manual, systemd.exec(5) - this box runs systemd 255:
+#   DynamicUser=yes        A UID of its own while the service runs: it cannot read the bot's /proc/<pid>/environ and
+#                          cannot signal the bot. There is NO User= line on purpose ("If a statically allocated user
+#                          ... of the configured name already exists, it is used": User=tradebot would undo this).
+#   SupplementaryGroups=   Group tradebot, only to READ the code and the venv below /opt/tradebot (750
+#                          tradebot:tradebot). ProtectSystem=strict keeps all of it read-only for this service.
+#   InaccessiblePaths=     What that group could open besides the code: /etc/tradebot (live.env is 640
+#                          root:tradebot) and the bot's state. No "-" prefix: a missing path fails the start.
+#   EnvironmentFile=       Still delivers the key: the file is "read from the file system of the service manager,
+#                          before any file system changes like bind mounts take place" - by root, not by this UID.
+#   ProtectProc=invisible  Processes of other users are hidden in /proc.   ProcSubset=pid: only /proc/<pid> is left.
+#   StateDirectory=        With DynamicUser the data is /var/lib/private/tradebot-ann-shadow (/var/lib/private is
+#                          closed to unprivileged users) and /var/lib/tradebot-ann-shadow is a symlink to it, so
+#                          the path in ExecStart holds. At every start the files are handed to that start's UID.
+#
+# Check first (a line that names this unit is a finding; a clean file prints none):
+#   sudo systemd-analyze verify /opt/tradebot/app/current/live_v6/deploy/tradebot-ann-shadow.service
+#   grep -E '^tradebot-ann-shadow:' /etc/passwd /etc/group     # expect nothing (no static user of the unit's name)
+#
+# Install (ops + sudo), after the release that contains this file is deployed:
 #   sudo install -m 644 /opt/tradebot/app/current/live_v6/deploy/tradebot-ann-shadow.service /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now tradebot-ann-shadow
-#   sudo tail -f /var/lib/tradebot-ann-shadow/ann_ws_shadow.jsonl
-# Remove: sudo systemctl disable --now tradebot-ann-shadow && sudo rm /etc/systemd/system/tradebot-ann-shadow.service
+#
+# Migrate from the first version of this unit (User=tradebot; /var/lib/tradebot-ann-shadow is a real directory -
+# check with ls -ld). The manual describes the DynamicUser layout, not a move of an existing directory, so the
+# directory is moved into that layout by hand (mv -T: fails instead of nesting if the target already holds data):
+#   sudo systemctl stop tradebot-ann-shadow
+#   sudo cp -a /var/lib/tradebot-ann-shadow /root/tradebot-ann-shadow.bak-$(date -u +%Y%m%dT%H%M%SZ)
+#   sudo cp -p /etc/systemd/system/tradebot-ann-shadow.service /root/tradebot-ann-shadow.service.v1
+#   sudo install -m 644 /opt/tradebot/app/current/live_v6/deploy/tradebot-ann-shadow.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo test -d /var/lib/private || sudo install -d -m 700 -o root -g root /var/lib/private
+#   sudo mv -T /var/lib/tradebot-ann-shadow /var/lib/private/tradebot-ann-shadow
+#   sudo systemctl start tradebot-ann-shadow
+#
+# Verify:
+#   systemctl is-active tradebot-ann-shadow                              # active
+#   sudo journalctl -u tradebot-ann-shadow -n 30 --no-pager              # no Traceback, no "write failed"
+#   systemd-analyze security --no-pager tradebot-ann-shadow              # sandbox report of the loaded unit
+#   systemctl show tradebot-ann-shadow -p DynamicUser -p SupplementaryGroups -p InaccessiblePaths -p ProtectProc -p ProcSubset
+#   P=$(systemctl show -p MainPID --value tradebot-ann-shadow); sudo grep -E '^(Uid|Gid|Groups):' /proc/$P/status
+#   id tradebot       # the Uid above is NOT tradebot's but one of 61184..65519; Groups holds the gid of tradebot
+#   sudo ls -ld /var/lib/tradebot-ann-shadow /var/lib/private/tradebot-ann-shadow
+#                     # the first is a symlink to the second; the second is a 0700 directory owned by that Uid
+#   sudo tail -n 5 /var/lib/tradebot-ann-shadow/ann_ws_shadow.jsonl      # new "conn" / "clock" lines; the old ones kept
+# ProcSubset=pid is the one setting the manual calls unsuitable "for most non-trivial programs". This logger opens
+# nothing else in /proc as far as its code shows, but that could not be tried before this box. If the first start
+# fails in the journal for that reason: take that one line out, daemon-reload, start, and report it.
+#
+# Roll back to the first version: stop; sudo rm /var/lib/tradebot-ann-shadow (the symlink - no -r);
+#   sudo mv -T /var/lib/private/tradebot-ann-shadow /var/lib/tradebot-ann-shadow;
+#   sudo install -m 644 /root/tradebot-ann-shadow.service.v1 /etc/systemd/system/tradebot-ann-shadow.service;
+#   daemon-reload; start (StateDirectory= hands the directory back to tradebot at that start).
+#
+# Remove (keeps the measurements in /var/lib/private/tradebot-ann-shadow and the keys in /etc/tradebot):
+#   sudo systemctl disable --now tradebot-ann-shadow && sudo rm /etc/systemd/system/tradebot-ann-shadow.service
+#   sudo systemctl daemon-reload
 [Unit]
 Description=Binance announcement WebSocket shadow latency logger (read-only, never trades)
 After=network-online.target chrony.service
 Wants=network-online.target
 
 [Service]
-User=tradebot
+DynamicUser=yes
+SupplementaryGroups=tradebot
 WorkingDirectory=/opt/tradebot/app/current
 EnvironmentFile=/etc/tradebot/live.env
 Environment=WEBSOCKETS_MAX_REDIRECTS=1
@@ -21,7 +76,7 @@ Restart=always
 RestartSec=30
 KillSignal=SIGTERM
 TimeoutStopSec=10
-# isolation: own state dir only; the bot's /var/lib/live_v6-live is not writable from here
+# isolation: its own state directory is the only writable place; the bot's keys and state are not even readable
 StateDirectory=tradebot-ann-shadow
 StateDirectoryMode=0700
 UMask=0077
@@ -33,6 +88,9 @@ PrivateDevices=true
 ProtectKernelTunables=true
 ProtectControlGroups=true
 RestrictAddressFamilies=AF_INET AF_INET6
+InaccessiblePaths=/etc/tradebot /var/lib/live_v6-live
+ProtectProc=invisible
+ProcSubset=pid
 MemoryMax=200M
 CPUQuota=20%
 
