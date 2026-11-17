@@ -1,0 +1,4227 @@
+{
+  "source_sha256": {
+    "p76_upbit_list_long/events.json": "b146a95674f5e40af43872681901e8289df823e566fcb48fdff564a640cde2de",
+    "p76_upbit_list_long/events_parsed.json": "9d16226cf9f25287f24c7acf383dc8c068e12026763bad41285c0e4d94ac7a95",
+    "p76_upbit_list_long/events_ready.json": "f50d7a24a110ca45b9e7ec7f6decd3a58a7df9f9ca4d5765ba158b41975a43c9",
+    "p109_upbit_warning_short/events.json": "ae885983ddd2b23df49be2bbf201d65c2f49d4da833155855dddbf08f55ec484",
+    "p109_upbit_warning_short/events_raw.json": "edd7ee25fe1cc112f5d96490334c36b2269d9d7e03de50d298562541fca8294f",
+    "p76_upbit_list_long/notices_all.json": "3ddd262994aecce217d1e45957532a944319de1c51845b18b170fdfb5574fe9b"
+  },
+  "rows": [
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4032,
+      "title": "KRW 마켓 디지털 자산 추가 (ID)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "ID"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4070,
+      "title": "KRW, BTC 마켓 디지털 자산 추가 (ALT, PYTH)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "ALT",
+        "PYTH"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4172,
+      "title": "빅타임(BIGTIME), 아카시네트워크(AKT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (AKT 거래지원 개시 시점 연기 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "BIGTIME",
+        "AKT"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4192,
+      "title": "제타체인(ZETA), 옴니네트워크(OMNI) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "ZETA",
+        "OMNI"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4253,
+      "title": "바운스토큰(AUCTION) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4257,
+      "title": "스타게이트파이낸스(STG) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4268,
+      "title": "타이코(TAIKO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4288,
+      "title": "온도파이낸스(ONDO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4307,
+      "title": "레이어제로(ZRO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 연기 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4346,
+      "title": "주피터(JUP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 연기 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4355,
+      "title": "이더리움네임서비스(ENS) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4419,
+      "title": "펜들(PENDLE) 신규 거래지원 안내 (KRW, BTC 마켓) (가상자산 정보 제공 강화에 관한 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4434,
+      "title": "에이셔(ATH) 신규 거래지원 안내 (KRW, BTC 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4465,
+      "title": "유에스디코인(USDC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4477,
+      "title": "유엑스링크(UXLINK) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4482,
+      "title": "빅타임(BIGTIME) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4496,
+      "title": "너보스(CKB) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 연기 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4537,
+      "title": "웜홀(W) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "W"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4557,
+      "title": "카브(CARV) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4562,
+      "title": "인젝티브(INJ) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4569,
+      "title": "캣인어독스월드(MEW) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4575,
+      "title": "유니스왑(UNI) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4581,
+      "title": "세이프(SAFE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4625,
+      "title": "드리프트(DRIFT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4641,
+      "title": "어드벤처골드(AGLD) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4696,
+      "title": "렌더토큰(RENDER) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4706,
+      "title": "무브먼트(MOVE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4713,
+      "title": "매직에덴(ME) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매수 대기 기간 연장 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4723,
+      "title": "모카버스(MOCA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (명칭 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4729,
+      "title": "바나(VANA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매수 대기 기간 연장 및 최저 매도가 기준 가격 추가 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4778,
+      "title": "소닉SVM(SONIC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 및 매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "SONIC"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4811,
+      "title": "비토르토큰(VTHO) 신규 거래지원 안내 (KRW, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4822,
+      "title": "애니메코인(ANIME) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 및 매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4836,
+      "title": "버추얼프로토콜(VIRTUAL) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4849,
+      "title": "베라체인(BERA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 및 매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4863,
+      "title": "솔레이어(LAYER) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 및 매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4870,
+      "title": "오피셜트럼프(TRUMP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4894,
+      "title": "지토(JTO) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4906,
+      "title": "카우프로토콜(COW) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4928,
+      "title": "카이토(KAITO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4944,
+      "title": "아캄(ARKM) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4973,
+      "title": "오르카(ORCA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 4992,
+      "title": "월러스(WAL) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 및 매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5007,
+      "title": "컴파운드(COMP) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5015,
+      "title": "파일코인(FIL) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5041,
+      "title": "월렛커넥트(WCT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5055,
+      "title": "딥북(DEEP) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5076,
+      "title": "사인(SIGN) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5100,
+      "title": "셀레스티아(TIA)(KRW, BTC, USDT 마켓), 아이오넷(IO)(BTC, USDT 마켓) 신규 거래지원 안내 (주문 타입 제한 관련 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "TIA",
+        "IO"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5104,
+      "title": "펏지펭귄(PENGU) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5118,
+      "title": "넥스페이스(NXPC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5144,
+      "title": "만트라(OM) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5171,
+      "title": "소폰(SOPH) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 및 매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5183,
+      "title": "라이브피어(LPT)(KRW, USDT 마켓), 포켓네트워크(POKT)(KRW 마켓) 디지털 자산 추가",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "LPT",
+        "POKT"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5204,
+      "title": "레이븐코인(RVN) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5218,
+      "title": "엑셀라(AXL) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5239,
+      "title": "알트레이어(ALT) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5248,
+      "title": "레이디움(RAY) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5268,
+      "title": "뉴턴프로토콜(NEWT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5272,
+      "title": "사하라에이아이(SAHARA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5285,
+      "title": "무뎅(MOODENG) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5305,
+      "title": "하이퍼레인(HYPER) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5314,
+      "title": "에테나(ENA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5333,
+      "title": "칼데라(ERA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5363,
+      "title": "메이플파이낸스(SYRUP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5368,
+      "title": "옵티미즘(OP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5375,
+      "title": "옴니네트워크(OMNI) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5394,
+      "title": "서싱트(PROVE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5397,
+      "title": "스토리(IP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5409,
+      "title": "사이버(CYBER) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5429,
+      "title": "에이피아이쓰리(API3) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "API3"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5442,
+      "title": "에어로드롬파이낸스(AERO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5456,
+      "title": "트리하우스(TREE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5462,
+      "title": "월드리버티파이낸셜(WLFI) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5486,
+      "title": "레드스톤(RED) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5494,
+      "title": "플록(FLOCK) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5497,
+      "title": "월드코인(WLD) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5498,
+      "title": "오픈렛저(OPEN) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5503,
+      "title": "리네아(LINEA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5508,
+      "title": "홀로월드에이아이(HOLO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5509,
+      "title": "펌프펀(PUMP) 신규 거래지원 안내 (KRW, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5519,
+      "title": "아반티스(AVNT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5522,
+      "title": "바운드리스(ZKC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5526,
+      "title": "토시(TOSHI) 신규 거래지원 안내 (KRW, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5536,
+      "title": "롬바드(BARD) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (유통량 계획표 수정 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5537,
+      "title": "라그랑주(LA) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5549,
+      "title": "썬(SUN) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5570,
+      "title": "플루이드(FLUID) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5572,
+      "title": "플라즈마(XPL) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5585,
+      "title": "미라네트워크(MIRA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5589,
+      "title": "슈퍼버스(SUPER) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5592,
+      "title": "팔콘파이낸스(FF) 신규 거래지원 안내 (KRW, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5599,
+      "title": "솜니아(SOMI) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5624,
+      "title": "두들즈(DOOD) 신규 거래지원 안내 (KRW, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5628,
+      "title": "인피닛(IN) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5644,
+      "title": "일드길드게임즈(YGG) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5648,
+      "title": "조라(ZORA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5654,
+      "title": "제로베이스(ZBT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5662,
+      "title": "바이오프로토콜(BIO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5666,
+      "title": "신퓨처스(F) 신규 거래지원 안내 (KRW, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "F"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5681,
+      "title": "오덜리(ORDER) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5693,
+      "title": "커널다오(KERNEL) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5697,
+      "title": "엔소(ENSO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5716,
+      "title": "카이트(KITE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5724,
+      "title": "모멘텀(MMT) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5727,
+      "title": "인튜이션(TRUST) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5790,
+      "title": "모나드(MON) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5796,
+      "title": "플룸(PLUME) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5860,
+      "title": "휴미디파이(WET) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (추가 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5885,
+      "title": "지케이패스(ZKP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5900,
+      "title": "테더골드(XAUT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5913,
+      "title": "지케이싱크(ZK) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5914,
+      "title": "브레비스(BREV) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5953,
+      "title": "헤이엘사(ELSA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5973,
+      "title": "센티언트(SENT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 5990,
+      "title": "문버드(BIRB) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6021,
+      "title": "비트텐서(TAO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6025,
+      "title": "아즈텍(AZTEC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6037,
+      "title": "시커(SKR) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6038,
+      "title": "에스프레소(ESP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6043,
+      "title": "센트리퓨즈(CFG) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6057,
+      "title": "디피니티브(EDGE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6069,
+      "title": "인터넷컴퓨터(ICP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6079,
+      "title": "이더파이(ETHFI) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6097,
+      "title": "카타나(KAT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (명칭 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6102,
+      "title": "스카이프로토콜(SKY), 유에스디에스(USDS) KRW, USDT 마켓 디지털 자산 추가 (USDS 거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "SKY",
+        "USDS"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6144,
+      "title": "캔톤(CC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (입출금 서비스 개시 안내 및 거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "CC"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6146,
+      "title": "자마(ZAMA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6150,
+      "title": "쑨(SOON) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6154,
+      "title": "파이버스(PIEVERSE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6158,
+      "title": "유에스디에이아이(CHIP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6162,
+      "title": "스파크(SPK) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6171,
+      "title": "오닉스코인(XCN) 신규 거래지원 안내 (KRW, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6173,
+      "title": "펄(PRL) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (유통량 이슈에 대한 소명 및 거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6184,
+      "title": "메가이더(MEGA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6197,
+      "title": "도그위프햇(WIF) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6201,
+      "title": "비쓰리(B3) KRW 마켓 디지털 자산 추가 (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "B3"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6215,
+      "title": "베니스토큰(VVV) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6222,
+      "title": "아이리스(IRYS) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6255,
+      "title": "아이오넷(IO) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6258,
+      "title": "솔스티스(SLX) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 추가 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6274,
+      "title": "바빌론(BABY) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6294,
+      "title": "에스피엑스6900(SPX) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "SPX"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6303,
+      "title": "리(RE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6314,
+      "title": "아르키움(ARX) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6335,
+      "title": "젠신(AI) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "AI"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6360,
+      "title": "오픈그라디언트(OPG) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6404,
+      "title": "오원익스체인지(O) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "O"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6411,
+      "title": "모포(MORPHO) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6414,
+      "title": "오일러(EUL) KRW 마켓 디지털 자산 추가 (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6428,
+      "title": "콘플럭스(CFX) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6437,
+      "title": "디파이앱(HOME) 신규 거래지원 안내 (KRW, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6441,
+      "title": "그래비티토큰(GRVT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6446,
+      "title": "캡(CAP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6450,
+      "title": "카미노파이낸스(KMNO) KRW 마켓 디지털 자산 추가 (거래지원 개시 시점 추가 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6451,
+      "title": "블록스트리트(BSB) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6463,
+      "title": "댑오에스(DOS) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 추가 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6466,
+      "title": "프롬(PROM) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6490,
+      "title": "커브(CRV) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6504,
+      "title": "라이터(LIT) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6642,
+      "title": "뉴메레르(NMR) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6644,
+      "title": "폰즈(PONS) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6645,
+      "title": "카이아(KAIA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (KAIA/BTC 초기 매수 제한 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "KAIA"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6651,
+      "title": "리저브라이트(RSR) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6653,
+      "title": "깃코인(GTC) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6659,
+      "title": "퍼퍼(PUFFER) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6675,
+      "title": "콘크리트(CT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6700,
+      "title": "버블맵스(BMT) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events.json",
+      "id": 6714,
+      "title": "닐리온(NIL) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6714,
+      "title": "닐리온(NIL) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6700,
+      "title": "버블맵스(BMT) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6687,
+      "title": "액시스로보틱스(AXIS) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6680,
+      "title": "메타플렉스(MPLX) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6675,
+      "title": "콘크리트(CT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6659,
+      "title": "퍼퍼(PUFFER) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6653,
+      "title": "깃코인(GTC) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6651,
+      "title": "리저브라이트(RSR) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6645,
+      "title": "카이아(KAIA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (KAIA/BTC 초기 매수 제한 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "KAIA"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6644,
+      "title": "폰즈(PONS) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6642,
+      "title": "뉴메레르(NMR) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6635,
+      "title": "돌핀(POD) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6618,
+      "title": "캐시캣(CASHCAT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6580,
+      "title": "페이팔유에스디(PYUSD), 제이피와이코인(JPYC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (JPYC 거래지원 개시 시점 추가 변경 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "PYUSD",
+        "JPYC"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6561,
+      "title": "바이프로스트(BFC) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6555,
+      "title": "클러스터프로토콜(CP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6526,
+      "title": "이유알코인(EURC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6518,
+      "title": "폴리스웜(NCT) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6504,
+      "title": "라이터(LIT) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6503,
+      "title": "인터폴드(FOLD) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6490,
+      "title": "커브(CRV) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6466,
+      "title": "프롬(PROM) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6463,
+      "title": "댑오에스(DOS) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 추가 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6450,
+      "title": "카미노파이낸스(KMNO) KRW 마켓 디지털 자산 추가 (거래지원 개시 시점 추가 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6451,
+      "title": "블록스트리트(BSB) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6446,
+      "title": "캡(CAP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6441,
+      "title": "그래비티토큰(GRVT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6440,
+      "title": "스퀴드(QUID) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6437,
+      "title": "디파이앱(HOME) 신규 거래지원 안내 (KRW, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6428,
+      "title": "콘플럭스(CFX) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6424,
+      "title": "글로벌달러(USDG) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 추가 변경 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "USDG"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6420,
+      "title": "메타다오(META2) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "META2"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6418,
+      "title": "리플유에스디(RLUSD) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6415,
+      "title": "지오드넷(GEOD) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 추가 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6414,
+      "title": "오일러(EUL) KRW 마켓 디지털 자산 추가 (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6411,
+      "title": "모포(MORPHO) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6404,
+      "title": "오원익스체인지(O) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "O"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6383,
+      "title": "디라이브(DRV) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6360,
+      "title": "오픈그라디언트(OPG) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6335,
+      "title": "젠신(AI) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "AI"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6314,
+      "title": "아르키움(ARX) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6303,
+      "title": "리(RE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6294,
+      "title": "에스피엑스6900(SPX) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "SPX"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6274,
+      "title": "바빌론(BABY) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6258,
+      "title": "솔스티스(SLX) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 추가 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6255,
+      "title": "아이오넷(IO) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6226,
+      "title": "오리진트레일(TRAC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6222,
+      "title": "아이리스(IRYS) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6218,
+      "title": "슈퍼폼(UP2) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 일정 정정 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "UP2"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6215,
+      "title": "베니스토큰(VVV) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6207,
+      "title": "파로스(PROS) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6201,
+      "title": "비쓰리(B3) KRW 마켓 디지털 자산 추가 (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "B3"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6197,
+      "title": "도그위프햇(WIF) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6184,
+      "title": "메가이더(MEGA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6178,
+      "title": "플루언트(BLEND) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6173,
+      "title": "펄(PRL) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (유통량 이슈에 대한 소명 및 거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6171,
+      "title": "오닉스코인(XCN) 신규 거래지원 안내 (KRW, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6162,
+      "title": "스파크(SPK) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6158,
+      "title": "유에스디에이아이(CHIP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6154,
+      "title": "파이버스(PIEVERSE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6150,
+      "title": "쑨(SOON) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6144,
+      "title": "캔톤(CC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (입출금 서비스 개시 안내 및 거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "CC"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6146,
+      "title": "자마(ZAMA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6102,
+      "title": "스카이프로토콜(SKY), 유에스디에스(USDS) KRW, USDT 마켓 디지털 자산 추가 (USDS 거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "SKY",
+        "USDS"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6097,
+      "title": "카타나(KAT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (명칭 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6079,
+      "title": "이더파이(ETHFI) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6069,
+      "title": "인터넷컴퓨터(ICP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6057,
+      "title": "디피니티브(EDGE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6043,
+      "title": "센트리퓨즈(CFG) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6038,
+      "title": "에스프레소(ESP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6037,
+      "title": "시커(SKR) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6025,
+      "title": "아즈텍(AZTEC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 6021,
+      "title": "비트텐서(TAO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5990,
+      "title": "문버드(BIRB) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5973,
+      "title": "센티언트(SENT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5953,
+      "title": "헤이엘사(ELSA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5934,
+      "title": "유에스디이(USDE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5914,
+      "title": "브레비스(BREV) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5913,
+      "title": "지케이싱크(ZK) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5900,
+      "title": "테더골드(XAUT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5885,
+      "title": "지케이패스(ZKP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5860,
+      "title": "휴미디파이(WET) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (추가 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5796,
+      "title": "플룸(PLUME) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5790,
+      "title": "모나드(MON) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5769,
+      "title": "메테오라(MET2) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "MET2"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5727,
+      "title": "인튜이션(TRUST) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5724,
+      "title": "모멘텀(MMT) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5716,
+      "title": "카이트(KITE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5697,
+      "title": "엔소(ENSO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5693,
+      "title": "커널다오(KERNEL) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5681,
+      "title": "오덜리(ORDER) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5671,
+      "title": "클리어풀(CPOOL) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5666,
+      "title": "신퓨처스(F) 신규 거래지원 안내 (KRW, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "F"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5662,
+      "title": "바이오프로토콜(BIO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5654,
+      "title": "제로베이스(ZBT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5648,
+      "title": "조라(ZORA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5644,
+      "title": "일드길드게임즈(YGG) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5628,
+      "title": "인피닛(IN) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5624,
+      "title": "두들즈(DOOD) 신규 거래지원 안내 (KRW, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5606,
+      "title": "더블제로(2Z) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "2Z"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5599,
+      "title": "솜니아(SOMI) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5592,
+      "title": "팔콘파이낸스(FF) 신규 거래지원 안내 (KRW, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5589,
+      "title": "슈퍼버스(SUPER) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5585,
+      "title": "미라네트워크(MIRA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5572,
+      "title": "플라즈마(XPL) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5570,
+      "title": "플루이드(FLUID) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5551,
+      "title": "제로지(0G) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 및 매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "0G"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5549,
+      "title": "썬(SUN) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5536,
+      "title": "롬바드(BARD) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (유통량 계획표 수정 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5537,
+      "title": "라그랑주(LA) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5526,
+      "title": "토시(TOSHI) 신규 거래지원 안내 (KRW, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5522,
+      "title": "바운드리스(ZKC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5519,
+      "title": "아반티스(AVNT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5509,
+      "title": "펌프펀(PUMP) 신규 거래지원 안내 (KRW, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5508,
+      "title": "홀로월드에이아이(HOLO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5503,
+      "title": "리네아(LINEA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5498,
+      "title": "오픈렛저(OPEN) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5497,
+      "title": "월드코인(WLD) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5494,
+      "title": "플록(FLOCK) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5486,
+      "title": "레드스톤(RED) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5462,
+      "title": "월드리버티파이낸셜(WLFI) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5463,
+      "title": "월드리버티파이낸셜유에스디(USD1) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "USD1"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5456,
+      "title": "트리하우스(TREE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5442,
+      "title": "에어로드롬파이낸스(AERO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5429,
+      "title": "에이피아이쓰리(API3) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "API3"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5409,
+      "title": "사이버(CYBER) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5397,
+      "title": "스토리(IP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5394,
+      "title": "서싱트(PROVE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5375,
+      "title": "옴니네트워크(OMNI) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5368,
+      "title": "옵티미즘(OP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5363,
+      "title": "메이플파이낸스(SYRUP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5333,
+      "title": "칼데라(ERA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5314,
+      "title": "에테나(ENA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5305,
+      "title": "하이퍼레인(HYPER) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5285,
+      "title": "무뎅(MOODENG) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5272,
+      "title": "사하라에이아이(SAHARA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5268,
+      "title": "뉴턴프로토콜(NEWT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5248,
+      "title": "레이디움(RAY) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5239,
+      "title": "알트레이어(ALT) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5218,
+      "title": "엑셀라(AXL) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5204,
+      "title": "레이븐코인(RVN) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5183,
+      "title": "라이브피어(LPT)(KRW, USDT 마켓), 포켓네트워크(POKT)(KRW 마켓) 디지털 자산 추가",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "LPT",
+        "POKT"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5171,
+      "title": "소폰(SOPH) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 및 매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5144,
+      "title": "만트라(OM) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5118,
+      "title": "넥스페이스(NXPC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5104,
+      "title": "펏지펭귄(PENGU) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5100,
+      "title": "셀레스티아(TIA)(KRW, BTC, USDT 마켓), 아이오넷(IO)(BTC, USDT 마켓) 신규 거래지원 안내 (주문 타입 제한 관련 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "TIA",
+        "IO"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5076,
+      "title": "사인(SIGN) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5055,
+      "title": "딥북(DEEP) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5041,
+      "title": "월렛커넥트(WCT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5015,
+      "title": "파일코인(FIL) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 5007,
+      "title": "컴파운드(COMP) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4992,
+      "title": "월러스(WAL) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 및 매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4973,
+      "title": "오르카(ORCA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4944,
+      "title": "아캄(ARKM) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4928,
+      "title": "카이토(KAITO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4906,
+      "title": "카우프로토콜(COW) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4894,
+      "title": "지토(JTO) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4870,
+      "title": "오피셜트럼프(TRUMP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4863,
+      "title": "솔레이어(LAYER) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 및 매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4849,
+      "title": "베라체인(BERA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 및 매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4836,
+      "title": "버추얼프로토콜(VIRTUAL) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4822,
+      "title": "애니메코인(ANIME) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 및 매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4811,
+      "title": "비토르토큰(VTHO) 신규 거래지원 안내 (KRW, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4778,
+      "title": "소닉SVM(SONIC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 및 매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "SONIC"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4729,
+      "title": "바나(VANA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매수 대기 기간 연장 및 최저 매도가 기준 가격 추가 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4723,
+      "title": "모카버스(MOCA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (명칭 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4713,
+      "title": "매직에덴(ME) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매수 대기 기간 연장 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4706,
+      "title": "무브먼트(MOVE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4696,
+      "title": "렌더토큰(RENDER) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4656,
+      "title": "봉크(BONK) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4642,
+      "title": "페페(PEPE) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4641,
+      "title": "어드벤처골드(AGLD) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4625,
+      "title": "드리프트(DRIFT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4581,
+      "title": "세이프(SAFE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4575,
+      "title": "유니스왑(UNI) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4569,
+      "title": "캣인어독스월드(MEW) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4562,
+      "title": "인젝티브(INJ) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4557,
+      "title": "카브(CARV) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4537,
+      "title": "웜홀(W) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "W"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4496,
+      "title": "너보스(CKB) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 연기 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4482,
+      "title": "빅타임(BIGTIME) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4477,
+      "title": "유엑스링크(UXLINK) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4465,
+      "title": "유에스디코인(USDC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4434,
+      "title": "에이셔(ATH) 신규 거래지원 안내 (KRW, BTC 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4419,
+      "title": "펜들(PENDLE) 신규 거래지원 안내 (KRW, BTC 마켓) (가상자산 정보 제공 강화에 관한 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4363,
+      "title": "갤럭시(GAL) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4355,
+      "title": "이더리움네임서비스(ENS) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4346,
+      "title": "주피터(JUP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 연기 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4317,
+      "title": "블라스트(BLAST) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 주문 제한 기준 가격 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4307,
+      "title": "레이어제로(ZRO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 연기 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4288,
+      "title": "온도파이낸스(ONDO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4273,
+      "title": "테더(USDT) KRW, BTC 마켓 추가 안내 (출금 개시 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "USDT"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4268,
+      "title": "타이코(TAIKO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4261,
+      "title": "빔(BEAM) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4257,
+      "title": "스타게이트파이낸스(STG) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4253,
+      "title": "바운스토큰(AUCTION) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4192,
+      "title": "제타체인(ZETA), 옴니네트워크(OMNI) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "ZETA",
+        "OMNI"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4172,
+      "title": "빅타임(BIGTIME), 아카시네트워크(AKT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (AKT 거래지원 개시 시점 연기 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "BIGTIME",
+        "AKT"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4133,
+      "title": "KRW, BTC, USDT 마켓 디지털 자산 추가 (MNT, POKT) (POKT 거래지원 개시 시점 연기 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "MNT",
+        "POKT"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4070,
+      "title": "KRW, BTC 마켓 디지털 자산 추가 (ALT, PYTH)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "ALT",
+        "PYTH"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_parsed.json",
+      "id": 4032,
+      "title": "KRW 마켓 디지털 자산 추가 (ID)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "ID"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4032,
+      "title": "KRW 마켓 디지털 자산 추가 (ID)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "ID"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4070,
+      "title": "KRW, BTC 마켓 디지털 자산 추가 (ALT, PYTH)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "ALT",
+        "PYTH"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4192,
+      "title": "제타체인(ZETA), 옴니네트워크(OMNI) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "ZETA",
+        "OMNI"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4253,
+      "title": "바운스토큰(AUCTION) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4257,
+      "title": "스타게이트파이낸스(STG) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4288,
+      "title": "온도파이낸스(ONDO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4346,
+      "title": "주피터(JUP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 연기 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4355,
+      "title": "이더리움네임서비스(ENS) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4419,
+      "title": "펜들(PENDLE) 신규 거래지원 안내 (KRW, BTC 마켓) (가상자산 정보 제공 강화에 관한 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4465,
+      "title": "유에스디코인(USDC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4482,
+      "title": "빅타임(BIGTIME) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4496,
+      "title": "너보스(CKB) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 연기 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4537,
+      "title": "웜홀(W) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "W"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4562,
+      "title": "인젝티브(INJ) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4569,
+      "title": "캣인어독스월드(MEW) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4575,
+      "title": "유니스왑(UNI) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4641,
+      "title": "어드벤처골드(AGLD) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4696,
+      "title": "렌더토큰(RENDER) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4836,
+      "title": "버추얼프로토콜(VIRTUAL) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4870,
+      "title": "오피셜트럼프(TRUMP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4894,
+      "title": "지토(JTO) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4906,
+      "title": "카우프로토콜(COW) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4928,
+      "title": "카이토(KAITO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4944,
+      "title": "아캄(ARKM) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 4973,
+      "title": "오르카(ORCA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5007,
+      "title": "컴파운드(COMP) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5015,
+      "title": "파일코인(FIL) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5041,
+      "title": "월렛커넥트(WCT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5076,
+      "title": "사인(SIGN) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5100,
+      "title": "셀레스티아(TIA)(KRW, BTC, USDT 마켓), 아이오넷(IO)(BTC, USDT 마켓) 신규 거래지원 안내 (주문 타입 제한 관련 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "TIA",
+        "IO"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5104,
+      "title": "펏지펭귄(PENGU) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5144,
+      "title": "만트라(OM) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5183,
+      "title": "라이브피어(LPT)(KRW, USDT 마켓), 포켓네트워크(POKT)(KRW 마켓) 디지털 자산 추가",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "LPT",
+        "POKT"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5204,
+      "title": "레이븐코인(RVN) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5218,
+      "title": "엑셀라(AXL) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5239,
+      "title": "알트레이어(ALT) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5248,
+      "title": "레이디움(RAY) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5268,
+      "title": "뉴턴프로토콜(NEWT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5285,
+      "title": "무뎅(MOODENG) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5305,
+      "title": "하이퍼레인(HYPER) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5314,
+      "title": "에테나(ENA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5363,
+      "title": "메이플파이낸스(SYRUP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5368,
+      "title": "옵티미즘(OP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5375,
+      "title": "옴니네트워크(OMNI) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5394,
+      "title": "서싱트(PROVE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5397,
+      "title": "스토리(IP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5409,
+      "title": "사이버(CYBER) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5429,
+      "title": "에이피아이쓰리(API3) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "API3"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5442,
+      "title": "에어로드롬파이낸스(AERO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5456,
+      "title": "트리하우스(TREE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5462,
+      "title": "월드리버티파이낸셜(WLFI) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5486,
+      "title": "레드스톤(RED) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5497,
+      "title": "월드코인(WLD) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5498,
+      "title": "오픈렛저(OPEN) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5503,
+      "title": "리네아(LINEA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5509,
+      "title": "펌프펀(PUMP) 신규 거래지원 안내 (KRW, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5519,
+      "title": "아반티스(AVNT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5537,
+      "title": "라그랑주(LA) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5549,
+      "title": "썬(SUN) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5572,
+      "title": "플라즈마(XPL) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5589,
+      "title": "슈퍼버스(SUPER) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5599,
+      "title": "솜니아(SOMI) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5624,
+      "title": "두들즈(DOOD) 신규 거래지원 안내 (KRW, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5628,
+      "title": "인피닛(IN) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5644,
+      "title": "일드길드게임즈(YGG) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5648,
+      "title": "조라(ZORA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5662,
+      "title": "바이오프로토콜(BIO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5666,
+      "title": "신퓨처스(F) 신규 거래지원 안내 (KRW, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "F"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5681,
+      "title": "오덜리(ORDER) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5693,
+      "title": "커널다오(KERNEL) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5697,
+      "title": "엔소(ENSO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5716,
+      "title": "카이트(KITE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5724,
+      "title": "모멘텀(MMT) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5790,
+      "title": "모나드(MON) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5796,
+      "title": "플룸(PLUME) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5860,
+      "title": "휴미디파이(WET) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (추가 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5885,
+      "title": "지케이패스(ZKP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5913,
+      "title": "지케이싱크(ZK) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5914,
+      "title": "브레비스(BREV) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5973,
+      "title": "센티언트(SENT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 5990,
+      "title": "문버드(BIRB) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6021,
+      "title": "비트텐서(TAO) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6025,
+      "title": "아즈텍(AZTEC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6037,
+      "title": "시커(SKR) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6038,
+      "title": "에스프레소(ESP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6069,
+      "title": "인터넷컴퓨터(ICP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6079,
+      "title": "이더파이(ETHFI) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6097,
+      "title": "카타나(KAT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (명칭 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6102,
+      "title": "스카이프로토콜(SKY), 유에스디에스(USDS) KRW, USDT 마켓 디지털 자산 추가 (USDS 거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "SKY",
+        "USDS"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6144,
+      "title": "캔톤(CC) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (입출금 서비스 개시 안내 및 거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "CC"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6146,
+      "title": "자마(ZAMA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6150,
+      "title": "쑨(SOON) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6154,
+      "title": "파이버스(PIEVERSE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6158,
+      "title": "유에스디에이아이(CHIP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6162,
+      "title": "스파크(SPK) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6173,
+      "title": "펄(PRL) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (유통량 이슈에 대한 소명 및 거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6184,
+      "title": "메가이더(MEGA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (매도 최저가 기준 가격 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6197,
+      "title": "도그위프햇(WIF) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6215,
+      "title": "베니스토큰(VVV) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6222,
+      "title": "아이리스(IRYS) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6255,
+      "title": "아이오넷(IO) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6274,
+      "title": "바빌론(BABY) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6294,
+      "title": "에스피엑스6900(SPX) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "SPX"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6303,
+      "title": "리(RE) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6360,
+      "title": "오픈그라디언트(OPG) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6404,
+      "title": "오원익스체인지(O) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "O"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6411,
+      "title": "모포(MORPHO) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6414,
+      "title": "오일러(EUL) KRW 마켓 디지털 자산 추가 (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6428,
+      "title": "콘플럭스(CFX) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6437,
+      "title": "디파이앱(HOME) 신규 거래지원 안내 (KRW, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6441,
+      "title": "그래비티토큰(GRVT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6446,
+      "title": "캡(CAP) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6450,
+      "title": "카미노파이낸스(KMNO) KRW 마켓 디지털 자산 추가 (거래지원 개시 시점 추가 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6451,
+      "title": "블록스트리트(BSB) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6466,
+      "title": "프롬(PROM) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6490,
+      "title": "커브(CRV) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6504,
+      "title": "라이터(LIT) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6642,
+      "title": "뉴메레르(NMR) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6644,
+      "title": "폰즈(PONS) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6645,
+      "title": "카이아(KAIA) 신규 거래지원 안내 (KRW, BTC, USDT 마켓) (KAIA/BTC 초기 매수 제한 안내)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "KAIA"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6651,
+      "title": "리저브라이트(RSR) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6653,
+      "title": "깃코인(GTC) KRW, USDT 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6675,
+      "title": "콘크리트(CT) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6700,
+      "title": "버블맵스(BMT) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p76_upbit_list_long/events_ready.json",
+      "id": 6714,
+      "title": "닐리온(NIL) KRW 마켓 디지털 자산 추가",
+      "expected": "upbit_list_krw"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 4021,
+      "title": "리플(XRP) 투자 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 4178,
+      "title": "오리진프로토콜(OGN) 투자 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 4179,
+      "title": "오션프로토콜(OCEAN) 투자 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 4181,
+      "title": "리스크(LSK) 네트워크 전환 및 투자 유의 촉구 안내",
+      "expected": null,
+      "tickers": [
+        "LSK"
+      ]
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 4215,
+      "title": "스택스(STX) 투자 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 4653,
+      "title": "스톰엑스(STMX) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 4789,
+      "title": "아이오에스티(IOST) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 4962,
+      "title": "하이파이(HIFI) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 4995,
+      "title": "하이파이(HIFI) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 5063,
+      "title": "신세틱스(SNX) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 5193,
+      "title": "너보스(CKB) 유의 촉구 안내",
+      "expected": null,
+      "tickers": [
+        "CKB"
+      ]
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 5266,
+      "title": "신세틱스(SNX) 거래 유의 종목 지정 해제 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 5448,
+      "title": "스타게이트파이낸스(STG), 레이어제로(ZRO) 유의 촉구 안내",
+      "expected": null,
+      "tickers": [
+        "STG",
+        "ZRO"
+      ]
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 5448,
+      "title": "스타게이트파이낸스(STG), 레이어제로(ZRO) 유의 촉구 안내",
+      "expected": null,
+      "tickers": [
+        "STG",
+        "ZRO"
+      ]
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 5560,
+      "title": "유엑스링크(UXLINK) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 5617,
+      "title": "바운드리스(ZKC) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 5653,
+      "title": "바운드리스(ZKC) 거래 유의 종목 지정 해제 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 5890,
+      "title": "플로우(FLOW) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 5892,
+      "title": "플로우(FLOW) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 5976,
+      "title": "루프링(LRC) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6007,
+      "title": "덴트(DENT) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6016,
+      "title": "노미나(NOM) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6029,
+      "title": "아이오텍스(IOTX) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6031,
+      "title": "아이오텍스(IOTX) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6081,
+      "title": "리졸브(RESOLV) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6084,
+      "title": "리졸브(RESOLV) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6093,
+      "title": "아이오텍스(IOTX) 거래 유의 종목 지정 해제 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6113,
+      "title": "드리프트(DRIFT) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6114,
+      "title": "드리프트(DRIFT) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6137,
+      "title": "폴카닷(DOT) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6143,
+      "title": "폴카닷(DOT)  거래 유의 종목 지정 안내",
+      "expected": "upbit_warning",
+      "tickers": [
+        "DOT"
+      ]
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6152,
+      "title": "커널다오(KERNEL) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6156,
+      "title": "커널다오(KERNEL) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6187,
+      "title": "폴카닷(DOT) 거래 유의 종목 지정 해제 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6302,
+      "title": "커널다오(KERNEL) 거래 유의 종목 지정 해제 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6311,
+      "title": "타이코(TAIKO) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6377,
+      "title": "헤데라(HBAR) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6403,
+      "title": "질리카(ZIL) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6409,
+      "title": "타이코(TAIKO) 거래 유의 종목 지정 해제 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6419,
+      "title": "스토리지(STORJ) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6431,
+      "title": "재스미코인(JASMY) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6456,
+      "title": "신세틱스(SNX) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6465,
+      "title": "레이븐코인(RVN) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6493,
+      "title": "만트라(MANTRA) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6500,
+      "title": "샌드박스(SAND) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6508,
+      "title": "샌드박스(SAND) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6540,
+      "title": "인젝티브(INJ) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6600,
+      "title": "멀티버스엑스(EGLD) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6604,
+      "title": "소폰(SOPH) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6605,
+      "title": "인젝티브(INJ) 거래 유의 종목 지정 해제 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6636,
+      "title": "샌드박스(SAND) 거래 유의 종목 지정 해제 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6656,
+      "title": "블러(BLUR) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6694,
+      "title": "왁스(WAXP) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6699,
+      "title": "이니시아(INIT) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events.json",
+      "id": 6708,
+      "title": "이니시아(INIT) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4011,
+      "title": "썸씽(SSX) 투자 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4013,
+      "title": "썸씽(SSX) 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4021,
+      "title": "리플(XRP) 투자 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4039,
+      "title": "플레이댑(PLA) 투자 유의 촉구 및 입출금 일시 중단 안내 (추가 유의 촉구 안내)",
+      "expected": null,
+      "tickers": [
+        "PLA"
+      ]
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4043,
+      "title": "플레이댑(PLA) 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4178,
+      "title": "오리진프로토콜(OGN) 투자 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4179,
+      "title": "오션프로토콜(OCEAN) 투자 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4180,
+      "title": "캐리프로토콜(CRE) 투자 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4181,
+      "title": "리스크(LSK) 네트워크 전환 및 투자 유의 촉구 안내",
+      "expected": null,
+      "tickers": [
+        "LSK"
+      ]
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4215,
+      "title": "스택스(STX) 투자 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4604,
+      "title": "포튜브(FOR) 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4653,
+      "title": "스톰엑스(STMX) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4710,
+      "title": "다드(DAD), 비트코인골드(BTG) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning",
+      "tickers": [
+        "DAD",
+        "BTG"
+      ]
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4731,
+      "title": "프로젝트 이슈에 따른 체인바운티(BOUNTY) 입출금 일시 중단 및 투자 유의 촉구 안내 (완료)",
+      "expected": null,
+      "tickers": [
+        "BOUNTY"
+      ]
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4763,
+      "title": "스팀달러(SBD) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4787,
+      "title": "솔브케어(SOLVE) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4789,
+      "title": "아이오에스티(IOST) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4957,
+      "title": "룸네트워크(LOOM) 거래 유의 종목 지정 안내 ",
+      "expected": "upbit_warning",
+      "tickers": [
+        "LOOM"
+      ]
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4962,
+      "title": "하이파이(HIFI) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4970,
+      "title": "크로노스(CRO) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 4995,
+      "title": "하이파이(HIFI) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5026,
+      "title": "아르고(AERGO), 알파쿼크(AQT) 유의 촉구 안내",
+      "expected": null,
+      "tickers": [
+        "AERGO",
+        "AQT"
+      ]
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5063,
+      "title": "신세틱스(SNX) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5067,
+      "title": "HPO 리브랜딩 및 토큰 스왑에 따른 입출금, 거래 지원 일시 중단 및 유의 촉구 안내 (거래 재개 시점 안내)",
+      "expected": null,
+      "tickers": []
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5133,
+      "title": "스톰엑스(STMX) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5134,
+      "title": "넴(XEM) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5193,
+      "title": "너보스(CKB) 유의 촉구 안내",
+      "expected": null,
+      "tickers": [
+        "CKB"
+      ]
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5266,
+      "title": "신세틱스(SNX) 거래 유의 종목 지정 해제 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5291,
+      "title": "스트라이크(STRIKE) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5309,
+      "title": "퀴즈톡(QTCON) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5320,
+      "title": "펀디에이아이(PUNDIAI) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5448,
+      "title": "스타게이트파이낸스(STG), 레이어제로(ZRO) 유의 촉구 안내",
+      "expected": null,
+      "tickers": [
+        "STG",
+        "ZRO"
+      ]
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5560,
+      "title": "유엑스링크(UXLINK) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5617,
+      "title": "바운드리스(ZKC) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5653,
+      "title": "바운드리스(ZKC) 거래 유의 종목 지정 해제 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5740,
+      "title": "랠리(RLY) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5814,
+      "title": "그로스톨코인(GRS) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5890,
+      "title": "플로우(FLOW) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5892,
+      "title": "플로우(FLOW) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5939,
+      "title": "나폴리(NAP) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5940,
+      "title": "고체인(GO) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning",
+      "tickers": [
+        "GO"
+      ]
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5965,
+      "title": "오아시스(OAS) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5966,
+      "title": "솔라(SXP) 거래 유의 종목 지정 안내 ",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5976,
+      "title": "루프링(LRC) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 5998,
+      "title": "루미웨이브(LWA) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6007,
+      "title": "덴트(DENT) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6016,
+      "title": "노미나(NOM) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6029,
+      "title": "아이오텍스(IOTX) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6031,
+      "title": "아이오텍스(IOTX) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6081,
+      "title": "리졸브(RESOLV) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6084,
+      "title": "리졸브(RESOLV) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6093,
+      "title": "아이오텍스(IOTX) 거래 유의 종목 지정 해제 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6113,
+      "title": "드리프트(DRIFT) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6114,
+      "title": "드리프트(DRIFT) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6137,
+      "title": "폴카닷(DOT) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6143,
+      "title": "폴카닷(DOT)  거래 유의 종목 지정 안내",
+      "expected": "upbit_warning",
+      "tickers": [
+        "DOT"
+      ]
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6149,
+      "title": "토트넘홋스퍼(SPURS) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6152,
+      "title": "커널다오(KERNEL) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6156,
+      "title": "커널다오(KERNEL) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6186,
+      "title": "엔케이엔(NKN) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6187,
+      "title": "폴카닷(DOT) 거래 유의 종목 지정 해제 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6216,
+      "title": "오키드(OXT) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6297,
+      "title": "아르고(AERGO) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6298,
+      "title": "알파쿼크(AQT) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6302,
+      "title": "커널다오(KERNEL) 거래 유의 종목 지정 해제 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6311,
+      "title": "타이코(TAIKO) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6362,
+      "title": "봉크(BONK) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6377,
+      "title": "헤데라(HBAR) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6403,
+      "title": "질리카(ZIL) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6409,
+      "title": "타이코(TAIKO) 거래 유의 종목 지정 해제 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6419,
+      "title": "스토리지(STORJ) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6430,
+      "title": "썬더코어(TT) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6431,
+      "title": "재스미코인(JASMY) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6456,
+      "title": "신세틱스(SNX) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6465,
+      "title": "레이븐코인(RVN) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6493,
+      "title": "만트라(MANTRA) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6500,
+      "title": "샌드박스(SAND) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6508,
+      "title": "샌드박스(SAND) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6530,
+      "title": "아이콘(ICX) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6540,
+      "title": "인젝티브(INJ) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6600,
+      "title": "멀티버스엑스(EGLD) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6604,
+      "title": "소폰(SOPH) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6605,
+      "title": "인젝티브(INJ) 거래 유의 종목 지정 해제 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6636,
+      "title": "샌드박스(SAND) 거래 유의 종목 지정 해제 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6637,
+      "title": "블라스트(BLAST) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6656,
+      "title": "블러(BLUR) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6666,
+      "title": "디스트릭트0x(DNT) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning",
+      "tickers": [
+        "DNT"
+      ]
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6667,
+      "title": "하이브달러(HBD) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6694,
+      "title": "왁스(WAXP) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6699,
+      "title": "이니시아(INIT) 유의 촉구 안내",
+      "expected": null
+    },
+    {
+      "source": "p109_upbit_warning_short/events_raw.json",
+      "id": 6708,
+      "title": "이니시아(INIT) 거래 유의 종목 지정 안내",
+      "expected": "upbit_warning"
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 6558,
+      "title": "헤미(HEMI), 유즈리스(USELESS) 신규 거래지원 안내 (BTC, USDT 마켓) (헤미(HEMI) 거래지원 취소 안내)",
+      "expected": "upbit_list_cancel",
+      "tickers": [
+        "HEMI",
+        "USELESS"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 6489,
+      "title": "BTC, USDT 마켓 신규 거래지원 안내 (BICO, BMT, NIL, GWEI) (BICO, BMT, NIL, GWEI 거래지원 개시 시점 추가 변경 안내)",
+      "expected": "upbit_list_other",
+      "tickers": [
+        "BICO",
+        "BMT",
+        "NIL",
+        "GWEI"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 6458,
+      "title": "BTC, USDT 마켓 신규 거래지원 안내 (CYS, ICNT, XAN, EDEN, AIOZ, ALLO) (CYS 거래지원 개시 시점 안내)",
+      "expected": "upbit_list_other",
+      "tickers": [
+        "CYS",
+        "ICNT",
+        "XAN",
+        "EDEN",
+        "AIOZ",
+        "ALLO"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 6348,
+      "title": "메타플렉스(MPLX), 넥서스(NEX) 신규 거래지원 안내 (BTC, USDT 마켓) (MPLX, NEX 거래지원 개시 시점 추가 변경 안내)",
+      "expected": "upbit_list_other",
+      "tickers": [
+        "MPLX",
+        "NEX"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 6299,
+      "title": "BTC, USDT 마켓 신규 거래지원 안내 (PEAQ, LIT, KMNO, MORPHO, GRAM, LDO, PAXG, OSMO, AMP2) (LDO, PAXG, OSMO, AMP2, GRAM 거래지원 개시 시점 변경 안내)",
+      "expected": "upbit_list_other",
+      "tickers": [
+        "PEAQ",
+        "LIT",
+        "KMNO",
+        "MORPHO",
+        "GRAM",
+        "LDO",
+        "PAXG",
+        "OSMO",
+        "AMP2"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 6773,
+      "title": "만트라(MANTRA) 거래지원 종료 안내 (12/14 15:00)",
+      "expected": "upbit_delist",
+      "tickers": [
+        "MANTRA"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 6744,
+      "title": "하이브달러(HBD) 거래지원 종료 안내 (12/7 15:00)",
+      "expected": "upbit_delist",
+      "tickers": [
+        "HBD"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 6743,
+      "title": "디스트릭트0x(DNT) 거래지원 종료 안내 (12/7 15:00)",
+      "expected": "upbit_delist",
+      "tickers": [
+        "DNT"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 6721,
+      "title": "블러(BLUR) 거래지원 종료 안내 (11/30 15:00)",
+      "expected": "upbit_delist",
+      "tickers": [
+        "BLUR"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 6669,
+      "title": "질리카(ZIL) 거래지원 종료 안내 (11/16 15:00)",
+      "expected": "upbit_delist",
+      "tickers": [
+        "ZIL"
+      ]
+    },
+    {
+      "source": "p76_upbit_list_long/notices_all.json (samples)",
+      "id": 2239,
+      "title": "KRW, BTC 마켓 디지털 자산 추가 (1INCH, AAVE, MASK)",
+      "expected": "upbit_list_krw",
+      "tickers": [
+        "1INCH",
+        "AAVE",
+        "MASK"
+      ]
+    }
+  ]
+}

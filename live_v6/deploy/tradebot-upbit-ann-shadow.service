@@ -1,0 +1,86 @@
+# /etc/systemd/system/tradebot-upbit-ann-shadow.service — Upbit announcement receive-time SHADOW logger.
+# Read-only: subscribes to Upbit announcement pushes and logs when they reach this box. It never trades.
+# It is given ONLY the Upbit key pair of /etc/tradebot/upbit.env (UPBIT_ACCESS_KEY, UPBIT_SECRET_KEY) - never
+# the bot's trading keys - and runs under a UID of its own.
+#
+# Isolation (systemd 255 manual, systemd.exec(5); each directive is explained in the header of
+# tradebot-ann-shadow.service, which uses the same ones):
+#   DynamicUser=yes with NO User= line; SupplementaryGroups=tradebot only to read the code below /opt/tradebot;
+#   InaccessiblePaths= hides what that group could open: the bot's env files and state (no "-": a missing path
+#   fails the start) and the Binance logger's data ("-": that directory may be absent, or already out of reach
+#   below /var/lib/private once that unit is migrated); EnvironmentFile= is read by the service manager as root
+#   before the sandbox exists, so upbit.env can stay 0600 root; ProtectProc=invisible + ProcSubset=pid hide the
+#   processes of other users. With DynamicUser the data is /var/lib/private/tradebot-upbit-ann-shadow and
+#   /var/lib/tradebot-upbit-ann-shadow is a symlink to it.
+#
+# Keys (once). For an existing env file, edit it; DO NOT run the install /dev/null command again (it empties it):
+#   sudo install -m 600 -o root -g root /dev/null /etc/tradebot/upbit.env
+#   sudoedit /etc/tradebot/upbit.env        # UPBIT_ACCESS_KEY=... and UPBIT_SECRET_KEY=...
+# and register this server's IP for that key at Upbit.
+#
+# Check first (a line that names this unit is a finding; a clean file prints none):
+#   sudo systemd-analyze verify /opt/tradebot/app/current/live_v6/deploy/tradebot-upbit-ann-shadow.service
+#   grep -E '^tradebot-upbit-ann-shadow:' /etc/passwd /etc/group     # expect nothing (no static user of that name)
+#
+# Install (ops + sudo), after the release that contains this file is deployed:
+#   sudo install -m 644 /opt/tradebot/app/current/live_v6/deploy/tradebot-upbit-ann-shadow.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now tradebot-upbit-ann-shadow
+#
+# Migrate: nothing to move on a first install. Only if an earlier draft of this unit already ran with
+# User=tradebot and left a real directory /var/lib/tradebot-upbit-ann-shadow: move it the way the "Migrate" steps
+# in the header of tradebot-ann-shadow.service do (stop, back up, mv -T into /var/lib/private/, start).
+#
+# Verify:
+#   systemctl is-active tradebot-upbit-ann-shadow                        # active
+#   sudo journalctl -u tradebot-upbit-ann-shadow -n 50 --no-pager        # no Traceback, no "write failed"
+#   systemd-analyze security --no-pager tradebot-upbit-ann-shadow        # sandbox report of the loaded unit
+#   systemctl show tradebot-upbit-ann-shadow -p DynamicUser -p SupplementaryGroups -p InaccessiblePaths -p ProtectProc -p ProcSubset
+#   P=$(systemctl show -p MainPID --value tradebot-upbit-ann-shadow); sudo grep -E '^(Uid|Gid|Groups):' /proc/$P/status
+#   id tradebot       # the Uid above is NOT tradebot's but one of 61184..65519; Groups holds the gid of tradebot
+#   sudo ls -ld /var/lib/tradebot-upbit-ann-shadow /var/lib/private/tradebot-upbit-ann-shadow
+#                     # the first is a symlink to the second; the second is a 0700 directory owned by that Uid
+#   sudo tail -n 20 /var/lib/tradebot-upbit-ann-shadow/upbit_ann_ws_shadow.jsonl
+# An open connection alone does not prove authentication/subscription success: wait for an "upbit_ann" line, and
+# look for "upbit_error" / "rejected" lines.
+# ProcSubset=pid: see the note in the header of tradebot-ann-shadow.service (same fallback if the start fails).
+#
+# Remove (keeps the measurements in /var/lib/private/tradebot-upbit-ann-shadow and the keys in /etc/tradebot):
+#   sudo systemctl disable --now tradebot-upbit-ann-shadow
+#   sudo rm /etc/systemd/system/tradebot-upbit-ann-shadow.service
+#   sudo systemctl daemon-reload
+[Unit]
+Description=Upbit announcement WebSocket shadow latency logger (read-only)
+After=network-online.target chrony.service
+Wants=network-online.target
+
+[Service]
+DynamicUser=yes
+SupplementaryGroups=tradebot
+WorkingDirectory=/opt/tradebot/app/current
+EnvironmentFile=/etc/tradebot/upbit.env
+Environment=WEBSOCKETS_MAX_REDIRECTS=1
+ExecStart=/opt/tradebot/.venv/bin/python -m live_v6.tools.upbit_ann_ws_shadow --out /var/lib/tradebot-upbit-ann-shadow/upbit_ann_ws_shadow.jsonl
+Restart=always
+RestartSec=30
+KillSignal=SIGTERM
+TimeoutStopSec=15
+StateDirectory=tradebot-upbit-ann-shadow
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+InaccessiblePaths=/etc/tradebot /var/lib/live_v6-live -/var/lib/tradebot-ann-shadow
+ProtectProc=invisible
+ProcSubset=pid
+MemoryMax=200M
+CPUQuota=20%
+
+[Install]
+WantedBy=multi-user.target
