@@ -160,13 +160,22 @@ def make_loop_io(eng, network, state_path, hooks, env):
     """Build measurement-only loop instrumentation, disabled only by literal '0'."""
     if env.get("LIVE_V6_STALL_METER") == "0":
         return queue.Queue(), None, hooks
+    meter = None
     try:
         from .stallmeter import StallMeter, TimedQueue, install
         path = os.path.join(os.path.dirname(state_path) or ".", f"{network}_stall.jsonl")
         meter = StallMeter(path)
+        meter.start()
         return TimedQueue(meter), meter, install(eng, meter, hooks) + [meter.maybe_flush]
     except Exception as e:  # noqa: BLE001  measurement must never stop the bot: run unmeasured
-        log.warning("stall meter disabled: %s: %s", type(e).__name__, str(e)[:120])
+        if meter is not None:
+            try:
+                meter.close()
+            except Exception:  # noqa: BLE001  cleanup cannot obstruct the fallback
+                pass
+        # Keep this independent of stallmeter: its import may be the failure.
+        detail = f"{type(e).__name__}: {e}".replace("CRITICAL", "critical").replace("Traceback", "traceback")
+        log.warning("stall meter disabled: %s", " ".join(detail.split())[:160])
         return queue.Queue(), None, hooks
 
 
@@ -196,7 +205,11 @@ def run(network=None):
         os.path.dirname(os.getenv("LIVE_V6_STATE", f"/var/lib/live_v6/{network}.json")), f"{network}_commands.jsonl")))
     hooks = [cmd.poll] if cmd else []                  # read-only /status /today /more (mainnet only)
     if meter is not None:
-        hooks = [meter.wrap("hook:" + getattr(h, "__name__", type(h).__name__), h, top=True) for h in hooks] + [meter.maybe_flush]
+        try:
+            hooks = [meter.wrap("hook:" + getattr(h, "__name__", type(h).__name__), h, top=True)
+                     for h in hooks] + [meter.maybe_flush]
+        except Exception:  # noqa: BLE001  keep command handling and flushing if hook instrumentation fails
+            hooks = hooks + [meter.maybe_flush]
     serve(eng, q, lambda: stop["flag"], hooks=hooks)
     if cmd:
         cmd.stop()
