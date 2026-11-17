@@ -463,8 +463,8 @@ class V6Engine:
                 continue
             try:
                 o = self.x("get_order", it["sym"], cid)
-            except ExchangeUnavailable:
-                self.block(UNKNOWN_ORDER, cid, "주문 상태 확인 불가 — 신규 진입 중단")
+            except ExchangeError:                           # any failed query = unknown (a 4xx is no rejection proof) and
+                self.block(UNKNOWN_ORDER, cid, "주문 상태 확인 불가 — 신규 진입 중단")   # must not abort reconcile
                 continue
             if o and o["executed_qty"] > 0 and it["sym"] not in self.st["pos"]:
                 self._journal_entry(it["sym"], it, o)
@@ -1221,9 +1221,14 @@ class V6Engine:
             self.sleep(self.cfg.query_delay_s)
             try:
                 return self.x("get_order", sym, cid)
-            except ExchangeUnavailable as e:
-                last = e
+            except ExchangeError as e:                      # a failed status QUERY never proves the ORDER was rejected:
+                last = e                                    # only -2013 (→ None) is definitive; anything else = unknown
         raise ExchangeUnavailable(f"order {cid} status unknown") from last
+
+    # Binance error-code docs: -1006 "… Execution status unknown." The market order may have executed, so it is resolved
+    # by client id like a lost response. Only here: other endpoints keep it a rejection, so a stop placement stays on the
+    # bounded rejected → flatten path instead of an endless "unavailable" retry (Codex review 2026-11-17).
+    UNKNOWN_OUTCOME_CODES = (-1006,)
 
     def submit_market(self, sym, side, qty, cid, reduce_only) -> dict | None:
         """Idempotent market order: reuse an existing id (restart replay); unknown outcome → query, never double-send."""
@@ -1232,7 +1237,9 @@ class V6Engine:
             return existing
         try:
             return self.x("market", sym, side, qty, cid, reduce_only)
-        except ExchangeUnavailable:
+        except (ExchangeUnavailable, OrderRejected) as e:
+            if isinstance(e, OrderRejected) and e.code not in self.UNKNOWN_OUTCOME_CODES:
+                raise                                       # definitive rejection (WouldTrigger included)
             log.warning("order %s outcome unknown → query before any retry", cid)
             try:
                 found = self._wait_order(sym, cid)
@@ -3067,8 +3074,11 @@ class V6Engine:
         else:
             self._consistent += 1
             if self._consistent >= 2:
+                unresolved = any(not it.get("pending") for it in self.st["intents"].values())
                 for r in (MISMATCH, UNKNOWN_ORDER):
-                    if r in self.blocks:
+                    if r == UNKNOWN_ORDER and unresolved:
+                        continue                            # an entry whose outcome is still unknown keeps entries paused,
+                    if r in self.blocks:                    # also once its symbol reads flat (resolve_intents re-queries)
                         self.unblock(r)
         self.save()
         self.check_ledger()
