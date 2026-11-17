@@ -28,3 +28,16 @@ Go-live checks (mainnet host): `.venv/bin/python live_v6/tools/ws_check_mainnet.
 routed ws URLs) and `LIVE_V6_NETWORK=mainnet .venv/bin/python -m live_v6 --telegram-check` (ONE confirmation message).
 Operations: `python -m live_v6 status` (halt reason, positions, skips) · `python -m live_v6 resume` clears a halt
 after review · testnet first for ≥ 1 full 4h cycle on the VPS · back up `/var/lib/live_v6/state.json`.
+
+# bundle_v5 sizing (drop-in /etc/systemd/system/live_v6-live.service.d/30-strategy-bundle.conf)
+#   Environment=LIVE_V6_BUNDLE_RISK_PCT=M:2,D:0,R:0,H:9   # % of the wallet risked per trade by component, 0 = off
+#   Environment=LIVE_V6_BUNDLE_MARGIN=pooled              # no per-component margin budget (only with RISK_PCT)
+#   Environment=LIVE_V6_BUNDLE_RISK_MULT=3.0              # legacy multiplier - KEEP this line (see below)
+#   - Ratios only: no USDT amount is configured; exchange minimums come from the exchange filters.
+#   - With RISK_PCT the multiplier is not applied. It stays for rollbacks: ci_deploy.sh switches the code only, and a
+#     release from before RISK_PCT ignores it and would otherwise start at the default multiplier 6.
+#   - A malformed or empty value refuses to start (never a silent fallback). Check what the process really got:
+#       journalctl -u live_v6-live | grep "bundle sizing:"      sudo tr '\0' '\n' < /proc/$(systemctl show -p MainPID --value live_v6-live)/environ | grep BUNDLE
+#   - A start with a different sizing than the previous run sends one Telegram notice (best effort).
+#   - After a restart the daily store for H is rebuilt in the background minutes (journal: "daily store warm-up done");
+#     until then a 00:00 UTC evaluation would block for minutes and its entry would be refused as late.
