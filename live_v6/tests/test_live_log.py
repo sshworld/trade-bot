@@ -152,7 +152,12 @@ def test_skip_line_same_reason_as_skip_log(offline, tmp_path):
     assert len(last) == 4                                                                # skip_log format unchanged
 
 
-def test_h7t_log_only_skips_missed_and_bar_not_in_model(offline, tmp_path):
+def test_h7t_log_only_skips_missed_and_bar_not_in_model(offline, tmp_path, monkeypatch):
+    # The missed check reads the CLOSED 1m bars of the running 4h bar; in a bar's first minute there are none, so the
+    # injected klines outage is never hit and the touch enters (failed at HH:00:00–HH:01:00 of every 4h bar) → +70 s.
+    if time.time() % (S.H4_MS / 1000) < 70:
+        real = time.time
+        monkeypatch.setattr(time, "time", lambda: real() + 70)
     eng, strat = h7t_engine(offline)
     attach(eng, tmp_path)
     before = (list(eng.meta.get("skip_log", [])), dict(eng.meta.get("skips", {})))
@@ -210,7 +215,9 @@ def test_log_write_failure_never_blocks_or_delays_trading(offline, tmp_path, mon
         e_bad, calls_bad, dt_bad = _scenario(offline, _broken(mode, tmp_path, monkeypatch), s_bad)
     assert calls_bad == calls_ref and "stop" in calls_bad and "market" in calls_bad   # entry, stop, close all went out
     assert s_bad == s_ref                                                # no extra waits
-    assert dt_bad < dt_ref + 0.5                                         # no delay beyond noise
+    # no delay beyond noise: locally both runs take ~0.01 s; a slow shared CI runner once stalled 0.69 s (2026-11-17).
+    # A real block (retry loop, fsync hang) costs whole seconds; engine-driven waits are pinned exactly by s_bad == s_ref.
+    assert dt_bad < dt_ref + 1.5
     assert [t["reason"] for t in e_bad.meta["trades"]] == [t["reason"] for t in e_ref.meta["trades"]] == ["stop_loss"]
     assert e_bad.meta["skip_log"][-1][2] == e_ref.meta["skip_log"][-1][2] == "safety_block"
     assert e_bad.st["pos"] == e_ref.st["pos"] == {}

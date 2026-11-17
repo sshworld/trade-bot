@@ -91,12 +91,16 @@ def test_incident_alert_format():
 def test_daily_settlement_and_heartbeat():
     from datetime import datetime, timedelta, timezone
     kst = timezone(timedelta(hours=9))
-    t0 = time.time()                   # fake exchange stamps fills with the wall clock
-    today = datetime.fromtimestamp(t0, kst)
+    t_wall = time.time()               # fake exchange stamps fills with the wall clock
+    today = datetime.fromtimestamp(t_wall, kst)
     midnight = datetime(today.year, today.month, today.day, tzinfo=kst) + timedelta(days=1)
+    # Start ≥ heartbeat_s before the midnight tick, whatever the time of day. Started at 20:01–22:01 KST the first 💓
+    # came due between the midnight tick and +heartbeat_s/2, so the "not before heartbeat_s" step failed.
+    t0 = min(t_wall, midnight.timestamp() + 60 - Settings().heartbeat_s - 60)   # same KST day as t_wall
     clk = Clock(t0)
     post = MockPost()
     eng, tg = eng_with(post, clk)
+    assert eng.cfg.heartbeat_s == Settings().heartbeat_s
     eng.tick()
     assert any(m.startswith("💓 작동 중") for m in tg.sent)
     assert eng.enter(DOGE, Decimal("0.0045"), int(clk.t) * 1000)

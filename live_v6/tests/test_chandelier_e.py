@@ -13,6 +13,16 @@ M1, H1 = 60_000, 3_600_000
 F = D("0.0005")
 
 
+@pytest.fixture(autouse=True)
+def _within_one_wall_hour(monkeypatch):
+    """The tests step a few simulated minutes and pin the 1h ATR read (cached per hour) and its value (set_atr builds the
+    bars around the current hour). Started in an hour's last minutes they crossed into the next hour and failed
+    (seen at HH:58–HH:59). Then shift every time.time() reader — Clk, engine and FakeExchange alike — back 20 min."""
+    if time.time() % 3600 > 3000:
+        real = time.time
+        monkeypatch.setattr(time, "time", lambda: real() - 1200)
+
+
 class Clk:
     def __init__(self):
         self.off = 0.0
