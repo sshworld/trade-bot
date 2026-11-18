@@ -264,19 +264,33 @@ class BinanceREST:
                           "margin_type": "ISOLATED" if mt == "isolated" else "CROSSED" if mt in ("cross", "crossed") else mt.upper()}
         return out
 
-    def leverage(self, symbol) -> int:
-        """Configured leverage from GET /fapi/v1/symbolConfig (the per-symbol config record). Used as the leverage
-        read-back when /fapi/v2/positionRisk still shows the old value right after a successful POST /fapi/v1/leverage
-        (live 2026-10-22 01:39 KST: BNBUSDT set 10x OK, positionRisk read-back 20x, symbolConfig 10x minutes later)."""
+    def _symbol_config(self, symbol) -> dict:
         rows = self._req("GET", "/fapi/v1/symbolConfig", {"symbol": symbol})
         rows = rows if isinstance(rows, list) else [rows]
         for r in rows:
             if isinstance(r, dict) and r.get("symbol") == symbol:
-                try:
-                    return int(r["leverage"])
-                except (KeyError, TypeError, ValueError) as e:
-                    raise ExchangeError(f"symbolConfig: bad leverage for {symbol}: {type(e).__name__}") from e
+                return r
         raise ExchangeError(f"symbolConfig: no row for {symbol}")
+
+    def margin_type(self, symbol) -> str:
+        """marginType from GET /fapi/v1/symbolConfig: "ISOLATED" or "CROSSED" (docs example "CROSSED"). Any other
+        value is a failed read (ExchangeError), never a confirmation: only plain ASCII names are accepted."""
+        mt = self._symbol_config(symbol).get("marginType")
+        v = mt.upper() if isinstance(mt, str) and mt.isascii() else ""
+        v = "CROSSED" if v == "CROSS" else v
+        if v not in ("ISOLATED", "CROSSED"):
+            raise ExchangeError(f"symbolConfig: bad marginType for {symbol}")
+        return v
+
+    def leverage(self, symbol) -> int:
+        """Configured leverage from GET /fapi/v1/symbolConfig (the per-symbol config record). Used as the leverage
+        read-back when /fapi/v2/positionRisk still shows the old value right after a successful POST /fapi/v1/leverage
+        (live 2026-10-22 01:39 KST: BNBUSDT set 10x OK, positionRisk read-back 20x, symbolConfig 10x minutes later)."""
+        row = self._symbol_config(symbol)
+        try:
+            return int(row["leverage"])
+        except (KeyError, TypeError, ValueError) as e:
+            raise ExchangeError(f"symbolConfig: bad leverage for {symbol}: {type(e).__name__}") from e
 
     def open_orders(self, symbol) -> list[dict]:
         std = self._req("GET", "/fapi/v1/openOrders", {"symbol": symbol}, critical=True)

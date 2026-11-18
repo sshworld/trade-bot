@@ -130,6 +130,9 @@ class FakeExchange:
                 raise OrderRejected(-4048, "Margin type cannot be changed if there exists position.")
         self.mt[s] = mt
 
+    def margin_type(self, s):
+        return self.mt[s]
+
     def set_leverage(self, s, lev):
         self.lev[s] = int(lev)
         return int(lev)                      # BinanceREST: leverage echoed in the response body
@@ -326,6 +329,24 @@ class FaultEx:
 
     def inject(self, method, mode, times=1, match=None):
         self.rules.append({"method": method, "mode": mode, "left": times, "match": match})
+
+    def lag_margin_change(self, symbol, *, position_reads, config_reads=0):
+        """Keep each read-back stale independently after the next margin set for this symbol.
+        Use inject("margin_type", "unavailable") for a failed symbolConfig read."""
+        def after_set(fn, s, mt="ISOLATED"):
+            previous = self.inner.margin_type(s)
+            result = fn(s, mt)
+
+            def stale_position(read, symbols):
+                rows = read(symbols)
+                rows[s] = dict(rows[s], margin_type=previous)
+                return rows
+
+            self.inject("positions", stale_position, position_reads, match=lambda symbols: s in symbols)
+            self.inject("margin_type", lambda read, sym: previous, config_reads, match=lambda sym: sym == s)
+            return result
+
+        self.inject("set_margin_type", after_set, match=lambda s, mt="ISOLATED": s == symbol)
 
     def clear(self):
         self.rules.clear()

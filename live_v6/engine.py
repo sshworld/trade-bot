@@ -155,6 +155,14 @@ class Settings:
     # symbolConfig up to lev_confirm_reads times (lev_confirm_wait_s apart) while it shows the wrong value
     lev_confirm_reads: int = 5
     lev_confirm_wait_s: float = 1.0
+    # live 2026-11-16 06:37 UTC ADAUSDT: positionRisk read CROSSED right after POST marginType, ISOLATED ~3 s later.
+    # ENTRY pre-check only (a once-a-day H signal is lost if dropped): after this entry's own margin change, read
+    # symbolConfig up to margin_confirm_reads times (margin_confirm_wait_s apart), then take the entry snapshot again.
+    # The final gate reads symbolConfig once, without waiting, and only while positionRisk still reads the old
+    # CROSSED. Startup / reconcile keep the positionRisk-only check (the next 5 s reconcile reads again; no waits in
+    # the safety loop). 0 = positionRisk only everywhere.
+    margin_confirm_reads: int = 5
+    margin_confirm_wait_s: float = 1.0
     startup_leverage: int | None = None  # set this leverage at startup on every flat coin (qrmtf live: 10)
     # user 2026-11-13 (manual trade on a bot coin → the bot sold against it): a fill that no order of the open trade
     # made, or a position the journal cannot explain (other side / bigger / back after flat) → that coin goes to
@@ -471,24 +479,64 @@ class V6Engine:
             self.st["intents"].pop(cid, None)
             self.save()
 
-    def ensure_isolated(self, sym) -> bool:
-        err = ""
+    def _confirm_isolated(self, sym, pr_mt, reads: int) -> str:
+        """'' = ISOLATED confirmed, else the skip/block reason. Call it only right after THIS engine's own margin
+        change: positionRisk can lag that change, so GET /fapi/v1/symbolConfig is read up to `reads` times
+        (margin_confirm_wait_s apart). A failed read is not retried (no hammering on 429/418); never raises."""
+        if pr_mt == "ISOLATED":
+            return ""
+        n, cfg_mt, result = 0, None, "symbolConfig not read"
+        try:
+            while n < reads:
+                if n:
+                    self.sleep(self.cfg.margin_confirm_wait_s)
+                n += 1
+                cfg_mt = self.x("margin_type", sym)
+                result = f"symbolConfig {cfg_mt}"
+                if cfg_mt == "ISOLATED":
+                    break
+        except ExchangeError as e:
+            cfg_mt, result = None, f"symbolConfig failed: {str(e)[:70]}"
+        except Exception as e:  # noqa: BLE001  a malformed response must not escape into execute()
+            log.exception("%s symbolConfig read failed", sym)
+            cfg_mt, result = None, f"symbolConfig failed: {type(e).__name__}"
+        log.warning("%s margin mode ISOLATED: positionRisk %s, %s (reads %d)", sym, pr_mt, result, n)
+        return "" if cfg_mt == "ISOLATED" else f"read-back {pr_mt}, {result}"
+
+    def ensure_isolated(self, sym, confirm_reads: int = 0) -> bool:
+        """POST marginType ISOLATED, then read it back. confirm_reads 0 (startup / reconcile): positionRisk only, as
+        before (a lagging read keeps the block until the next 5 s reconcile). The entry pre-check passes
+        margin_confirm_reads: a lagging positionRisk is then confirmed through symbolConfig (_confirm_isolated)."""
+        return self._isolated(sym, confirm_reads)[0]
+
+    def _isolated(self, sym, confirm_reads: int) -> tuple[bool, bool]:
+        """ensure_isolated, also returning `lagged`: positionRisk still read the old CROSSED right after the change
+        and symbolConfig confirmed ISOLATED. Only that read can be lag: a missing row, a blank or unknown mode, or a
+        rejected change blocks at once, as before."""
+        rejected, lagged = None, False
         try:
             try:
                 self.x("set_margin_type", sym, "ISOLATED")
             except OrderRejected as e:
-                err = str(e)
+                rejected = e
             row = self.x("positions", self.cfg.symbols).get(sym) or {}
             mt = row.get("margin_type")
+            if mt == "ISOLATED":
+                reason = ""
+            elif mt == "CROSSED" and rejected is None and confirm_reads > 0:
+                reason = self._confirm_isolated(sym, mt, confirm_reads)
+                lagged = not reason
+            else:
+                reason = f"read-back {mt}" + (f", set rejected: {str(rejected)[:80]}" if rejected is not None else "")
         except ExchangeError as e:
-            mt, err = "?", str(e)
+            reason = f"read failed: {str(e)[:80]}"          # never empty: '' means confirmed
         key = f"{MARGIN}:{sym}"
-        if mt == "ISOLATED":
-            if key in self.blocks:
-                self.unblock(key)
-            return True
-        self.block(key, f"{sym} {mt} {err[:80]}", "마진 모드 ISOLATED 설정 실패 — 신규 진입 중단")
-        return False
+        if reason:
+            self.block(key, f"{sym} {reason}", "마진 모드 ISOLATED 설정 실패 — 신규 진입 중단")
+            return False, False
+        if key in self.blocks:
+            self.unblock(key)
+        return True, lagged
 
     def pace(self):
         """Startup / bootstrap pacing (TA rate-limit rule: stay < 50 % of 2400/min): if this minute's used weight
@@ -960,6 +1008,27 @@ class V6Engine:
                      risk_frac=0.0, risk_pct_used=0.0, margin=qty * ref / lev, path="bundle", q0=qty, cap_frac=1.0,
                      cap_label="bundle"), acct, ref
 
+    def _entry_snapshot(self, sym):
+        """Entry pre-check snapshot: positions (no holes; sym flat and not in the journal = no averaging) and sym's
+        open orders (no entry order; our own leftover stops are cancelled). None = refused (logged / blocked)."""
+        pos = self.x("positions", self.cfg.symbols)
+        missing = self._snapshot_missing(pos)
+        if missing:                                         # any hole: refuse every new entry this tick
+            self.skip(sym, "positions_incomplete", f"snapshot missing {','.join(missing)}")
+            return None
+        amt0 = self._row_amt(pos, sym)
+        if amt0 is None or amt0 != 0 or sym in self.st["pos"]:
+            log.warning("entry %s refused: position %s (no averaging)", sym, "unknown" if amt0 is None else amt0)
+            return None
+        oo = self.x("open_orders", sym)
+        if any(not (o["close_position"] or o["reduce_only"]) for o in oo):
+            self.block(MISMATCH, f"{sym} open entry order before entry", "대조 불일치 — 신규 진입 중단")
+            return None
+        for o in oo:                                        # our own leftover stops must never touch a new position
+            if str(o["client_id"]).startswith(self.cfg.cid_prefix):
+                self.x("cancel", sym, o)
+        return pos
+
     def _enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None, side: int = 1, fixed=None,
                bundle_cid=None) -> bool:
         if side < 0 and not self.cfg.enable_short:
@@ -984,26 +1053,22 @@ class V6Engine:
             self.skip(sym, "risk_cap", f"stop distance {stop_dist}")
             return False
         try:
-            pos = self.x("positions", self.cfg.symbols)
-            missing = self._snapshot_missing(pos)
-            if missing:                                     # any hole: refuse every new entry this tick
-                self.skip(sym, "positions_incomplete", f"snapshot missing {','.join(missing)}")
+            pos = self._entry_snapshot(sym)
+            if pos is None:
                 return False
-            amt0 = self._row_amt(pos, sym)
-            if amt0 is None or amt0 != 0 or sym in self.st["pos"]:
-                log.warning("entry %s refused: position %s (no averaging)", sym, "unknown" if amt0 is None else amt0)
-                return False
-            oo = self.x("open_orders", sym)
-            if any(not (o["close_position"] or o["reduce_only"]) for o in oo):
-                self.block(MISMATCH, f"{sym} open entry order before entry", "대조 불일치 — 신규 진입 중단")
-                return False
-            for o in oo:                                    # our own leftover stops must never touch a new position
-                if str(o["client_id"]).startswith(self.cfg.cid_prefix):
-                    self.x("cancel", sym, o)
-            row0 = pos.get(sym) or {}
-            if row0.get("margin_type") != "ISOLATED" and not self.ensure_isolated(sym):
-                self.skip(sym, "margin_mode", "ISOLATED read-back failed")
-                return False
+            margin_lag = False
+            if (pos.get(sym) or {}).get("margin_type") != "ISOLATED":
+                ok, lagged = self._isolated(sym, self.cfg.margin_confirm_reads)
+                if not ok:
+                    self.skip(sym, "margin_mode", self.blocks[f"{MARGIN}:{sym}"])
+                    return False
+                # the change and its read-back (symbolConfig waits while positionRisk lags) took time: take the
+                # snapshot again, so a position or order placed meanwhile (e.g. by hand) is seen before any leverage call
+                pos = self._entry_snapshot(sym)
+                if pos is None:
+                    return False
+                # positionRisk lagged right after the change and still reads the old CROSSED
+                margin_lag = lagged and (pos.get(sym) or {}).get("margin_type") == "CROSSED"
         except ExchangeError as e:
             log.error("entry %s pre-check failed: %s", sym, e)
             return False
@@ -1045,9 +1110,16 @@ class V6Engine:
         if pos is None or placed is None or placed != 0 or not isinstance(row, dict):
             log.warning("entry %s refused at placement: position %s", sym, "unknown" if placed is None else placed)
             return False
-        if row.get("margin_type") != "ISOLATED":
-            self.skip(sym, "margin_mode", f"read-back {row.get('margin_type')}")
-            return False
+        mt = row.get("margin_type")
+        if mt != "ISOLATED":
+            # margin_lag: positionRisk has read the old CROSSED ever since this entry's own confirmed change, so ONE
+            # symbolConfig read (no wait: nothing may go stale before the order) can confirm it. Any other read is a
+            # real change (e.g. by hand) or a bad row: refuse as before. Skip this entry only (no global block).
+            reason = (self._confirm_isolated(sym, mt, 1) if margin_lag and mt == "CROSSED"
+                      else f"read-back {mt}")
+            if reason:
+                self.skip(sym, "margin_mode", reason)
+                return False
         if len(book) >= self.cfg.max_positions:
             self.skip(sym, "max_positions", f"{len(book)} open")
             return False
