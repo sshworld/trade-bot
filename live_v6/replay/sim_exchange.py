@@ -209,6 +209,9 @@ class SimExchange:
     def set_margin_type(self, s, mt="ISOLATED"):
         self.mt[s] = mt
 
+    def margin_type(self, s):
+        return self.mt[s]
+
     def set_leverage(self, s, lev):
         if self.pos.get(s) is None:
             self.lev[s] = int(lev)
