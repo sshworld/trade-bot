@@ -1447,10 +1447,10 @@ class V6Engine:
         j["tp"] = {"tp1": str(tp1) if q1 > 0 else None, "q1": str(q1), "tp2": str(tp2) if tp2 else None, "q2": str(q2)}
         j["tp1_done"] = q1 <= 0                                    # E, cannot split: no TP at all, the trailing SL exits
         self.save()
-        if q1 > 0:
-            self._place_tp(sym, j, "t1", tp1, q1)
+        ok = self._place_tp(sym, j, "t1", tp1, q1) if q1 > 0 else None   # True: TP1 live on the exchange
         if tp2:
             self._place_tp(sym, j, "t2", tp2, q2)
+        return ok
 
     def _whole_tp_reason(self, sym, j):
         """Flat at reconcile with a whole-qty TP1 still pending (bundle_v5 cannot-split) and no recorded reason: without a
@@ -1467,15 +1467,35 @@ class V6Engine:
             j.update(exit_fill="take_profit", tp1_done=True)
             self.save()
 
+    def _tp1_lag(self, j, amt, ext) -> bool:
+        """Our TP1 fired but the exchange still shows it open / NEW (no stream, status lags the fill; Codex review
+        2026-11-23): the decrease is exactly TP1's qty, only closing-side fills, none worse than the TP1 price by more
+        than 10 % of the entry → TP1 distance, the last one ≤ 2 min old → not a manual trade (yet). Past 2 min the normal
+        manual-trade check decides."""
+        tp = j.get("tp") or {}
+        if not tp.get("tp1") or j.get("tp1_done"):
+            return False
+        q1, px1, s = D(tp.get("q1") or "0"), D(tp["tp1"]), 1 if int(j.get("side", 1)) > 0 else -1
+        if q1 <= 0 or D(j["qty"]) - abs(amt) != q1 or any(f.get("side") != self._cs(j) for f in ext):
+            return False
+        if sum((D(f["qty"]) for f in ext), Decimal(0)) != q1:
+            return False
+        lim = px1 - s * abs(px1 - D(j["entry_px"])) * Decimal("0.1")   # a near-entry manual close is never TP1
+        if any(s * (D(f["price"]) - lim) < 0 for f in ext):
+            return False
+        return self.now_ms() - max(int(f.get("time") or 0) for f in ext) <= 120_000
+
     def _adopt_tps(self, sym, j):
         """A journaled position without TPs while take_profit is on (opened before TP was switched on, user 2026-11-23:
         every position gets a TP) → the same levels as a new entry (entry_px / stop_px_entry, current qty), once."""
-        self._place_tps(sym, j)
+        ok = self._place_tps(sym, j)
         tp = j.get("tp") or {}
-        if tp.get("tp1"):
+        if tp.get("tp1") and ok:
             rest = "전량" if D(tp.get("q2") or "0") <= 0 else "체결되면 남은 수량 손절을 본절로"
             self.notify(f"🎯 {sym} 익절 주문 추가 · TP1 {tp['tp1']} ({tp['q1']}) · {rest}", kind="exit")
             log.info("%s TP adopted: %s", sym, tp)
+        elif tp.get("tp1"):                                  # already through → market (booked by reconcile) or
+            log.error("%s adopted TP1 %s (%s) not live (market / rejected) → reconcile follows up", sym, tp["tp1"], tp["q1"])
 
     def _manage_tps(self, sym, j, amt, orders, mk):
         """Every reconcile: missing TP orders re-placed; after TP1 the stop is moved to breakeven (new first)."""
@@ -3112,6 +3132,12 @@ class V6Engine:
                 if self.now_ms() < int(j.get("dec_next_ms") or 0):
                     continue                                    # judged inconclusive recently: retry later, qty kept
                 ext, own_q = self._foreign_rows(sym, j, closing=True, with_own=True)
+                if ext and self._tp1_lag(j, amt, ext):
+                    self._backoff(j, "dec_n", "dec_next_ms")    # exchange stop kept; TP1 booked once its status shows
+                    self.save()
+                    log.warning("%s decrease %s → %s = our TP1 qty at its price, TP1 status not updated yet → retried",
+                                sym, j["qty"], amt)
+                    continue
                 if ext:
                     self._manual_takeover(sym, "봇 주문이 아닌 체결로 포지션 감소",
                                           f"기록 {j['qty']} / 거래소 {amt} · " + self._rows_txt(ext))
@@ -3173,7 +3199,7 @@ class V6Engine:
                     self._cancel_quiet(sym, o)                   # leftover pre-arm / old stop, the bot's stop is live
             if prot and j.get("tp") and not j.get("closing"):
                 self._manage_tps(sym, j, amt, orders, mk)
-            elif prot and self.cfg.take_profit and "tp" not in j and not j.get("closing"):
+            elif prot and self.cfg.take_profit and "tp" not in j and j.get("path") == "bundle" and not j.get("closing"):
                 self._adopt_tps(sym, j)                         # opened before TP was on (user 2026-11-23) → TP now
             if prot and self.cfg.trail_atr_k and sym in self.st["pos"] and not self.st["pos"][sym].get("closing"):
                 self._trail(sym, self.st["pos"][sym], amt, mk)

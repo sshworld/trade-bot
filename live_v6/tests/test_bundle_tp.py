@@ -130,3 +130,45 @@ def test_adopted_position_already_past_tp1_takes_half_at_market(offline):
     jj = new.st["pos"][DOGE]
     assert offline.amt(DOGE) == 50 and D(jj["qty"]) == 50 and not new.in_manual(DOGE)
     assert len(_stops(offline)) == 1 and _tps(offline) == []
+
+
+def test_tp1_fill_with_lagging_order_status_is_not_a_manual_trade(offline, monkeypatch):
+    """Codex 2026-11-23 CRITICAL: TP1 filled (position, user trades) while open orders / algo status still show it NEW
+    and no stream saw it → it must not be taken for a manual trade (that would cancel the remainder's stop)."""
+    eng, j = _open(offline)
+    [stale] = _tps(offline)
+    offline.inner.set_price(DOGE, _tp1_px(eng, j) + D("0.00010"))  # TP1 fires on the exchange
+    assert offline.amt(DOGE) == 50
+    oo, algo = offline.inner.open_orders, offline.inner.algo_order
+    monkeypatch.setattr(offline.inner, "open_orders", lambda s: oo(s) + ([dict(stale)] if s == DOGE else []))
+    monkeypatch.setattr(offline.inner, "algo_order", lambda s, c: {"status": "NEW", "order_id": None,
+                        "executed_qty": D(0), "avg_price": D(0)} if c == stale["client_id"] else algo(s, c))
+    eng.reconcile()
+    assert not eng.in_manual(DOGE) and len(_stops(offline)) == 1 and offline.amt(DOGE) == 50
+    monkeypatch.undo()                                              # the exchange catches up
+    eng.st["pos"][DOGE]["dec_next_ms"] = 0
+    eng.reconcile()
+    eng.reconcile()
+    jj = eng.st["pos"][DOGE]
+    assert jj["tp1_done"] and D(jj["qty"]) == 50 and jj.get("be_done") and not eng.in_manual(DOGE)
+    assert D(_stops(offline)[0]["stop_price"]) == eng._be_target(DOGE, jj)
+
+
+def test_adoption_notice_only_once_the_tp_is_live(offline):
+    old, j = _open(offline, take_profit=False)
+    offline.fx.inject("take_profit", "reject", times=1)
+    new = _bundle_eng(offline, **TP)                                # startup reconcile: adoption rejected
+    assert _tps(offline) == [] and "tp" in new.st["pos"][DOGE]
+    assert not any("익절 주문 추가" in s for s in offline.notifiers[-1].sent)
+    new.reconcile()                                                 # retried by the TP manager
+    assert len(_tps(offline)) == 1 and len(_stops(offline)) == 1
+
+
+def test_adoption_is_for_bundle_positions_only(offline):
+    old, j = _open(offline, take_profit=False)
+    st = old.st["pos"][DOGE]
+    st["path"] = "normal"                                           # e.g. a qrmtf position
+    old.save()
+    new = _bundle_eng(offline, **TP)
+    new.reconcile()
+    assert _tps(offline) == [] and "tp" not in new.st["pos"][DOGE]
