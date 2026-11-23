@@ -230,6 +230,7 @@ class V6Engine:
         self.brackets: dict = {}
         self.started = False
         self._fault_since: float | None = None   # first transient API error of the current streak
+        self._close_try: dict[str, float] = {}   # sym → clock of the last close() attempt (check_unprotected_age pacing)
         self._block_since: dict = {}
         self._block_alerted: set = set()
         self._ok_streak = 0
@@ -2016,6 +2017,26 @@ class V6Engine:
             self.emergency_flatten_all(f"unprotected {sym}")
         return False
 
+    def check_unprotected_age(self):
+        """§8c L1 bound for a stop whose placement stays UNKNOWN. protect() closes a position whose stop is rejected, but
+        'unavailable' is only retried, and the L3(c) flatten needs the WHOLE API dead for api_dead_s: it never fires while
+        other calls succeed. Runs every tick, whatever reconcile reached: an algo-order outage fails open_orders too
+        (reconcile raises before its per-position checks), and a partly filled close can wait on user_trades before
+        reconcile's closing retry. Our position without a confirmed stop for more than api_dead_s → close ONLY it,
+        tried again at most every reconcile_s (also counting reconcile's own close attempts)."""
+        if self.ban_left() > 0:                             # 418: nothing can be sent (queued actions run at unban)
+            return
+        now = self.clock()
+        for sym, j in list(self.st["pos"].items()):
+            t = j.get("unprotected")
+            if (not t or self.in_manual(sym) or j.get("close_held") or j.get("reconcile_pending")
+                    or now - float(t) <= self.cfg.api_dead_s or now - self._close_try.get(sym, 0.0) < self.cfg.reconcile_s):
+                continue                                    # held journal: already read flat, its record is pending
+            if not j.get("closing"):
+                self.alert(f"손절 미확인 {self.cfg.api_dead_s / 60:g}분 지속 — 이 포지션만 정리",
+                           f"{sym} {j['qty']} · 손절 {j['stop_px']} · 손절 등록·확인 계속 실패(시장가는 가능) · 다른 포지션 유지")
+            self.close(sym, j.get("close_reason") or "stop_unconfirmed")
+
     # ───────────────────────── exits ─────────────────────────
     def close(self, sym, reason) -> bool:
         """Close the WHOLE position with reduceOnly MARKET orders until the exchange shows flat. The protective stop stays
@@ -2025,6 +2046,7 @@ class V6Engine:
             log.critical("close(%s, %s) refused: not in the state file (unknown positions are never closed by the bot)",
                          sym, reason)                       # does not hold — whatever the caller
             return False
+        self._close_try[sym] = self.clock()
         if not j.get("closing"):
             j["closing"], j["close_reason"] = True, reason
             self.save()
@@ -3170,11 +3192,12 @@ class V6Engine:
                     return
                 continue
             if not self.find_stop(amt, orders):
-                self.alert("손절 주문 없음 — 재등록 시도", f"{sym} {amt} · 손절 {stp}")
+                if not j.get("unprotected"):                    # once per episode: it was a 🚨 every reconcile (~5 s),
+                    self.alert("손절 주문 없음 — 재등록 시도", f"{sym} {amt} · 손절 {stp}")   # each send ~1 s on the engine
                 if not self.protect(sym, amt, stp, j["cid"]):
                     if self.meta.get("halted", "") and str(self.meta["halted"]).startswith("emergency"):
                         return
-                    continue
+                    continue                                    # check_unprotected_age (every tick) bounds this
                 orders = self.x("open_orders", sym)
             elif j.get("unprotected"):
                 j.pop("unprotected", None)
@@ -3630,6 +3653,7 @@ class V6Engine:
             except ExchangeError as e:
                 log.error("reconcile failed: %s", e)
                 self.check_api_dead()
+        self.check_unprotected_age()
         self.stream_health()
         self.market_data_guard()
         self.check_transient()
