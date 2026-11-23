@@ -72,9 +72,13 @@ def live_settings(name: str, **kw) -> Settings:
                        bar_stale_s=180.0), **kw)   # bar_stale 180 s: 1m cadence, 3 missed minutes → block new entries
     if name == "bundle_v5":
         # bundle_v5: the strategy's own book sizes / stops / trails (fixed intents); the engine keeps the owner guards
-        # (KST-day −10 % no new entries, peak −20 % 24 h) and the order safety machinery. No TP, no engine trail/time exit.
+        # (KST-day −10 % no new entries, peak −20 % 24 h) and the order safety machinery. No engine trail/time exit.
+        # user 2026-11-23 ("TP 안 걸어서 손절난 게 있어"): every position gets an exchange TP — TP1 +1R (R = entry − initial
+        # stop, ATR-based per coin) for 50 % (the whole qty if it cannot split) → SL to the fee-inclusive breakeven
+        # + 0.15 %; the strategy's trailing stop (never looser) and time exit take the rest. No TP2.
         kw = dict(dict(symbols=("BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT"), max_positions=7,
-                       enable_short=True, take_profit=False, trail_atr_k=0.0, max_hold_s=0,
+                       enable_short=True, take_profit=True, tp1_r=1.0, tp1_frac=0.5, tp2_r=None, be_offset=0.0015,
+                       be_fee=0.0005, tp_whole_if_unsplit=True, trail_atr_k=0.0, max_hold_s=0,
                        peak_dd_guard=0.80, peak_dd_release_s=24 * 3600, halt_fraction=None, daily_loss_halt=0.10,
                        daily_halt_s=0, daily_day_offset_s=9 * 3600, daily_halt_flatten=False, bar_delay_s=3, bar_stale_s=180.0,
                        entry_mode=os.getenv("LIVE_V6_ENTRY_MODE", "market"),

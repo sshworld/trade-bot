@@ -134,6 +134,8 @@ class Settings:
     tp2_r: float | None = 2.0           # None/0 → no TP2 order (E chandelier, TA 2026-11-04): the trailing SL exits the rest
     be_offset: float = 0.001            # after TP1: SL → be ± be_offset (live 0.15 %, TA 2026-11-03), safe-side tick
     be_fee: float | None = None         # None: be = entry; f: be = fee-inclusive breakeven entry·(1±f)/(1∓f) (E: f = 0.0005)
+    tp_whole_if_unsplit: bool = False   # bundle_v5 (user 2026-11-23: no position without a TP): qty too small to split →
+                                        # TP1 for the whole qty (False: no TP1, TP2 only for the whole qty / none)
     # E chandelier (TA 2026-11-04, replay variant E): from entry, SL = tighter(SL, best ∓ trail_atr_k·ATR14) where ATR14 =
     # Wilder ATR of the last CLOSED 1h bar and best = the 1m high (long) / low (short) extreme since entry, evaluated once
     # per closed minute (effective from the next candle); never looser. Replace = new reduceOnly STOP first, read back,
@@ -1239,8 +1241,10 @@ class V6Engine:
         if self.cfg.take_profit:
             self._place_tps(sym, j)
         tp = j.get("tp") or {}
-        part += (f"\n익절 TP1 {tp['tp1']} ({tp['q1']})" + (f" · TP2 {tp['tp2']} ({tp['q2']})" if tp.get("tp2") else " · 이후 추적 손절")
-                 if tp.get("tp1") else "")
+        if tp.get("tp1"):
+            rest = (f" · TP2 {tp['tp2']} ({tp['q2']})" if tp.get("tp2")
+                    else " · 이후 추적 손절" if D(tp.get("q2") or "0") > 0 else " · 전량")
+            part += f"\n익절 TP1 {tp['tp1']} ({tp['q1']}){rest}"
         self.notify(f"🟢 진입 {sym} {'롱' if side > 0 else '숏'} · 수량 {j['qty']} · 체결가 {j['entry_px']}{part}\n"
                      f"손절 {j['stop_px']} · {sz.lev}x · 위험 {D(j['risk_usdt']):.4f} USDT ({act}%)",
                      kind="entry", event_ms=intent.get("model_id") or intent.get("T"))
@@ -1406,9 +1410,11 @@ class V6Engine:
         qty = D(j["qty"])
         q1 = rules.floor_qty(qty * D(str(self.cfg.tp1_frac)))
         if q1 < rules.order_min_qty or q1 >= qty or (qty - q1) < rules.order_min_qty:
-            q1 = Decimal(0)                                        # cannot split → TP2 only for the whole qty
+            # cannot split → TP2 only for the whole qty; bundle_v5: TP1 for the whole qty (never a position without a TP)
+            q1 = qty if self.cfg.tp_whole_if_unsplit else Decimal(0)
+        q2 = qty - q1
         return (rules.price(e + s * r * D(str(self.cfg.tp1_r)), rnd), q1,
-                rules.price(e + s * r * D(str(self.cfg.tp2_r)), rnd) if self.cfg.tp2_r else None, qty - q1)
+                rules.price(e + s * r * D(str(self.cfg.tp2_r)), rnd) if self.cfg.tp2_r and q2 > 0 else None, q2)
 
     def _place_tp(self, sym, j, which, px, qty) -> bool:
         """reduceOnly TAKE_PROFIT_MARKET. Price already beyond it → reduceOnly market for that qty. TP1 and TP2 trigger
@@ -1445,6 +1451,31 @@ class V6Engine:
             self._place_tp(sym, j, "t1", tp1, q1)
         if tp2:
             self._place_tp(sym, j, "t2", tp2, q2)
+
+    def _whole_tp_reason(self, sym, j):
+        """Flat at reconcile with a whole-qty TP1 still pending (bundle_v5 cannot-split) and no recorded reason: without a
+        stream fill the close would default to stop_loss → the TP1 order status decides (read failure: unchanged)."""
+        tp = j.get("tp") or {}
+        if j.get("close_reason") or j.get("exit_fill") or j.get("tp1_done") or not tp.get("tp1") or D(tp.get("q2") or "0") > 0:
+            return
+        try:
+            st = self.x("algo_order", sym, f"{j['cid']}t1")
+        except ExchangeError as e:
+            log.error("%s whole TP1 status unreadable (%s) → reason from the exit legs", sym, e)
+            return
+        if st and st["executed_qty"] > 0:
+            j.update(exit_fill="take_profit", tp1_done=True)
+            self.save()
+
+    def _adopt_tps(self, sym, j):
+        """A journaled position without TPs while take_profit is on (opened before TP was switched on, user 2026-11-23:
+        every position gets a TP) → the same levels as a new entry (entry_px / stop_px_entry, current qty), once."""
+        self._place_tps(sym, j)
+        tp = j.get("tp") or {}
+        if tp.get("tp1"):
+            rest = "전량" if D(tp.get("q2") or "0") <= 0 else "체결되면 남은 수량 손절을 본절로"
+            self.notify(f"🎯 {sym} 익절 주문 추가 · TP1 {tp['tp1']} ({tp['q1']}) · {rest}", kind="exit")
+            log.info("%s TP adopted: %s", sym, tp)
 
     def _manage_tps(self, sym, j, amt, orders, mk):
         """Every reconcile: missing TP orders re-placed; after TP1 the stop is moved to breakeven (new first)."""
@@ -1528,6 +1559,9 @@ class V6Engine:
             j.update(tp1_done=True, qty=str(max(abs(amt), D(j["qty"]) - filled["tp1"])))
             self.save()
             self.notify(f"🔵 {sym} TP1 체결 {filled['tp1']} → 남은 수량 {abs(amt)} · 손절을 본절로 이동", kind="exit")
+        if "tp1" in filled and amt == 0 and not j.get("exit_fill"):
+            j.update(exit_fill="take_profit", tp1_done=True)        # whole-qty TP1 (cannot split, bundle_v5) closed it
+            self.save()
         return amt, orders, filled
 
     def _be_target(self, sym, j) -> Decimal:
@@ -3017,6 +3051,7 @@ class V6Engine:
                     verdict, fresh = "flat", Decimal(0)
                 else:
                     # record_close re-reads. A newer nonzero, or a failed read, replaces this snapshot: do not cancel.
+                    self._whole_tp_reason(sym, j)               # whole-qty TP1 fired unseen by the stream → take_profit
                     verdict, fresh = self.record_close(sym, j.get("close_reason") or j.get("exit_fill") or "stop_loss")
                 if self.in_manual(sym):
                     continue                                    # taken over by record_close (manual close)
@@ -3138,6 +3173,8 @@ class V6Engine:
                     self._cancel_quiet(sym, o)                   # leftover pre-arm / old stop, the bot's stop is live
             if prot and j.get("tp") and not j.get("closing"):
                 self._manage_tps(sym, j, amt, orders, mk)
+            elif prot and self.cfg.take_profit and "tp" not in j and not j.get("closing"):
+                self._adopt_tps(sym, j)                         # opened before TP was on (user 2026-11-23) → TP now
             if prot and self.cfg.trail_atr_k and sym in self.st["pos"] and not self.st["pos"][sym].get("closing"):
                 self._trail(sym, self.st["pos"][sym], amt, mk)
         if mismatch:
