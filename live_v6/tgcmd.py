@@ -58,10 +58,46 @@ def status_text(eng) -> str:
         lines.append(f"포지션 {len(pos)}개")
         for s, j in pos.items():
             mk = eng.marks.get(s)
-            up = f" · 현재 {mk} (미실현 {(_d(mk) - _d(j['entry_px'])) * _d(j['qty']):+.4f})" if mk is not None else ""
-            lines.append(f"  {s} {j['qty']} @ {j['entry_px']} · 손절 {j['stop_px']}{up}")
+            up = f" · 현재 {mk} (미실현 {(_d(mk) - _d(j['entry_px'])) * _d(j['qty']) * int(j.get('side', 1)):+.4f})" if mk is not None else ""
+            side = "롱" if int(j.get("side", 1)) > 0 else "숏"
+            lines.append(f"  {s} {side} {j['qty']} @ {j['entry_px']} · 손절 {j['stop_px']}{up}")
+            obs = getattr(eng, "protection_snapshot", {}).get(s)
+            if not obs or obs["cid"] != j.get("cid"):
+                lines.append("    거래소 보호 주문 대조 대기")
+                continue
+            legs = []
+            for suffix, key, qty in (("t1", "tp1", "q1"), ("t2", "tp2", "q2")):
+                order = obs["legs"].get(suffix)
+                target = (j.get("tp") or {}).get(key)
+                planned = (_d(j["tp"][qty]) - _d(j.get("tp_revisions", {}).get(suffix, {}).get("filled"))) if target else None
+                if order:
+                    display = f"{key.upper()} {order['qty']} @ {order['px']}"
+                    if target and (_d(order["qty"]) != planned or _d(order["px"]) != _d(target)):
+                        display += f" (계획 {planned} @ {target} · 불일치)"
+                    if suffix == "t2" and not eng.cfg.tp2_r:
+                        display += " · 잔여 주문 취소 확인 대기"
+                    legs.append(display)
+                elif j.get(key + "_done") and target:
+                    legs.append(f"{key.upper()} 체결 · 잔량 {obs['qty']}")
+                elif target:
+                    fallback = (j.get("tp_market_cids") or {}).get(suffix)
+                    detail = f"시장가 체결 확인 대기 {fallback}" if fallback else "거래소 주문 확인 대기"
+                    sent = j.get("tp_market_check", {}).get(suffix, {}).get("sent_ms")
+                    if fallback and sent is not None:
+                        detail += f" ({max(0, (eng.now_ms() - sent) // 1000)}초)"
+                    legs.append(f"{key.upper()} {planned} @ {target} {detail}")
+            if eng.cfg.take_profit and not j.get("tp"):
+                legs.append("익절 계획 확인 대기")
+            if j.get("tp1_done") and (j.get("tp") or {}).get("tp1") and not (j.get("tp") or {}).get("tp2"):
+                legs.append("잔량 추적 손절")
+            lines.append(f"    거래소 대조 {_kst(obs['time'])} KST · 손절 {obs['stop'] or '미확인'}"
+                         + (" · " + " · ".join(legs) if legs else ""))
     else:
         lines.append("포지션 없음")
+    for s, ids in m.get("cleanup_due", {}).items():
+        if s in pos or any(it.get("sym") == s for it in eng.st.get("intents", {}).values()):
+            continue
+        lines.append(f"  {s} 잔여 주문 정리 확인 대기" + (f" · {', '.join(ids)}" if ids else ""))
     r, n, dw = today_pnl(eng)
     lines.append(f"오늘(KST) 실현 {r:+.4f} USDT ({n}건) · 잔고 변화 {dw:+.4f}")
     dist = []

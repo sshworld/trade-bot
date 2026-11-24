@@ -138,6 +138,10 @@ class BundleDriver:
         self._v5 = {}                                  # decision day → score
         self.macro = macro if macro is not None else (
             SG.load_macro_schedule(self.cfg.schedule_path) if self.cfg.schedule_path and os.path.exists(self.cfg.schedule_path) else [])
+        self.macro_status = "loaded" if self.macro else (
+            "empty" if macro is not None or (self.cfg.schedule_path and os.path.isfile(self.cfg.schedule_path))
+            else "missing" if self.cfg.schedule_path else "not_configured")
+        self._last_macro_minute = max((t + 15 for t, _, _ in self.macro), default=None)
         self._macro_at = {}
         for t, kind, eid in self.macro:
             self._macro_at.setdefault(t + 15, []).append((t, kind, eid))
@@ -207,6 +211,7 @@ class BundleDriver:
 
     def process(self, i) -> bool:
         snap = copy.deepcopy(self.state_dict()) if self.cfg.atomic else None
+        notes_before = len(self.notes)
         try:
             acts = []
             if self.book.open_i == i - 1 and self.book.closed_i != i - 1:
@@ -217,6 +222,9 @@ class BundleDriver:
             if snap is None:
                 raise
             self._restore(snap)
+            del self.notes[notes_before:]                  # a rolled-back attempt must not report committed signals
+            if isinstance(self.port, EnginePort):
+                self.port.waiting(i, "data_not_ready" if isinstance(e, DataNotReady) else type(e).__name__)
             if isinstance(e, DataNotReady):
                 log.info("minute %s not ready: %s", kst(i), e)
             else:
@@ -292,6 +300,7 @@ class BundleDriver:
         # A component whose weight is 0 is off: none of its data is read, so a gap in data nobody uses cannot hold the
         # minute up (the minute is atomic - a DataNotReady here also postpones every stop update of open positions).
         w = self._weights(i)
+        self.enabled = [g for g, weight in zip(GN, w) if weight > 0 and (g != "D" or self.cfg.d_enabled)]
         raw = []
         for t, kind, eid in (self._macro_at.get(i, []) if w[0] > 0 else []):
             for sym in SG.M_SYMS:
@@ -301,13 +310,16 @@ class BundleDriver:
                 f = self.m.filters(sym)
                 at = self.atr1h(sym, i) if full.get(i) is not None else NAN
                 sig, why = SG.m_signal(sym, t, bars, marks, at, f[3])
-                self._note(i, "M", sym, sig, why, dict(event=kind, event_id=eid))
+                reason = "missing_atr" if why == "below_threshold" and not at > 0 else why
+                self._note(i, "M", sym, sig, reason, dict(event=kind, event_id=eid))
                 if sig:
                     raw.append(sig)
         if i % 5 == 0 and w[2] > 0:
             for sym in SG.S:
                 feat = self._retest_step(sym, i)
                 if feat is None:
+                    if isinstance(self.port, EnginePort):
+                        self._note(i, "R", sym, None, "no_setup", {})
                     continue
                 b = self.m.bar(sym, i, True)
                 mk = self.m.mark(sym, i, True)
@@ -336,8 +348,11 @@ class BundleDriver:
         return out
 
     def _note(self, i, comp, sym, sig, why, extra):
-        if sig is not None or why not in ("below_threshold",):
-            self.notes.append(dict(i=i, comp=comp, sym=sym, signal=sig is not None, why=why, **extra))
+        if sig is not None or why != "below_threshold" or isinstance(self.port, EnginePort):
+            note = dict(i=i, comp=comp, sym=sym, signal=sig is not None, why=why, **extra)
+            if sig is not None and isinstance(self.port, EnginePort):
+                note.update(cid=f"{comp}-{sym}-{i}", side=int(sig["sd"]))
+            self.notes.append(note)
 
     def _retest_step(self, sym, i):
         """Feed the 5m bar closing at i; warm the state machine from the last 4h boundary on first use / after a gap."""
@@ -428,7 +443,9 @@ class BundleDriver:
         self._ensure_daily(day)
         pick, universe = SG.h_select(self.daily, day)
         if pick is None:
-            self.notes.append(dict(i=i, comp="H", sym=None, signal=False, why="no_breakout_in_top10", top=universe[:10]))
+            reason = ("insufficient_universe" if len(universe) < 50 and isinstance(self.port, EnginePort)
+                      else "no_breakout_in_top10")
+            self.notes.append(dict(i=i, comp="H", sym=None, signal=False, why=reason, top=universe[:10]))
             return None
         sym, atr, ratio = pick
         b = self.m.bar(sym, i, True)
@@ -685,14 +702,41 @@ class EnginePort:
 
     def __init__(self):
         self.intents: list = []
+        self.observe = None
+        self._wait = None
+
+    def waiting(self, minute, reason):
+        if self.observe and self._wait != (minute, reason):
+            self.observe("minute_retry", minute=minute, reason=reason)
+            self._wait = (minute, reason)
 
     def handle(self, acts, i, drv):
+        self._wait = None
+        if self.observe:
+            schedule = drv.macro_status
+            if drv._last_macro_minute is not None and i > drv._last_macro_minute:
+                schedule = "exhausted"
+            checks = [{k: n[k] for k in ("comp", "sym", "signal", "why", "event_id", "code", "cid", "side")
+                       if k in n} for n in drv.notes]
+            polled = getattr(drv.m, "ann_at", None)
+            d_poll = ("unknown" if not polled else
+                      "failed" if getattr(drv.m, "ann_fail", 0) else
+                      "incomplete" if getattr(drv.m, "ann_incomplete", False) else "succeeded")
+            self.observe("minute_complete", minute=i, enabled=drv.enabled,
+                         schedule=schedule, macro_due=len(drv._macro_at.get(i, [])) if "M" in drv.enabled else 0,
+                         d_last_poll=d_poll if "D" in drv.enabled else "disabled", checks=checks)
         for n in drv.notes:
+            if n["why"] in ("below_threshold", "no_setup"):
+                continue
             log.info("bundle %s %s", kst(n["i"]), json.dumps({k: v for k, v in n.items() if k != "i"}, default=str))
         drv.notes.clear()
         for a in acts:
             c = a.get("cand")
             t = a["type"]
+            if self.observe and t in ("enter", "skip") and c is not None:
+                self.observe("intent" if t == "enter" else "book_skip", minute=i,
+                             cid=c.cid, component=GN[c.g], sym=c.sym, side=int(c.sd),
+                             reason=a.get("reason"), side_factor=a.get("side_factor"))
             if t == "enter":
                 self.intents.append({"type": "enter", "sym": c.sym, "side": int(c.sd), "T": i * 60000, "model_id": i * 60000,
                                      "stop_dist": abs(a["entry"] - a["stop"]), "signal_px": a["entry"],
@@ -725,6 +769,7 @@ class BundleV5(Strategy):
         self.drv = None
 
     def _driver(self, ctx):
+        self.port.observe = getattr(ctx, "bundle_decision", None)
         if self.drv is None:
             if self.market is None:
                 from ..bundle_paper import PublicREST, RestMarket
@@ -775,6 +820,9 @@ class BundleV5(Strategy):
                 self.state = {"drv": d.state_dict()}
                 return True
         return False
+
+    def holds_entry(self, sym, cid, ctx):
+        return any(slot["c"].sym == sym and slot["c"].cid == cid for _, slot in self._driver(ctx).book.positions())
 
     def on_entry_failed(self, sym, cid, reason, ctx):
         """The engine did not open the book's entry (filters / margin / post-only unfilled): drop that slot so the book

@@ -2,6 +2,8 @@
 
 Built fresh per Trading Advisor's spec (2026-10-20); only verified safety rules were ported from live_v1.
 
+번들 전략의 주문 추적, 공개 데이터 모의 연구 및 공식 달력 점검은 [쌍끌이 운영 및 전진 검증](SSANGGEULI.md)에 정리했다.
+
 ## Architecture
 ```
 Binance websockets ──► stream.MarketStream (markPrice@1s, kline 1m/4h, opt. aggTrade)  ┐

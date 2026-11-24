@@ -99,6 +99,7 @@ class RestMarket(Market):
         self.ann_buf: dict = {}
         self.ann_at = 0.0
         self.ann_fail = 0
+        self.ann_incomplete = False
         self.d_down = False
         self._daily_syms = None
 
@@ -296,12 +297,19 @@ class RestMarket(Market):
 
     def _poll_ann(self):
         out = []
+        self.ann_incomplete = False
         try:
             for cat in SG.D_CATALOGS:
                 body = self.r.www("/bapi/composite/v1/public/cms/article/list/query",
                                   {"type": 1, "pageNo": 1, "pageSize": 20, "catalogId": cat})
-                for c in ((body.get("data") or {}).get("catalogs") or []):
-                    for art in c.get("articles") or []:
+                cats = (body.get("data") or {}).get("catalogs")
+                if body.get("success") is False or not isinstance(cats, list) or not cats:
+                    raise DataNotReady(f"announcement catalog {cat} not returned")
+                for c in cats:
+                    articles = c.get("articles")
+                    if not isinstance(articles, list):
+                        raise DataNotReady(f"announcement article list for catalog {cat} not returned")
+                    for art in articles:
                         code, title = art.get("code"), art.get("title") or ""
                         if not code or code in self.ann_seen:
                             continue
@@ -312,6 +320,7 @@ class RestMarket(Market):
                         d = det.get("data") or {}
                         t = d.get("publishDate")
                         if not t or not d.get("body"):
+                            self.ann_incomplete = True
                             continue                                 # not complete yet → fetched again next poll
                         text = SG.flatten_body(json.loads(d["body"]))   # collect.py: flatten(json.loads(body))
                         out.append(SG.parse_announcement(code, d.get("title") or title, int(t), text))
