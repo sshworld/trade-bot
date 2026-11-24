@@ -36,7 +36,7 @@ from decimal import Decimal
 from . import strategy as S
 from .events import MARKET_EVENTS, AccountUpdate, Kline, Mark, OrderUpdate, StreamStatus, Trade
 from .strategies.base import DataNotReady
-from .exchange import ExchangeError, ExchangeUnavailable, OrderRejected, WouldTrigger, rules_from_info
+from .exchange import ExchangeError, ExchangeUnavailable, OrderRejected, RateLimited, WouldTrigger, rules_from_info
 from .notify import Notifier
 from .rules import D, SymbolRules, stop_price
 from .sizing import TAKER_FEE, Sized, SizingParams, precheck_order, size_entry
@@ -193,12 +193,16 @@ def _tick_near(px: Decimal, tick: Decimal) -> Decimal:
     return (px / tick).to_integral_value() * tick
 
 
+TERMINAL_ORDER = frozenset({"FILLED", "EXPIRED", "EXPIRED_IN_MATCH", "CANCELED", "REJECTED"})
+
+
 class V6Engine:
     def __init__(self, ex, settings: Settings | None = None, store=None, notifier: Notifier | None = None,
                  clock=None, sleep=None, strategy=None):
         from .store import MemoryStore
         self.ex = ex
         self.cfg = settings or Settings()
+        self._static_symbols = frozenset(self.cfg.symbols)
         self.store = store or MemoryStore()
         self.tg = notifier or Notifier()
         self.clock = clock or time.time
@@ -220,6 +224,7 @@ class V6Engine:
         self.deadman = None                                 # runner attaches deadman.DeadMan (HEARTBEAT_URL)
         self.events = None                                  # runner attaches tradelog.EventLog (live log v1); None = off
         self._sig_side = 1
+        self._bundle_signal_id = None
         self._sig = None                                    # live log: (sym, signal_px, signal_ms) of the entry in progress
         self._last_market_ev = self.clock()
         self._feed_last: dict = {}                          # feed ("mark" / "kline" / "trade") → last event (clock s)
@@ -243,6 +248,7 @@ class V6Engine:
         self._queued: dict[str, str] = {}                  # 418 ban: sym → "stop" | "close", sent the moment it ends
         self._r3_fail: dict[str, int] = {}                 # TA R3: flat coin → reconciles in a row with a failed bot cancel
         self._r3_alerted: set = set()                      # flat coins whose residual 🚨 is out (cleared by one ✅)
+        self.protection_snapshot: dict = {}               # latest exchange observation, for the read-only /status
         self._foreign_seen: set = set()                    # (sym, order id) of non-bot orders on a flat coin already 🚨'd
         self._flat_confirmed: set = set()                  # symbols whose position read in THIS process returned 0.
                                                            # empty after a restart until reconcile confirms again
@@ -402,6 +408,9 @@ class V6Engine:
         for m in (self.meta.get("manual") or {}).values():
             m["flat_since_ms"] = None                       # downtime is not "continuously flat": timer restarts
         try:
+            # Dynamic bundle symbols can disappear from the strategy book before the live order is resolved.
+            active = [*self.st["pos"], *self.st["unknown"], *(it["sym"] for it in self.st["intents"].values())]
+            self.cfg.symbols = tuple(dict.fromkeys((*self.cfg.symbols, *active)))
             self.load_rules()
             self.resolve_intents()
             self.reconcile()
@@ -473,13 +482,104 @@ class V6Engine:
                 continue
             try:
                 o = self.x("get_order", it["sym"], cid)
-            except ExchangeError:                           # any failed query = unknown (a 4xx is no rejection proof) and
-                self.block(UNKNOWN_ORDER, cid, "주문 상태 확인 불가 — 신규 진입 중단")   # must not abort reconcile
+            except ExchangeError:                           # a failed query never proves rejection
+                self._hold_order(it, "status_unavailable")
                 continue
-            if o and o["executed_qty"] > 0 and it["sym"] not in self.st["pos"]:
+            if it.get("bundle_cid"):
+                try:
+                    why = self._bundle_entry_hold_reason(it, o)
+                    if why:
+                        self._hold_order(it, why)
+                        continue
+                except ExchangeError:
+                    self._hold_order(it, "recovery_read_unavailable")
+                    continue
+            elif o and o["executed_qty"] > 0 and it["sym"] not in self.st["pos"]:
                 self._journal_entry(it["sym"], it, o)
             self.st["intents"].pop(cid, None)
             self.save()
+
+    def _hold_order(self, it, why):
+        self.block(UNKNOWN_ORDER, it["cid"], "주문 상태 확인 불가 — 신규 진입 중단")
+        if it.get("bundle_cid") and it.get("hold_reason") != why:
+            it["hold_reason"] = why
+            self._bundle_order_event("order_unknown", it, reason=why)
+            self.save()
+
+    def _bundle_entry_hold_reason(self, it, order):
+        """Reconcile a journaled market intent by ID. Preserve ambiguous or working entries, including the pre-arm."""
+        cid, sym = it["cid"], it["sym"]
+        if order is None:
+            return "order_not_found"  # both the order index and the position snapshot can lag an accepted POST
+        if order.get("client_id") != cid:
+            return "order_id_mismatch"
+        if order.get("status") not in TERMINAL_ORDER:
+            return "order_not_terminal"
+        journal = self.st["pos"].get(sym)
+        if journal is not None:
+            return None if journal.get("cid") == cid else "different_journal"
+        positions = self.x("positions", self.cfg.symbols)
+        amt = self._row_amt(positions, sym)
+        filled = order["executed_qty"]
+        if amt is None:
+            return "position_unknown"
+        if order["status"] == "FILLED" and not filled:
+            return "missing_fill_qty"
+        if not filled and amt == 0:
+            try:
+                hook = getattr(self.strategy, "on_entry_failed", None)
+                if hook:
+                    hook(sym, it["bundle_cid"], "confirmed_unfilled", self)
+                    self.st["strategy"] = self.strategy.state
+            except Exception:
+                log.exception("%s release of unfilled bundle slot failed; keeping intent", sym)
+                return "model_slot_not_released"
+            self._bundle_order_event("no_fill_observed", it, reason=order["status"])
+            return None   # caller removes intent and persists slot and intent together; flat cleanup owns the pre-arm
+        if not filled or self.in_manual(sym):
+            return "position_ownership_unconfirmed"
+        side = int(it.get("side", 1))
+        # A matching amount is insufficient: a human could close and reopen exactly the same quantity.
+        # Require every entry fill, a complete history page and no later competing trades before adopting.
+        rows = self.x("user_trades", sym, int(it.get("order_ms") or it["T"]) - 60_000)
+        if len(rows) >= 1000:
+            return "fills_truncated"
+        rows = self._dedupe_trade_ids(rows)
+        own = [r for r in rows if str(r["order_id"]) == str(order["id"])]
+        side_name = "BUY" if side > 0 else "SELL"
+        if not own or any(r["side"] != side_name for r in own) or sum(r["qty"] for r in own) != filled:
+            return "fills_incomplete"
+        first_fill = min(f["time"] for f in own)
+        after = [r for r in rows if r["time"] >= first_fill]
+        if amt == 0 and sum((r["qty"] if r["side"] == "BUY" else -r["qty"]) for r in after) == 0:
+            # Confirmed flat even in the fill ledger. Clear only this exact model slot; a later candidate is untouched.
+            holds = getattr(self.strategy, "holds_entry", None)
+            try:
+                if holds and holds(sym, it["bundle_cid"], self):
+                    self.strategy.on_live_closed(sym, it.get("model_id"), "closed_before_recovery", self.now_ms(), self)
+                    self.st["strategy"] = self.strategy.state
+            except Exception:
+                log.exception("%s closure of recovered model position failed; keeping intent", sym)
+                return "model_close_not_confirmed"
+            self._bundle_order_event("fill", it, fill_qty=str(filled), reason="closed_before_recovery")
+            return None
+        if amt != side * filled or len(after) != len(own):
+            return "position_ownership_unconfirmed"
+        avg = sum(r["qty"] * r["price"] for r in own) / filled
+        entry = D(positions[sym].get("entry") or 0)
+        if entry <= 0 or abs(entry - avg) >= self.rules[sym].tick_size:
+            return "position_entry_mismatch"
+        holds = getattr(self.strategy, "holds_entry", None)
+        try:
+            if holds and not holds(sym, it["bundle_cid"], self):
+                return "model_slot_missing"
+        except Exception:
+            log.exception("%s recovered model ownership not established", sym)
+            return "model_slot_unknown"
+        # Ownership is established by the fills, not the presence of a stop. Journal first so this same
+        # reconciliation can restore a missing stop (or protect/close under the existing failure policy).
+        self._journal_entry(sym, it, dict(order, avg_price=avg))
+        return None
 
     def _confirm_isolated(self, sym, pr_mt, reads: int) -> str:
         """'' = ISOLATED confirmed, else the skip/block reason. Call it only right after THIS engine's own margin
@@ -642,9 +742,15 @@ class V6Engine:
             elif it["type"] == "enter":
                 t = it["T"]
                 if not (self.cfg.trade_from_ms <= t < self.cfg.trade_until_ms):
+                    if it.get("cid"):
+                        self.bundle_decision("engine_skip", minute=t // 60000, cid=it["cid"], sym=sym,
+                                             side=it.get("side", 1), reason="outside_trading_period")
                     continue
                 max_age = min(self.cfg.act_window_s, it.get("max_age_s", self.cfg.act_window_s))
                 if self.now_ms() - t > max_age * 1000:
+                    if it.get("cid"):
+                        self.bundle_decision("engine_skip", minute=t // 60000, cid=it["cid"], sym=sym,
+                                             side=it.get("side", 1), reason="late")
                     self.skip(sym, "late", f"signal {(self.now_ms() - t) / 1000:.1f}s old > {max_age}s",
                               signal_px=it.get("signal_px"), signal_ms=it.get("model_id") or t)
                     if it.get("fixed") is not None:
@@ -653,8 +759,11 @@ class V6Engine:
                 self._ef_done = False
                 ok = self.enter(sym, it["stop_dist"], t, model_id=it.get("model_id"), signal_px=it.get("signal_px"),
                                 side=int(it.get("side", 1)), fixed=it.get("fixed"), bundle_cid=it.get("cid"))
-                if not ok and it.get("fixed") is not None and not self._pending_postonly(sym) and not self._ef_done:
-                    self._entry_failed(sym, {"bundle_cid": it.get("cid")}, "not_entered")
+                if not ok and it.get("fixed") is not None and not self._ef_done:
+                    pending = any(x.get("sym") == sym and (x.get("pending") or x.get("bundle_cid") == it.get("cid"))
+                                  for x in self.st["intents"].values())
+                    if not pending:
+                        self._entry_failed(sym, {"bundle_cid": it.get("cid")}, "not_entered")
             elif it["type"] == "stop":                      # bundle_v5: strategy-owned trailing stop (tighten only)
                 self.move_stop(sym, D(str(it["stop_px"])))
 
@@ -970,13 +1079,14 @@ class V6Engine:
         fixed (bundle_v5): {"qty", "stop_px", "lev"} decided by the strategy's own book — the engine does not size,
         only validates the order against the exchange filters (precheck_order) and executes it with the same
         pre-arm → fill → closePosition stop → manual-mode / direction / backoff machinery as every other entry."""
+        self._bundle_signal_id = bundle_cid
         self._sig = (sym, signal_px, model_id or T)
         self._sig_side = side
         try:
             return self._enter(sym, stop_dist, T, model_id=model_id, signal_px=signal_px, side=side, fixed=fixed,
                                bundle_cid=bundle_cid)
         finally:
-            self._sig, self._sig_side = None, 1
+            self._sig, self._sig_side, self._bundle_signal_id = None, 1, None
 
     def _size(self, sym, stop_dist, book, side, fixed, fixed_lev=None):
         if fixed is None:
@@ -1026,9 +1136,10 @@ class V6Engine:
         if any(not (o["close_position"] or o["reduce_only"]) for o in oo):
             self.block(MISMATCH, f"{sym} open entry order before entry", "대조 불일치 — 신규 진입 중단")
             return None
-        for o in oo:                                        # our own leftover stops must never touch a new position
-            if str(o["client_id"]).startswith(self.cfg.cid_prefix):
-                self.x("cancel", sym, o)
+        failed = self._clean_reducing(sym, oo)
+        if failed or any(it.get("sym") == sym for it in self.st["intents"].values()):
+            self.skip(sym, "residual_unconfirmed", "previous order or its cancellation still unresolved")
+            return None
         return pos
 
     def _enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None, side: int = 1, fixed=None,
@@ -1163,6 +1274,7 @@ class V6Engine:
         try:
             o = self.submit_market(sym, "BUY" if side > 0 else "SELL", sz.qty, cid, reduce_only=False)
         except OrderRejected as e:                          # DEFINITIVE rejection: nothing was opened → undo everything
+            self._bundle_order_event("order_rejected", intent, reason="entry_rejected")
             self.st["intents"].pop(cid, None)
             self.save()
             self._cancel_quiet(sym, pre)                    # pre-armed stop must not outlive the rejected entry
@@ -1170,9 +1282,24 @@ class V6Engine:
             self.alert("진입 주문 거절 — 선행 손절 취소, 포지션·기록 없음", f"{sym} {sz.qty}: {str(e)[:100]}")
             return False
         except ExchangeError as e:
+            self._bundle_order_event("order_unknown", intent, reason=type(e).__name__)
+            if bundle_cid:
+                self.block(UNKNOWN_ORDER, cid)
             self.alert("진입 주문 결과 불명", f"{cid} {sz.qty} {sym}: {str(e)[:100]} · 선행 손절 유지 · 대조 루프가 정리")
             return False
+        if bundle_cid:
+            if o is None:
+                self._hold_order(intent, "order_not_found")
+                return False
+            if o.get("client_id") != cid or (o.get("status") == "FILLED" and not o.get("executed_qty")):
+                self._hold_order(intent, "order_response_inconsistent")
+                return False
+            if o.get("status") not in TERMINAL_ORDER:
+                self._bundle_order_event("order_ack", intent, exchange_status=o.get("status"))
+                self._hold_order(intent, "order_not_terminal")
+                return False
         if o is None or o["executed_qty"] <= 0:
+            self._bundle_order_event("no_fill_observed", intent, reason=o.get("status") if o else "not_found")
             self.st["intents"].pop(cid, None)
             self.save()
             self._cancel_quiet(sym, pre)
@@ -1289,6 +1416,7 @@ class V6Engine:
                  signal_ms=intent.get("model_id", intent["T"]), entry_fill_ms=o.get("update_time") or None)
         self.st["pos"][sym] = j
         self.save()
+        self._bundle_order_event("fill", intent, fill_qty=j["entry_qty"], price=j["entry_px"])
         return j
 
     def _wait_order(self, sym, cid):
@@ -1312,6 +1440,8 @@ class V6Engine:
         if existing is not None:
             return existing
         try:
+            if not reduce_only:
+                self._bundle_order_event("submit_attempt", self.st["intents"].get(cid), order_id=cid, mode="market")
             return self.x("market", sym, side, qty, cid, reduce_only)
         except (ExchangeUnavailable, OrderRejected) as e:
             if isinstance(e, OrderRejected) and e.code not in self.UNKNOWN_OUTCOME_CODES:
@@ -1322,7 +1452,7 @@ class V6Engine:
             except ExchangeUnavailable:
                 self.block(UNKNOWN_ORDER, cid, "주문 상태 확인 불가 — 신규 진입 중단")
                 raise
-            if found is None and not reduce_only:
+            if found is None and not reduce_only and not (self.st["intents"].get(cid) or {}).get("bundle_cid"):
                 self.skip(sym, "order_absent", f"{cid} confirmed absent → NOT re-sent")
             return found
 
@@ -1349,6 +1479,9 @@ class V6Engine:
             log.error("%s cancel %s failed (reconcile retries): %s", sym, o.get("client_id"), e)
 
     def _prearm(self, sym, stop_px, qty, cid, side: int = 1) -> dict | None:
+        if sym not in self._static_symbols:
+            self.meta.setdefault("cleanup_due", {})[sym] = [f"{cid}p"]
+            self.save()                                     # crash before the entry intent: still inspect this symbol
         try:
             return self.x("stop", sym, "SELL" if side > 0 else "BUY", stop_px, f"{cid}p", qty=qty)
         except WouldTrigger:
@@ -1381,7 +1514,8 @@ class V6Engine:
                 log.error("%s closePosition stop attempt %d: %s", sym, attempt + 1, e)
             try:
                 oo = self.x("open_orders", sym)
-                cp = next((o for o in oo if o["close_position"] and o["side"] == self._cs(j)), None)
+                side_amt = amt if int(j.get("side", 1)) > 0 else -amt
+                cp = self.find_stop(side_amt, [o for o in oo if o["close_position"]])
                 if cp:
                     j["stop_px"] = str(cp["stop_price"])
                     j.update(stop_confirmed_ms=self.now_ms(), stop_px_entry=j["stop_px"])   # live log only
@@ -1416,22 +1550,41 @@ class V6Engine:
         return (rules.price(e + s * r * D(str(self.cfg.tp1_r)), rnd), q1,
                 rules.price(e + s * r * D(str(self.cfg.tp2_r)), rnd) if self.cfg.tp2_r and q2 > 0 else None, q2)
 
-    def _place_tp(self, sym, j, which, px, qty) -> bool:
+    @staticmethod
+    def _tp_cid(j, leg, revision=None):
+        rev = (j.get("tp_revisions", {}).get(leg, {}).get("rev", 0) if revision is None else revision)
+        return f"{j['cid']}{leg}" + (f"r{rev}" if rev else "")
+
+    def _place_tp(self, sym, j, which, px, qty, *, allow_market=True) -> bool:
         """reduceOnly TAKE_PROFIT_MARKET. Price already beyond it → reduceOnly market for that qty. TP1 and TP2 trigger
         on the last price (CONTRACT_PRICE, TA 2026-11-02: last-price klines reached 2R without a mark-price TP2 fill);
         every stop stays on MARK_PRICE. A live TP placed on MARK_PRICE before this change is left as-is (re-placed only
         when missing, by client id, so never duplicated)."""
+        if which in j.get("tp_market_cids", {}):
+            return False                                    # a through-price MARKET already sent; reconcile its id
         try:
-            self.x("take_profit", sym, self._cs(j), px, f"{j['cid']}{which}", qty, working_type="CONTRACT_PRICE")
+            self.x("take_profit", sym, self._cs(j), px, self._tp_cid(j, which), qty, working_type="CONTRACT_PRICE")
             return True
         except WouldTrigger:
+            if not allow_market:
+                return False
             seq = int(j.get("exit_seq", 0))
             j["exit_seq"] = seq + 1
-            self.save()
+            market_cid = f"{j['cid']}x{seq}"
+            j.setdefault("tp_market_cids", {})[which] = market_cid
+            j.setdefault("tp_market_check", {})[which] = {"sent_ms": self.now_ms()}
+            self.save()                                     # remember the one market fallback for this TP across restarts
             try:
-                self.submit_market(sym, self._cs(j), qty, f"{j['cid']}x{seq}", reduce_only=True)
+                # This cid is allocated and saved exactly once. A subsequent lookup is read-only,
+                # so even an accepted order with a lost response cannot sell the remainder twice.
+                self.x("market", sym, self._cs(j), qty, market_cid, reduce_only=True)
+            except OrderRejected as e:
+                if e.code not in (*self.UNKNOWN_OUTCOME_CODES, -4116):
+                    j["tp_market_cids"].pop(which, None)     # only the original POST can prove a rejection
+                    self.save()
+                log.error("%s %s market rejected (%s): %s", sym, which, market_cid, e)
             except ExchangeError as e:
-                log.error("%s %s market (TP already through) failed: %s", sym, which, e)
+                log.error("%s %s market status unresolved (%s): %s", sym, which, market_cid, e)
             self._dirty = True
             return False
         except ExchangeError as e:
@@ -1459,7 +1612,8 @@ class V6Engine:
         if j.get("close_reason") or j.get("exit_fill") or j.get("tp1_done") or not tp.get("tp1") or D(tp.get("q2") or "0") > 0:
             return
         try:
-            st = self.x("algo_order", sym, f"{j['cid']}t1")
+            mcid = j.get("tp_market_cids", {}).get("t1")
+            st = self.x("get_order", sym, mcid) if mcid else self.x("algo_order", sym, self._tp_cid(j, "t1"))
         except ExchangeError as e:
             log.error("%s whole TP1 status unreadable (%s) → reason from the exit legs", sym, e)
             return
@@ -1500,32 +1654,60 @@ class V6Engine:
     def _manage_tps(self, sym, j, amt, orders, mk):
         """Every reconcile: missing TP orders re-placed; after TP1 the stop is moved to breakeven (new first)."""
         tp, cids = j["tp"], {o["client_id"] for o in orders}
-        for w, k in (("t1", "tp1"), ("t2", "tp2")):               # a TP missing from open orders most likely just fired:
-            if (tp.get(k) and f"{j['cid']}{w}" not in cids     # `amt` / `mk` may predate it -> fresh position read
-                    and not (w == "t1" and j.get("tp1_done"))):  # first (testnet LINK + PEPE 2026-10-30: re-place ->
-                try:                                              # -2021 -> a 2nd market TP1 closed the remainder)
-                    fresh = self._row_amt(self.x("positions", self.cfg.symbols), sym)
-                except ExchangeError:
-                    return
-                if fresh is None:
-                    return                                  # missing row: do not guess a fill from amount 0
-                if abs(fresh) < abs(amt):
-                    self._dirty = True                            # filled: next reconcile books it (tp1_done / flat)
-                    return
-        if not j.get("tp1_done") and f"{j['cid']}t1" not in cids and tp.get("tp1"):
-            self._place_tp(sym, j, "t1", D(tp["tp1"]), D(tp["q1"]))
-        if tp.get("tp2") and not self.cfg.tp2_r:                   # adopted pre-E position: TP2 cancelled (E has none)
-            o2 = next((o for o in orders if o["client_id"] == f"{j['cid']}t2"), None)
+        for leg, key, qkey in (("t1", "tp1", "q1"), ("t2", "tp2", "q2")):
+            cid = self._tp_cid(j, leg)
+            if leg == "t2" and not self.cfg.tp2_r:
+                # Some legacy journals cleared TP2 on the cancel ACK while it remained on the exchange.
+                old = next((o for o in orders if o["client_id"] == cid and self._is_own_reducing(o)
+                            and o["type"] == "TAKE_PROFIT_MARKET"), None)
+                if old:
+                    self._cancel_quiet(sym, old)             # clearing waits for a fresh snapshot without it
+                elif tp.get(key):
+                    tp[key] = None
+                    self.save()
+                continue
+            if not tp.get(key) or j.get(key + "_done"):
+                continue
+            prior = D(j.get("tp_revisions", {}).get(leg, {}).get("filled", "0"))
+            qty = min(abs(amt), D(tp[qkey]) - prior)
+            if cid in cids:
+                order = next(o for o in orders if o["client_id"] == cid)
+                if (self._is_own_reducing(order) and order["type"] == "TAKE_PROFIT_MARKET"
+                        and (D(order["stop_price"]) != D(tp[key]) or D(order.get("qty") or 0) != qty
+                             or order["side"] != self._cs(j))):
+                    self._cancel_quiet(sym, order)            # never replace until found absent in a fresh snapshot
+                continue
+            if leg in j.get("tp_market_cids", {}):
+                continue                                    # _exit_fills reconciles the durable market client id
             try:
-                if o2 is not None:
-                    self.x("cancel", sym, o2)
-                tp["tp2"] = None
-                self.save()
-                log.info("%s TP2 %s (E: no TP2, trailing SL)", sym, "cancelled" if o2 else "dropped (not open)")
-            except ExchangeError as e:
-                log.error("%s TP2 cancel failed (retried next reconcile): %s", sym, e)
-        elif tp.get("tp2") and f"{j['cid']}t2" not in cids:
-            self._place_tp(sym, j, "t2", D(tp["tp2"]), abs(amt) if j.get("tp1_done") else D(tp["q2"]))
+                status = self.x("algo_order", sym, cid)
+                # Legacy exits can restore an untriggered TP using the same conditional ID when two open
+                # snapshots omit it but the history still says NEW. Never promote that conflict to a MARKET.
+                conflict = bool(status and status.get("status") == "NEW" and not status["executed_qty"]
+                                and j.get("path") != "bundle")
+                if conflict and any(o["client_id"] == cid for o in self.x("open_orders", sym)):
+                    continue
+                expired_child = bool(status and status.get("status") == "FINISHED"
+                                     and status.get("order_id") not in (None, "", "0", 0)
+                                     and status.get("order_status") in ("EXPIRED", "EXPIRED_IN_MATCH")
+                                     and status.get("executed_qty") == 0)
+                if status is not None and not (conflict or expired_child) and (
+                        status["executed_qty"] or status.get("status") not in self.STOP_GONE):
+                    continue                                # open-order list and the position may both lag a trigger
+                positions = self.x("positions", self.cfg.symbols)
+                fresh = self._row_amt(positions, sym)
+            except ExchangeError:
+                continue                                    # unreadable is not proof that a TP can be replaced
+            if fresh != amt:
+                self._dirty = True
+                return
+            if expired_child:
+                if not j.get("pos_entry") or D((positions.get(sym) or {}).get("entry") or 0) != D(j["pos_entry"]):
+                    return                                  # position was reopened or its identity cannot be confirmed
+                revisions = j.setdefault("tp_revisions", {})
+                revisions[leg] = {"rev": revisions.get(leg, {}).get("rev", 0) + 1, "filled": str(prior)}
+                self.save()                                 # the consumed conditional ID belongs to the expired child
+            self._place_tp(sym, j, leg, D(tp[key]), qty, allow_market=not conflict)
         if j.get("tp1_done") and tp.get("tp1") and not j.get("be_done"):
             self._move_stop_be(sym, j, amt, orders, mk)
 
@@ -1541,21 +1723,41 @@ class V6Engine:
             cand.update({c: "stop" for c in [f"{cid}p"] + [f"{cid}s{i}" for i in range(int(j.get("stop_seq", 0)))]})
         if j.get("tp"):
             if j["tp"].get("tp1") and not j.get("tp1_done"):
-                cand[f"{cid}t1"] = "tp1"
-            if j["tp"].get("tp2"):
-                cand[f"{cid}t2"] = "tp2"
+                cand[self._tp_cid(j, "t1")] = "tp1"
+            if j["tp"].get("tp2") and not j.get("tp2_done"):
+                cand[self._tp_cid(j, "t2")] = "tp2"
         cand = {c: k for c, k in cand.items() if c not in open_}
         if not cand:
             return None
-        filled = {}
+        filled, terminal = {}, set()
         for c, k in cand.items():
+            leg = {"tp1": "t1", "tp2": "t2"}.get(k)
+            market = j.get("tp_market_cids", {}).get(leg)
+            check = j.setdefault("tp_market_check", {}).setdefault(leg, {"sent_ms": self.now_ms()}) if market else {}
+            if self.now_ms() < check.get("next_ms", 0):
+                continue
             try:
-                st = self.x("algo_order", sym, c)
+                st = self.x("get_order", sym, market) if market else self.x("algo_order", sym, c)
+                if market and st and st.get("status") in self.STOP_GONE and st["executed_qty"] == 0:
+                    j["tp_market_cids"].pop(leg)
+                    self.save()
             except ExchangeError as e:
                 log.error("%s order status %s unreadable (%s) → position-based fallback", sym, c, e)
-                return None
+                if not market:
+                    continue
+                st = None
+            if market and not st:
+                self._backoff(check, "attempts", "next_ms")
+                if not check.get("alerted") and self.now_ms() - check["sent_ms"] >= 60_000:
+                    check["alerted"] = True
+                    self.alert(f"{sym} {k.upper()} 시장가 체결 미확인", f"{market} · 중복 주문 보류 · 거래소 주문/체결 확인 필요")
+                self.save()
             if st and st["executed_qty"] > 0:
-                filled[k] = filled.get(k, Decimal(0)) + st["executed_qty"]
+                prior = D(j.get("tp_revisions", {}).get(leg, {}).get("filled", "0"))
+                filled[k] = filled.get(k, Decimal(0)) + prior + st["executed_qty"]
+                child_state = st.get("order_status") or st.get("status")
+                if child_state in (*self.STOP_GONE, "EXPIRED_IN_MATCH", "FILLED"):
+                    terminal.add(k)
         if not filled:
             return None
         try:
@@ -1566,22 +1768,38 @@ class V6Engine:
         if amt is None:
             return False                                    # missing row is not a confirmed flat fill
         log.info("%s exit fill from order status: %s → position %s", sym, filled, amt)
-        if "stop" in filled or "tp2" in filled:
-            j["exit_fill"] = ("trail_stop" if j.get("trailed") else "be_stop" if j.get("be_done") else "stop_loss") \
-                if "stop" in filled else "take_profit"
+        tp = j.get("tp", {})
+        before = D(tp.get("q1") or 0) + D(tp.get("q2") or 0)
+        for key, leg, qkey in (("tp1", "t1", "q1"), ("tp2", "t2", "q2")):
+            done = filled.get(key)
+            if done is None:
+                continue
+            planned = D(tp[qkey])
+            if abs(amt) > before - done:
+                continue                                    # position snapshot still predates that fill
+            if done >= planned:
+                if not j.get(key + "_done"):
+                    j[key + "_done"] = True
+                    if key == "tp1":
+                        j["qty"] = str(max(abs(amt), before - done))
+                        self.notify(f"🔵 {sym} TP1 체결 {done} → 남은 수량 {abs(amt)}", kind="exit")
+                    self.save()
+            elif key in terminal:
+                # The original child is terminal, its cumulative fill is on the position, and cannot increase.
+                # Journal a NEW conditional client id and only the outstanding leg quantity before any submission.
+                revisions = j.setdefault("tp_revisions", {})
+                revisions[leg] = {"rev": revisions.get(leg, {}).get("rev", 0) + 1, "filled": str(done)}
+                j.get("tp_market_cids", {}).pop(leg, None)
+                self.save()
+        if amt == 0:
+            j["exit_fill"] = ("trail_stop" if j.get("trailed") else "be_stop" if j.get("be_done") else "stop_loss"
+                             ) if "stop" in filled else "take_profit"
             self.save()
-            if amt != 0 and "tp1" not in filled:
-                self._dirty = True
+        elif "stop" in filled:
+            # A partially executed, expired stop needs recovery for the remaining position.
+            if "stop" not in terminal or filled["stop"] >= self._opened_qty(j, []):
+                self._dirty = True                           # full/in-flight close and an older nonzero position
                 return False
-        if "tp1" in filled and not j.get("tp1_done") and amt != 0:
-            # expected remainder = before − TP1 fill; a smaller exchange amount is an extra (manual?) reduction that the
-            # decrease check in reconcile must still see, so it is not folded into the journal qty here
-            j.update(tp1_done=True, qty=str(max(abs(amt), D(j["qty"]) - filled["tp1"])))
-            self.save()
-            self.notify(f"🔵 {sym} TP1 체결 {filled['tp1']} → 남은 수량 {abs(amt)} · 손절을 본절로 이동", kind="exit")
-        if "tp1" in filled and amt == 0 and not j.get("exit_fill"):
-            j.update(exit_fill="take_profit", tp1_done=True)        # whole-qty TP1 (cannot split, bundle_v5) closed it
-            self.save()
         return amt, orders, filled
 
     def _be_target(self, sym, j) -> Decimal:
@@ -1672,11 +1890,19 @@ class V6Engine:
             ocid = f"{cid}L{attempt}"
             try:
                 px = self._postonly_px(sym, side)
-                intent["pending"] = {"ocid": ocid, "price": str(px), "placed_ms": self.now_ms(), "filled": "0",
-                                     "timeout_s": self.cfg.postonly_timeout_s}
-                self.save()                                 # journal the order id BEFORE sending
+            except ExchangeError as e:
+                self._postonly_abandon(sym, cid, intent, "postonly_quote_unavailable", str(e)[:120])
+                return False
+            intent["pending"] = {"ocid": ocid, "price": str(px), "placed_ms": self.now_ms(), "filled": "0",
+                                 "timeout_s": self.cfg.postonly_timeout_s}
+            self.save()                                     # journal the order id BEFORE sending
+            self._bundle_order_event("submit_attempt", intent, order_id=ocid, mode="postonly")
+            try:
                 o = self.x("limit_postonly", sym, "BUY" if side > 0 else "SELL", sz.qty, px, ocid)
             except OrderRejected as e:
+                if e.code in self.UNKNOWN_OUTCOME_CODES and intent.get("bundle_cid"):
+                    self._hold_order(intent, "postonly_submit_unknown")
+                    return True
                 if e.code == -5022 and attempt == 0:
                     log.info("%s post-only refused (would take) → one resubmit at the fresh quote", sym)
                     continue
@@ -1684,13 +1910,19 @@ class V6Engine:
                                        f"{sz.qty} @ {intent['pending'].get('price')}: {str(e)[:120]}")
                 return False
             except ExchangeError as e:                      # unknown outcome: the order id is journaled → poll decides
+                if intent.get("bundle_cid"):
+                    self._hold_order(intent, type(e).__name__)
                 log.error("%s post-only submit outcome unknown (%s) → resolved by order id", sym, e)
+                return True
+            if intent.get("bundle_cid") and (not o or o.get("client_id") != ocid):
+                self._hold_order(intent, "postonly_response_inconsistent")
                 return True
             if o.get("status") == "EXPIRED" and o["executed_qty"] <= 0:   # some venues expire instead of -5022
                 if attempt == 0:
                     continue
                 self._postonly_abandon(sym, cid, intent, "postonly_rejected", "GTX expired twice")
                 return False
+            self._bundle_order_event("order_ack", intent, order_id=ocid, exchange_status=o.get("status"))
             intent["pending"]["order_id"] = o["id"]
             self.save()
             log.info("%s post-only entry %s %s @ %s (timeout %ss)", sym, ocid, sz.qty, px, self.cfg.postonly_timeout_s)
@@ -1700,6 +1932,8 @@ class V6Engine:
 
     def _postonly_abandon(self, sym, cid, intent, why, detail):
         """Nothing filled: cancel the pre-arm (and any order of this entry still open), drop the intent."""
+        if why != "postonly_quote_unavailable" or intent.get("pending"):
+            self._bundle_order_event("order_unfilled", intent, reason=why)
         try:
             for o in self.x("open_orders", sym):
                 c = str(o.get("client_id") or "")
@@ -1741,14 +1975,30 @@ class V6Engine:
         except ExchangeError as e:
             log.error("%s cancel of the post-only entry failed (%s) → retried", sym, e)
         o = self.x("get_order", sym, pd_["ocid"])
+        if it.get("bundle_cid") and (o is None or o.get("status") not in TERMINAL_ORDER
+                                     or o.get("client_id") != pd_["ocid"]
+                                     or (o.get("status") == "FILLED" and not o.get("executed_qty"))):
+            if o is None:
+                self._hold_order(it, "cancel_status_not_found")
+            elif o.get("client_id") != pd_["ocid"] or o.get("status") not in {"NEW", "PARTIALLY_FILLED"}:
+                self._hold_order(it, "cancel_status_unconfirmed")
+            return o, False
         return o, o is None or o["status"] not in ("NEW", "PARTIALLY_FILLED")
 
     def _poll_one(self, cid, it):
         sym, pd_ = it["sym"], it["pending"]
         o = self.x("get_order", sym, pd_["ocid"])
-        if o is None:                                       # never reached the exchange
+        if o is None:
+            if it.get("bundle_cid"):
+                self._hold_order(it, "postonly_order_not_found")
+                return
             if self.now_ms() - int(pd_["placed_ms"]) >= 5000:
                 self._postonly_abandon(sym, cid, it, "order_absent", f"{pd_['ocid']} not found")
+            return
+        if it.get("bundle_cid") and (o.get("client_id") != pd_["ocid"]
+                or (o.get("status") == "FILLED" and not o.get("executed_qty"))
+                or o.get("status") not in TERMINAL_ORDER | {"NEW", "PARTIALLY_FILLED"}):
+            self._hold_order(it, "postonly_status_unconfirmed")
             return
         self._postonly_fills(sym, cid, it, o)
         live = o["status"] in ("NEW", "PARTIALLY_FILLED")
@@ -2108,11 +2358,52 @@ class V6Engine:
             if verdict != "flat":
                 return
         try:
-            for o in self.x("open_orders", sym):
-                if (o["close_position"] or o["reduce_only"]) and str(o["client_id"]).startswith(self.cfg.cid_prefix):
-                    self.x("cancel", sym, o)
+            self._clean_reducing(sym, self.x("open_orders", sym))
         except ExchangeError as e:
-            log.error("%s stale stop cancel failed (reconcile retries): %s", sym, e)
+            log.error("%s stale order query failed (reconcile retries): %s", sym, e)
+
+    def _is_own_reducing(self, o):
+        return (bool(self.cfg.cid_prefix) and str(o.get("client_id") or "").startswith(self.cfg.cid_prefix)
+                and (o.get("reduce_only") or o.get("close_position")))
+
+    def _clean_reducing(self, sym, orders):
+        """Only a fresh exchange snapshot can release the cleanup hold. Never remove a pending entry's pre-arm."""
+        pending = {f"{cid}p" for cid, it in self.st["intents"].items() if it.get("sym") == sym}
+        def targets(rows):
+            return [o for o in rows if self._is_own_reducing(o) and o["client_id"] not in pending]
+        stale = targets(orders)
+        watch = self.meta.setdefault("cleanup_due", {})
+        if not stale:
+            if sym in watch and not pending:
+                del watch[sym]
+                self.save()
+            return []
+        ids = [o["client_id"] for o in stale]
+        if watch.get(sym) != ids:
+            watch[sym] = ids
+            self.save()                                       # dynamic symbol survives a crash after its journal closed
+        try:
+            fresh = self._row_amt(self.x("positions", (sym,)), sym)
+        except ExchangeError as e:
+            return [("positions", str(e)[:80])]
+        if fresh != 0:
+            return [("positions", "position no longer confirmed flat")]
+        failed = []
+        for o in stale:
+            try:
+                self.x("cancel", sym, o)
+            except ExchangeError as e:
+                failed.append((o["client_id"], str(e)[:80]))
+        if not failed:
+            try:
+                left = targets(self.x("open_orders", sym))
+                failed = [(o["client_id"], "exchange still lists the order") for o in left]
+            except ExchangeError as e:
+                failed = [("open_orders", str(e)[:80])]
+        if not failed and not pending:
+            watch.pop(sym, None)
+            self.save()
+        return failed
 
     def _residual_watch(self, sym, failed, foreign):
         """TA R3 alert (2026-10-29), flat coin only, alerts only: which orders get cancelled is unchanged. Counters live
@@ -2351,9 +2642,11 @@ class V6Engine:
         """Reconcile step of a manual coin: no bot order except cancelling the bot's own leftovers, booking retried,
         release after manual_release_s of a 0 position."""
         m = self.meta["manual"][sym]
-        _n, failed = self._manual_cancel_bot_orders(sym, orders)
         if amt == 0:
+            failed = self._clean_reducing(sym, orders)
             self._residual_watch(sym, failed, [])           # TA R3 (alerts only); the user's own orders: no alert
+        else:
+            self._manual_cancel_bot_orders(sym, orders)
         if not m.get("booked") and self.now_ms() >= int(m.get("book_next_ms") or 0):
             self._manual_book_safe(sym)
         if amt != 0:
@@ -2364,7 +2657,7 @@ class V6Engine:
         if m.get("flat_since_ms") is None:
             m["flat_since_ms"] = self.now_ms()
             self.save()
-        if self.now_ms() - int(m["flat_since_ms"]) < self.cfg.manual_release_s * 1000:
+        if failed or self.now_ms() - int(m["flat_since_ms"]) < self.cfg.manual_release_s * 1000:
             return
         self.meta["manual"].pop(sym, None)
         if not m.get("booked") and m.get("journal"):
@@ -2388,6 +2681,16 @@ class V6Engine:
                        ", ".join(f"{s} {u.get('amt')} 손절 {u.get('stop_px')}" for s, u in self.st["unknown"].items()))
 
     # ───────────────────────── live log v1 (recording only; never raises, never sleeps, no REST) ─────────────────────────
+    def bundle_decision(self, stage, *, minute, cid=None, **fields):
+        """An observation, joined by strategy decision minute and candidate ID even on late exchange replies."""
+        self._emit("decisions", lambda: dict(stage=stage, minute=minute, observed_ms=self.now_ms(), cid=cid,
+                                              code_commit=self.events.commit, **fields))
+
+    def _bundle_order_event(self, stage, intent, **fields):
+        if intent and intent.get("bundle_cid"):
+            self.bundle_decision(stage, minute=intent["T"] // 60000, cid=intent["bundle_cid"],
+                                 sym=intent["sym"], side=intent.get("side", 1), order_group=intent["cid"], **fields)
+
     def _emit(self, kind, build):
         """Build and append one log line. Any failure (unwritable path, disk full, writer bug, bad field) is caught here:
         journald error + daily `log_write_fail` count — trading code never sees it."""
@@ -2436,6 +2739,9 @@ class V6Engine:
             return
         self._day_count("skips")
         sig = self._sig
+        if self._bundle_signal_id and sig and sig[0] == sym:
+            self.bundle_decision("engine_skip", minute=sig[2] // 60000, cid=self._bundle_signal_id, sym=sym,
+                                 side=self._sig_side, reason=reason)
         if signal_px is None and sig and sig[0] == sym:
             signal_px, signal_ms = sig[1], sig[2]
 
@@ -2687,10 +2993,10 @@ class V6Engine:
             return ids
         tp = j.get("tp") or {}
         cids = [f"{cid}p"]
-        if tp.get("tp1"):
-            cids.append(f"{cid}t1")
-        if tp.get("tp2"):
-            cids.append(f"{cid}t2")
+        for leg, key in (("t1", "tp1"), ("t2", "tp2")):
+            rev = j.get("tp_revisions", {}).get(leg, {}).get("rev", 0)
+            if tp.get(key) or rev:
+                cids.extend(self._tp_cid(j, leg, i) for i in range(rev + 1))
         cids += [f"{cid}s{i}" for i in range(int(j.get("stop_seq") or 0))]
         cids += [f"{cid}x{i}" for i in range(int(j.get("exit_seq") or 0))]
         for c in cids:
@@ -2705,7 +3011,8 @@ class V6Engine:
             elif problems is not None and isinstance(st, dict) and (
                     D(st.get("executed_qty") or 0) > 0 or str(st.get("status") or "") in ("TRIGGERED", "FINISHED", "TRIGGERING")):
                 problems.append(f"algo {c}: fired, order id unknown")
-            elif (problems is not None and st is None and c == f"{cid}t1" and j.get("tp1_done")
+            elif (problems is not None and st is None and c == self._tp_cid(j, "t1") and j.get("tp1_done")
+                  and "t1" not in j.get("tp_market_cids", {})
                   and not any(str(o.get("client_id") or "") == c
                               for o in (j.get("exit_orders") or []) + (j.get("stream_fills") or []))):
                 problems.append(f"algo {c}: TP1 filled per journal, order not found")   # its fill cannot be told apart
@@ -2923,6 +3230,9 @@ class V6Engine:
                     return "flat", Decimal(0)
             self._hold_close(sym, j, want, closed_qty, reason)   # stays open; the bound only re-alerts
             return "flat", Decimal(0)
+        base = j["cid"]
+        stops = [base + "p", *(f"{base}s{i}" for i in range(int(j.get("stop_seq", 0))))]
+        self.meta.setdefault("cleanup_due", {})[sym] = stops + [self._tp_cid(j, "t1"), self._tp_cid(j, "t2")]
         self.st["pos"].pop(sym, None)
         self._book_close(sym, j, reason, want, entry_fills, exit_fills, fund, opened)
         return "flat", Decimal(0)
@@ -3016,15 +3326,17 @@ class V6Engine:
         if self.st["intents"]:
             self.resolve_intents()                              # unknown entry outcomes first (by client id)
         acct = self.x("account")
+        watch_symbols = tuple(dict.fromkeys((*self.cfg.symbols, *self.meta.get("cleanup_due", {}),
+                                            *self.meta.get("manual", {}), *self.st["unknown"])))
         try:
-            pos = self.x("positions", self.cfg.symbols)
+            pos = self.x("positions", watch_symbols)
         except ExchangeError:
             self._flat_confirmed.clear()                    # unknown size: keep every journal in the risk sum
             raise
         # Apply the whole snapshot before any per-symbol read. A later symbol must not keep a stale flat
         # flag when an earlier symbol's open_orders (or any other follow-up) raises. A symbol with no row
         # is unknown: drop any stale flat confirmation. Only an explicit amount of 0 is flat.
-        for sym in self.cfg.symbols:
+        for sym in watch_symbols:
             amt0 = self._row_amt(pos, sym)
             if amt0 == 0:
                 self._flat_confirmed.add(sym)
@@ -3037,16 +3349,43 @@ class V6Engine:
         self.meta["wallet"] = str(acct["wallet"])
         self.meta["equity"] = str(acct.get("equity", acct["wallet"]))
         mismatch = []
-        for sym in self.cfg.symbols:
+        incomplete = []
+        for sym in watch_symbols:
             amt = self._row_amt(pos, sym)
             if amt is None:
                 continue                                 # unknown: keep the journal in risk, do not cancel SL/TP
             j = self.st["pos"].get(sym)
             if self._pending_postonly(sym):                     # post-only entry still working: poll_postonly owns it
                 continue                                        # (pre-arm / closePosition stop protect every fill)
-            orders = self.x("open_orders", sym)
+            try:
+                orders = self.x("open_orders", sym)
+            except RateLimited:
+                raise
+            except ExchangeError as e:
+                incomplete.append(f"{sym} open_orders: {e}")
+                continue                                  # preserve orders here, still protect the other symbols
+            if j and amt != 0 and not self.in_manual(sym):
+                stop = self.find_stop(amt, orders)
+                identifiers = {self._tp_cid(j, leg): leg for leg in ("t1", "t2")}
+                legs = {identifiers[o["client_id"]]: {"qty": str(o.get("qty") or 0), "px": str(o["stop_price"])}
+                        for o in orders if o["client_id"] in identifiers
+                        and self._is_own_reducing(o) and o["type"] == "TAKE_PROFIT_MARKET" and o["side"] == self._cs(j)}
+                self.protection_snapshot[sym] = {"cid": j["cid"], "time": self.now_ms(), "qty": str(abs(amt)),
+                                                 "stop": str(stop["stop_price"]) if stop else None, "legs": legs}
             if self.in_manual(sym):                             # manual mode: no bot order on this coin at all
                 self._manual_tick(sym, amt, orders)
+                continue
+            if amt != 0 and j is None and sym not in self.cfg.symbols and sym in self.meta.get("cleanup_due", {}):
+                # A closed dynamic coin was reopened elsewhere during downtime. Only the old trade's known orders
+                # belong to this cleanup; do not adopt, close or change the user's new position or its protection.
+                prior = self.meta["cleanup_due"][sym]
+                left = [o for o in orders if o["client_id"] in prior and self._is_own_reducing(o)]
+                if left:
+                    for o in left:
+                        self._cancel_quiet(sym, o)
+                else:
+                    self.meta["cleanup_due"].pop(sym)
+                    self.save()
                 continue
             if j and amt != 0:                                  # C: other side / bigger / back after flat → not ours
                 g = self._foreign_guard(sym, j, amt, (pos.get(sym) or {}).get("entry"))
@@ -3087,16 +3426,11 @@ class V6Engine:
                 if u is not None:                               # TA R4: resolved by hand (or its stop fired)
                     self.save()
                     self.notify(f"✅ 기록 없는 포지션 해소 — {sym} {u.get('amt')} 거래소에서 0 · 이 코인 신규 진입 재개", kind="recovery")
-                pending = tuple(f"{c}p" for c in self.st["intents"])        # pre-arm of an unresolved entry stays
-                failed, foreign = [], []
+                self.protection_snapshot.pop(sym, None)
+                failed = self._clean_reducing(sym, orders)
+                foreign = []
                 for o in orders:
-                    if (str(o["client_id"]).startswith(self.cfg.cid_prefix) and (o["close_position"] or o["reduce_only"])
-                            and str(o["client_id"]) not in pending):
-                        try:
-                            self.x("cancel", sym, o)                 # our own stale stop, position flat
-                        except ExchangeError as e:
-                            failed.append((str(o["client_id"]), e))  # retried next reconcile; R3 alert below
-                    elif not (o["close_position"] or o["reduce_only"]) and str(o["client_id"]).startswith(self.cfg.cid_prefix):
+                    if not (o["close_position"] or o["reduce_only"]) and str(o["client_id"]).startswith(self.cfg.cid_prefix):
                         mismatch.append(f"{sym} 예상 밖 진입 주문 {o['client_id']}")
                     elif not str(o["client_id"]).startswith(self.cfg.cid_prefix) and (o["close_position"] or o["reduce_only"]):
                         foreign.append(o)                            # TA R3/R4: alert only for reducing (SL/TP) orders; never cancelled
@@ -3112,7 +3446,9 @@ class V6Engine:
                 # order protecting nothing. It must never count as protection of a position the bot does not own, and it is cancelled
                 # right away (after _unknown_position, whether or not that position has a stop): left alive it could close the user's
                 # position at the bot's price (R4: the bot never closes a position it did not open). The unprotected alert is separate.
-                orphans = [o for o in orders if self._is_orphan_prearm(o)]
+                closed_ids = self.meta.get("cleanup_due", {}).get(sym, [])
+                orphans = [o for o in orders if self._is_orphan_prearm(o) or
+                           (self._is_own_reducing(o) and o["client_id"] in closed_ids)]
                 self._unknown_position(sym, pos[sym], [o for o in orders if o not in orphans], marks.get(sym))   # TA R4: never closed
                 for o in orphans:
                     self._cancel_quiet(sym, o)
@@ -3122,7 +3458,8 @@ class V6Engine:
                 self.save()
             if (amt > 0) != (int(j.get("side", 1)) > 0):
                 mismatch.append(f"{sym} 방향 불일치 로컬 {j.get('side', 1)} / 거래소 {amt}")
-            if filled is None and j.get("tp") and not j.get("tp1_done") and abs(amt) < D(j["qty"]) and not any(
+            if (filled is None and j.get("path") != "bundle" and not j.get("tp_revisions") and not j.get("tp_market_cids") and j.get("tp")
+                    and not j.get("tp1_done") and abs(amt) < D(j["qty"])) and not any(
                     o["client_id"] == f"{j['cid']}t1" for o in orders):   # fallback only: order status unreadable
                 q1 = D((j.get("tp") or {}).get("q1") or 0)   # TP1 filled (partial close) — expected, not a mismatch
                 j.update(tp1_done=True, qty=str(max(abs(amt), D(j["qty"]) - q1) if q1 > 0 else abs(amt)))
@@ -3203,13 +3540,18 @@ class V6Engine:
                 self._adopt_tps(sym, j)                         # opened before TP was on (user 2026-11-23) → TP now
             if prot and self.cfg.trail_atr_k and sym in self.st["pos"] and not self.st["pos"][sym].get("closing"):
                 self._trail(sym, self.st["pos"][sym], amt, mk)
+        if incomplete:
+            self._consistent = 0
+            self.block(MISMATCH, "; ".join(incomplete), "보호 주문 대조 미완료 — 신규 진입 중단")
+            self.save()
+            raise ExchangeError("; ".join(incomplete))
         if mismatch:
             self._consistent = 0
             self.block(MISMATCH, "; ".join(mismatch), "대조 불일치 — 신규 진입 중단")
         else:
             self._consistent += 1
             if self._consistent >= 2:
-                unresolved = any(not it.get("pending") for it in self.st["intents"].values())
+                unresolved = any(not it.get("pending") or it.get("hold_reason") for it in self.st["intents"].values())
                 for r in (MISMATCH, UNKNOWN_ORDER):
                     if r == UNKNOWN_ORDER and unresolved:
                         continue                            # an entry whose outcome is still unknown keeps entries paused,

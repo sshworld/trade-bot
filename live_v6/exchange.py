@@ -258,6 +258,8 @@ class BinanceREST:
         for r in rows:
             s = r.get("symbol")
             if s in wanted:
+                if s in out or r.get("positionSide") not in (None, "", "BOTH"):
+                    raise ExchangeError(f"positions: ambiguous one-way position for {s}")
                 mt = str(r.get("marginType", "")).lower()
                 out[s] = {"amt": Decimal(r["positionAmt"]), "entry": Decimal(r["entryPrice"]),
                           "leverage": int(r["leverage"]),
@@ -295,10 +297,15 @@ class BinanceREST:
     def open_orders(self, symbol) -> list[dict]:
         std = self._req("GET", "/fapi/v1/openOrders", {"symbol": symbol}, critical=True)
         algo = self._req("GET", "/fapi/v1/openAlgoOrders", {"symbol": symbol}, critical=True)
-        algo = algo if isinstance(algo, list) else (algo.get("orders") or [])
+        if isinstance(algo, dict):
+            algo = algo.get("orders")
+        if not isinstance(std, list) or not isinstance(algo, list):
+            raise ExchangeError(f"open_orders: incomplete order snapshot for {symbol}")
         out = [{"kind": "std", "id": str(o["orderId"]), "client_id": o.get("clientOrderId", ""), "symbol": symbol,
                 "type": o.get("type"), "side": o.get("side"), "stop_price": Decimal(str(o.get("stopPrice") or 0)),
-                "close_position": bool(o.get("closePosition")), "reduce_only": bool(o.get("reduceOnly"))} for o in std]
+                "qty": Decimal(str(o.get("origQty") or 0)),
+                "close_position": str(o.get("closePosition")).lower() == "true",
+                "reduce_only": str(o.get("reduceOnly")).lower() == "true"} for o in std]
         return out + [_norm_algo(o) for o in algo]
 
     def user_trades(self, symbol, start_ms) -> list[dict]:
@@ -402,7 +409,11 @@ class BinanceREST:
         oid = str(a.get("actualOrderId") or "")
         out = {"status": a.get("algoStatus"), "order_id": oid or None, "executed_qty": Decimal(0), "avg_price": Decimal(0)}
         if oid and oid != "0":
-            o = _norm_order(self._req("GET", "/fapi/v1/order", {"symbol": symbol, "orderId": oid}, critical=True))
+            raw = self._req("GET", "/fapi/v1/order", {"symbol": symbol, "orderId": oid}, critical=True)
+            if out["status"] == "FINISHED" and raw.get("status") in ("EXPIRED", "EXPIRED_IN_MATCH"):
+                if str(raw.get("orderId")) != oid or raw.get("executedQty") in (None, ""):
+                    raise ExchangeError(f"algo_order: incomplete expired child for {symbol} {client_id}")
+            o = _norm_order(raw)
             out.update(executed_qty=o["executed_qty"], avg_price=o["avg_price"], order_status=o["status"])
         return out
 

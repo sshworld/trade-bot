@@ -14,7 +14,7 @@ reason=""
 age=""
 if [ "$(systemctl is-active live_v6-live 2>/dev/null)" != "active" ]; then
   reason="live_v6-live not active"
-elif ! m=$(stat -c %Y "$STATE" 2>/dev/null); then
+elif ! m=$(stat -c %Y "$STATE" 2>/dev/null) && ! m=$(stat -f %m "$STATE" 2>/dev/null); then
   reason="state file missing"
 else
   age=$(( $(date +%s) - m ))

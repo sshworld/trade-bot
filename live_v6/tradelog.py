@@ -1,5 +1,6 @@
 """Live trade log (TA spec v1, 2026-10-29): append-only JSONL, one file per kind — `trades` (one line per closed trade),
-`skips` (one line per skipped signal), `daily` (one line per UTC day, written at 00:00 UTC).
+`skips` (one line per skipped signal), `daily` (one line per UTC day, written at 00:00 UTC),
+and `decisions` (bundle evaluation and order observations linked by candidate id).
 
 Recording only. `write` may raise (disk full, unwritable path, …); the engine catches every error, logs it (journald)
 and counts it for the daily line — a log write never blocks, retries or delays trading. No fsync: the state file stays
@@ -13,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
-KINDS = ("trades", "skips", "daily")
+KINDS = ("trades", "skips", "daily", "decisions")
 KST = timezone(timedelta(hours=9))
 SCHEMA = 1
 
