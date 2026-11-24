@@ -2,6 +2,8 @@
 
 > 새 세션에서 이 파일을 먼저 읽고 작업 컨텍스트를 파악할 것.
 
+`live_v6`의 `bundle_v5`를 점검할 때는 [쌍끌이 운영 및 전진 검증](live_v6/SSANGGEULI.md)을 참고한다. 거래소 익절 체결과 잔량, 진입이 없던 평가 시각을 확인하는 방법, BTC·ETH 모의 장부가 여기에 있다. 운영 배포와 복구 절차는 [CI 운영 안내](live_v6/deploy/ci/INSTALL_CI_V2.md)를 따른다.
+
 ## 프로젝트 개요
 Binance BTC/USDT 선물 자동 매매 시스템. 단타(scalping) 전략.
 현재: **실거래 운영 중** (LiveTradingEngine, Mainnet).
