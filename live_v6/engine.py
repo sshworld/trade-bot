@@ -1148,9 +1148,10 @@ class V6Engine:
                bundle_cid=None) -> bool:
         plan = fixed.get("h_exit") if fixed else None
         if plan is not None:
-            from .strategies.bundle_v5_core import H_EXIT_V2_TERMS
-            if plan != H_EXIT_V2_TERMS or side != 1 or not (bundle_cid or "").startswith(f"H-{sym}-"):
-                self.skip(sym, "h_exit_scope", "exit policy requires a recognized recipe and a new H long")
+            from .strategies.bundle_v5_core import H_EXIT_V2_TERMS, R_EXIT_V1_TERMS
+            comp = "H" if plan == H_EXIT_V2_TERMS else "R" if plan == R_EXIT_V1_TERMS else None
+            if comp is None or side != 1 or not (bundle_cid or "").startswith(f"{comp}-{sym}-"):
+                self.skip(sym, "h_exit_scope", "exit policy requires a recognized recipe and a new H/R long")
                 return False
         if side < 0 and not self.cfg.enable_short:
             self.skip(sym, "short_disabled", "short entries are off (enable_short=False)")
@@ -3239,6 +3240,15 @@ class V6Engine:
                 t0 = self._trade_t0(j, fills)
                 ext = [f for f in fills if str(f.get("order_id")) not in own and str(f.get("order_id")) != eid
                        and int(f.get("time") or 0) >= t0]
+                if ext and self._tp1_lag(j, Decimal(0), ext):
+                    # whole-qty TP1 (R r_exit_v1, unsplit H) filled but its status still lags (Codex 2026-11-25):
+                    # keep the journal open and read again; once the TP shows its fill it is booked as take_profit
+                    j["close_held"] = True
+                    j.setdefault("close_reason", reason)
+                    self._backoff(j, "hold_backoff_n", "hold_next_ms")
+                    self.save()
+                    log.warning("%s flat by fills matching our whole-qty TP1, TP status not updated yet → retried", sym)
+                    return "flat", Decimal(0)
                 if ext:
                     self._manual_takeover(sym, "봇 주문이 아닌 체결로 청산됨",
                                           f"열린 {want.normalize():f} · 봇 청산 {closed_qty.normalize():f} · " + self._rows_txt(ext),

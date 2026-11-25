@@ -50,13 +50,14 @@ def test_opt_in_through_bundle_config():
 def test_live_release_profile_applies_to_new_h_orders(monkeypatch):
     profile = Path(__file__).resolve().parents[1] / "deploy" / "ssanggeuli-live.env"
     settings = dict(line.split("=", 1) for line in profile.read_text().splitlines())
-    assert set(settings) == {"LIVE_V6_BUNDLE_RISK_PCT", "LIVE_V6_BUNDLE_H_EXIT_POLICY"}
+    assert set(settings) == {"LIVE_V6_BUNDLE_RISK_PCT", "LIVE_V6_BUNDLE_H_EXIT_POLICY", "LIVE_V6_BUNDLE_R_LONG_ONLY",
+                             "LIVE_V6_BUNDLE_R_NOTIONAL_CAP", "LIVE_V6_BUNDLE_R_EXIT_POLICY"}
     monkeypatch.setenv("LIVE_V6_BUNDLE_MARGIN", "pooled")
     for key, value in settings.items():
         monkeypatch.setenv(key, value)
     strategy = BundleV5(market=Market())
     strategy.on_start(SimpleNamespace())
-    assert strategy.cfg.risk_pct == (2, 0, 0, 18)
+    assert strategy.cfg.risk_pct == (2, 0, 5, 18)
     b = strategy.drv.book
     assert b.margin == "pooled" and b.exchange_exits
     b.regime = lambda _: 0

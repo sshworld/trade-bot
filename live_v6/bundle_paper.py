@@ -198,10 +198,20 @@ class RestMarket(Market):
                 start = out[-1]["t"] + interval
                 if len(rows) < 1500:
                     break
+            got = [b for b in out if b["t"] + interval <= end]
+            # Codex 2026-11-25: cache only a window that is closed and complete. An empty/short reply (transient) would
+            # otherwise be replayed on every retry of the same minute; a bar that has not closed yet (the 03:59 open
+            # half asks for the 4h bar closing 04:00) must not be kept as if it were final.
+            if end > self.complete_upto() or not got or got[-1]["t"] + interval != end:
+                return got
             if len(self._kl) > 200:
                 self._kl.clear()
-            self._kl[key] = [b for b in out if b["t"] + interval <= end]
+            self._kl[key] = got
         return self._kl[key]
+
+    def complete_upto(self) -> int:
+        """Epoch minute up to which bars are closed (minute boundaries ≤ now)."""
+        return int(self.clock() // 60)
 
     def exchange_info(self):
         if self._info is None or self.clock() - self._info_at > 3600:
