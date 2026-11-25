@@ -13,7 +13,7 @@
 
 ### 운영 프로필
 
-운영 유닛 `live_v6-live`는 릴리스에 포함된 [쌍끌이 운영 설정](deploy/ssanggeuli-live.env)에서 신규 H의 익절 방식과 위험 예산을 읽는다. H 예산은 지갑의 6%, M은 2%, D와 R은 0%다. 기존 포지션의 실제 수량과 주문 계획은 진입 당시 장부를 따른다. H 예산을 낮추면 기존 포지션이 차지하는 위험 금액 때문에 신규 진입이 잠시 제한될 수 있다.
+운영 유닛 `live_v6-live`는 릴리스에 포함된 [쌍끌이 운영 설정](deploy/ssanggeuli-live.env)에서 신규 H의 익절 방식과 위험 예산을 읽는다. H 예산은 지갑의 12%(성헌 11/20 결정, 하이리스크 하이리턴), M은 2%, D와 R은 0%다. 기존 포지션의 실제 수량과 주문 계획은 진입 당시 장부를 따른다. H 예산을 낮추면 기존 포지션이 차지하는 위험 금액 때문에 신규 진입이 잠시 제한될 수 있다.
 
 호스트의 `95-ssanggeuli-profile.conf`는 `EnvironmentFile=-/opt/tradebot/app/current/live_v6/deploy/ssanggeuli-live.env`를 마지막으로 읽는다. 코드와 설정은 CI가 같은 릴리스로 전환한다. 이 파일이 없는 이전 릴리스에서는 호스트의 기존 설정을 사용한다. 배포 검증 시 실행 중인 PID의 `LIVE_V6_BUNDLE_H_EXIT_POLICY`, `LIVE_V6_BUNDLE_RISK_PCT`, `LIVE_V6_BUNDLE_MARGIN`과 거래소 보호 주문을 확인한다.
 
