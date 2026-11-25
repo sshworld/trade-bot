@@ -56,13 +56,13 @@ def test_live_release_profile_applies_to_new_h_orders(monkeypatch):
         monkeypatch.setenv(key, value)
     strategy = BundleV5(market=Market())
     strategy.on_start(SimpleNamespace())
-    assert strategy.cfg.risk_pct == (2, 0, 0, 12)
+    assert strategy.cfg.risk_pct == (2, 0, 0, 18)
     b = strategy.drv.book
     assert b.margin == "pooled" and b.exchange_exits
     b.regime = lambda _: 0
-    [entry] = _enter(b, [candidate()])
+    [entry] = _enter(b, [candidate(stop=70.0)])                    # 30 % stop at 1x: 18 % risk = 60 % margin
     assert entry["h_exit"] == H_EXIT_V2_TERMS
-    assert entry["qty"] * entry["dist"] == pytest.approx(.12 * b.capital, rel=.01)
+    assert entry["qty"] * entry["dist"] == pytest.approx(.18 * b.capital, rel=.01)
 
 
 @pytest.mark.parametrize("regime,base_stop", [(0, 80), (-4, 60), (1, 80)])
