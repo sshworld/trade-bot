@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 
 KST_DAY_OFFSET = 900            # 00:00 KST = 15:00 UTC = minute 900 of the UTC day
 GN = ("M", "D", "R", "H")
+H_EXIT_V2 = "h_exit_v2"
+H_EXIT_V2_TERMS = {"name": H_EXIT_V2, "tp1_r": 1.0, "tp1_frac": .25, "tp2_r": 5.0}
 SLOTS = 7
 RISK_MULT = float(os.getenv("LIVE_V6_BUNDLE_RISK_MULT", "6.0"))   # p116 L6 risk multiplier; env lowers it for a first live run
 if not (math.isfinite(RISK_MULT) and RISK_MULT > 0):   # nan / inf / <= 0 would only fail (or size nothing) at the first entry
@@ -47,7 +49,7 @@ def fixed_fraction_weights(risk_pct) -> tuple:
     if len(r) != 4 or any(not math.isfinite(x) or x < 0 for x in r):
         raise ValueError(f"risk_pct must be four finite numbers >= 0 (M, D, R, H): {risk_pct!r}")
     return tuple((x / 100) / (b * FIXED_RISK_MULT) for x, b in zip(r, BASE_RISK))
-EXIT_REASON = {1: "stop", 3: "time", 4: "period_end"}
+EXIT_REASON = {1: "stop", 2: "take_profit", 3: "time", 4: "period_end"}
 HOLD_MIN = {0: 4320, 2: 2880, 3: 10080}   # D: until meta `last` (24 h or settlement − 30 min)
 
 
@@ -98,15 +100,16 @@ class Book:
     then the peak is reset to the wallet."""
 
     def __init__(self, fee=1.0, capital=106.0, weights=None, regime=None, state=None, end=None,
-                 margin="sleeve", risk_mult=None):
+                 margin="sleeve", risk_mult=None, h_exit_policy=None, exchange_exits=False):
         self.fee = float(fee)
         self.weights = weights            # i → (wM, wD, wR, wH)
         self.regime = regime              # i → V5 score (−5 … +5)
         self.end = end                    # research `hi` (exclusive); None = open-ended (live)
         if margin not in ("sleeve", "pooled"):
             raise ValueError(f"margin must be 'sleeve' or 'pooled': {margin!r}")
-        self.margin = margin              # sleeve: per-component margin budget wallet·w[g] (research default);
-        #                                   pooled: only the account's free margin limits an entry (k2)
+        self.margin = margin              # sleeve: per-component budget wallet·w[g]; pooled: account free margin
+        self.h_exit_policy = h_exit_policy
+        self.exchange_exits = exchange_exits
         self.risk_mult = RISK_MULT if risk_mult is None else float(risk_mult)
         if state:
             self.__dict__.update(_load(state))
@@ -131,7 +134,7 @@ class Book:
     # ── persistence ──
     def state(self) -> dict:
         d = {k: v for k, v in self.__dict__.items()
-             if k not in ("weights", "regime", "fee", "end", "margin", "risk_mult")}   # config is not state
+             if k not in ("weights", "regime", "fee", "end", "margin", "risk_mult", "h_exit_policy", "exchange_exits")}
         d["slots"] = [dict(s, c=s["c"].to_dict() if s["c"] is not None else None) for s in self.slots]
         return d
 
@@ -317,6 +320,8 @@ class Book:
                 acts.append(dict(type="skip", i=i, cand=c, reason="margin"))
                 continue
             s = self.slots[slot]
+            if g == 3 and self.h_exit_policy == H_EXIT_V2:
+                s["h_exit"] = dict(H_EXIT_V2_TERMS)
             s.update(c=c, q=quantity, iq=quantity, ep=e, sl=st, dist=d, best=a[4] if g in (0, 1) else e)
             cost = quantity * e * .0005 * fee
             self.wallet -= cost
@@ -324,6 +329,8 @@ class Book:
             self.audit["entries"] += 1
             acts.append(dict(type="enter", i=i, cand=c, qty=quantity, entry=e, stop=st, dist=d, lev=L, liq=lp, fee=cost,
                              slot=slot, wallet=self.wallet, side_factor=side_factor, regime=reg))
+            if "h_exit" in s:
+                acts[-1]["h_exit"] = dict(s["h_exit"])
             self.peak = max(self.peak, self.wallet)
             if self._guard(i):
                 acts.append(dict(type="peak_halt", i=i, wallet=self.wallet, peak=self.peak))
@@ -341,6 +348,43 @@ class Book:
         self.eventeq = eventeq
         self.open_i = i
         return acts
+
+    def _paper_h_tps(self, slot, bar, i, acts):
+        """Prearmed contract-price TPs; MARK stops have priority in an ambiguous minute.
+
+        Returns the raw level if the position is closed. The entry minute's high
+        belongs to the simulated market entry at its open. The BE stop applies
+        from the next minute, just like the completed-bar strategy trail.
+        """
+        c = slot["c"]
+        plan = slot["h_exit"]
+        entry, original = slot["ep"], slot["iq"]
+        q1 = _floor(original * plan["tp1_frac"] / c.step + 1e-9) * c.step
+        if q1 < c.minq - c.step * 1e-8 or original - q1 < c.minq - c.step * 1e-8:
+            q1 = original
+        for leg, multiple, planned_qty in (("tp1", plan["tp1_r"], q1), ("tp2", plan["tp2_r"], original - q1)):
+            if not multiple or slot.get(leg + "_done") or planned_qty <= 0:
+                continue
+            target = _ceil((entry + slot["dist"] * multiple) / c.tick - 1e-9) * c.tick
+            if bar[1] < target - 1e-6 * c.tick:
+                break
+            qty = min(planned_qty, slot["q"])
+            fill = target * (1 - .0002)
+            fee = qty * fill * .0005 * self.fee
+            cash = qty * (fill - entry) - fee
+            self.wallet += cash
+            slot["pnl"] += cash
+            slot["fees"] += fee
+            slot["q"] -= qty
+            slot[leg + "_done"] = True
+            if slot["q"] <= c.step * 1e-8:
+                slot["q"] = 0.
+            acts.append(dict(type="partial_tp", i=i, cand=c, leg=leg, qty=qty, price=fill, remaining=slot["q"]))
+            if not slot["q"]:
+                return target
+            be = _ceil(entry * 1.0005 / .9995 * 1.0015 / c.tick - 1e-9) * c.tick
+            slot["sl"] = max(slot["sl"], be)
+        return None
 
     # ── second half of minute i: stop / time exits, trailing on the completed bar, mark-close equity ──
     def close_minute(self, i, rows):
@@ -377,8 +421,12 @@ class Book:
             elif last_minute:
                 raw = a[3]
                 reason = 4
+            old = s["sl"]  # report the effective stop change even when TP1 alone raises it
+            if not reason and not self.exchange_exits and "h_exit" in s:
+                target = self._paper_h_tps(s, a, i, acts)
+                if target is not None:
+                    raw, reason = target, 2
             if reason == 0:
-                old = s["sl"]
                 am = 3. if g != 2 else 2.5
                 if g == 0:
                     s["best"] = max(s["best"], a[5]) if sd > 0 else min(s["best"], a[6])

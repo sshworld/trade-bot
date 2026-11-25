@@ -1116,8 +1116,10 @@ class V6Engine:
             self.skip(sym, why, detail)
             return None
         risk = abs(ref - stop_px) * qty
+        wallet = D(acct["wallet"])
+        planned_pct = float(100 * risk / wallet) if wallet > 0 else 0.0
         return Sized(None, qty=qty, notional=qty * ref, lev=lev, mmr=0.0, stop_px=stop_px, risk_usdt=risk,
-                     risk_frac=0.0, risk_pct_used=0.0, margin=qty * ref / lev, path="bundle", q0=qty, cap_frac=1.0,
+                     risk_frac=0.0, risk_pct_used=planned_pct, margin=qty * ref / lev, path="bundle", q0=qty, cap_frac=1.0,
                      cap_label="bundle"), acct, ref
 
     def _entry_snapshot(self, sym):
@@ -1144,6 +1146,12 @@ class V6Engine:
 
     def _enter(self, sym, stop_dist: Decimal, T: int, model_id=None, signal_px=None, side: int = 1, fixed=None,
                bundle_cid=None) -> bool:
+        plan = fixed.get("h_exit") if fixed else None
+        if plan is not None:
+            from .strategies.bundle_v5_core import H_EXIT_V2_TERMS
+            if plan != H_EXIT_V2_TERMS or side != 1 or not (bundle_cid or "").startswith(f"H-{sym}-"):
+                self.skip(sym, "h_exit_scope", "exit policy requires a recognized recipe and a new H long")
+                return False
         if side < 0 and not self.cfg.enable_short:
             self.skip(sym, "short_disabled", "short entries are off (enable_short=False)")
             return False
@@ -1256,6 +1264,8 @@ class V6Engine:
         if fixed is not None:
             intent["stop_abs"] = str(sz.stop_px)            # bundle_v5: absolute model stop, not fill − distance
             intent["bundle_cid"] = bundle_cid
+            if plan is not None:
+                intent["h_exit"] = dict(plan)
         # PRE-ARM: a reduceOnly STOP_MARKET for the planned qty is live on the exchange BEFORE the entry is sent, so
         # there is no instant between fill and stop without exchange-side protection (closePosition stops cannot be
         # placed without a position: -4509). Not confirmed → no entry.
@@ -1414,6 +1424,9 @@ class V6Engine:
              "planned_qty": intent["qty"], "stop_seq": 0, "exit_seq": 0}
         j.update({k: intent.get(k) for k in LOG_INTENT_KEYS},                 # live log only: copied at entry
                  signal_ms=intent.get("model_id", intent["T"]), entry_fill_ms=o.get("update_time") or None)
+        if "h_exit" in intent:
+            j["h_exit"] = dict(intent["h_exit"])
+            j["stop_px_entry"] = str(stp)  # a delayed entry recovery can adopt TPs after the first trail update
         self.st["pos"][sym] = j
         self.save()
         self._bundle_order_event("fill", intent, fill_qty=j["entry_qty"], price=j["entry_px"])
@@ -1542,13 +1555,15 @@ class V6Engine:
         r = abs(e - D(j.get("stop_px_entry") or j["stop_px"]))
         rnd = "up" if s > 0 else "down"                           # TP never closer than k·R
         qty = D(j["qty"])
-        q1 = rules.floor_qty(qty * D(str(self.cfg.tp1_frac)))
+        plan = j.get("h_exit", {})
+        q1 = rules.floor_qty(qty * D(str(plan.get("tp1_frac", self.cfg.tp1_frac))))
         if q1 < rules.order_min_qty or q1 >= qty or (qty - q1) < rules.order_min_qty:
             # cannot split → TP2 only for the whole qty; bundle_v5: TP1 for the whole qty (never a position without a TP)
             q1 = qty if self.cfg.tp_whole_if_unsplit else Decimal(0)
         q2 = qty - q1
-        return (rules.price(e + s * r * D(str(self.cfg.tp1_r)), rnd), q1,
-                rules.price(e + s * r * D(str(self.cfg.tp2_r)), rnd) if self.cfg.tp2_r and q2 > 0 else None, q2)
+        tp2_r = plan.get("tp2_r", self.cfg.tp2_r)
+        return (rules.price(e + s * r * D(str(plan.get("tp1_r", self.cfg.tp1_r))), rnd), q1,
+                rules.price(e + s * r * D(str(tp2_r)), rnd) if tp2_r and q2 > 0 else None, q2)
 
     @staticmethod
     def _tp_cid(j, leg, revision=None):
@@ -1656,7 +1671,7 @@ class V6Engine:
         tp, cids = j["tp"], {o["client_id"] for o in orders}
         for leg, key, qkey in (("t1", "tp1", "q1"), ("t2", "tp2", "q2")):
             cid = self._tp_cid(j, leg)
-            if leg == "t2" and not self.cfg.tp2_r:
+            if leg == "t2" and not j.get("h_exit", {}).get("tp2_r", self.cfg.tp2_r):
                 # Some legacy journals cleared TP2 on the cancel ACK while it remained on the exchange.
                 old = next((o for o in orders if o["client_id"] == cid and self._is_own_reducing(o)
                             and o["type"] == "TAKE_PROFIT_MARKET"), None)
@@ -2864,6 +2879,7 @@ class V6Engine:
             not j.get("earlycut_tp1_at_4h") and mfe4 < Decimal("0.5") and s * (D(e4) - fill) < 0)
         return {
             "trade_id": j["cid"], "coin": rec["sym"], "side": "long" if s > 0 else "short",
+            **({"h_exit": j["h_exit"]} if "h_exit" in j else {}),
             "path": {"q0": "normal"}.get(j.get("path"), j.get("path")),
             "signal_time": j.get("signal_ms"), "signal_time_kst": kst(j.get("signal_ms")),
             "signal_price": None if sig is None else str(sig),
