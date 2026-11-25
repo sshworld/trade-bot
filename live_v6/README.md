@@ -3,6 +3,7 @@
 Built fresh per Trading Advisor's spec (2026-10-20); only verified safety rules were ported from live_v1.
 
 번들 전략의 주문 추적, 공개 데이터 모의 연구 및 공식 달력 점검은 [쌍끌이 운영 및 전진 검증](SSANGGEULI.md)에 정리했다.
+신규 H 롱의 2단계 익절 선택값과 재시작 동작은 [H 분할 익절](SSANGGEULI.md#h-분할-익절)에, 기존 방식과의 정량 비교는 [11월 25일 검토 기록](../docs/meeting-minutes/2026-11-25-h-exit-v2.md)에 있다.
 
 ## Architecture
 ```

@@ -74,7 +74,7 @@ def status_text(eng) -> str:
                     display = f"{key.upper()} {order['qty']} @ {order['px']}"
                     if target and (_d(order["qty"]) != planned or _d(order["px"]) != _d(target)):
                         display += f" (계획 {planned} @ {target} · 불일치)"
-                    if suffix == "t2" and not eng.cfg.tp2_r:
+                    if suffix == "t2" and not j.get("h_exit", {}).get("tp2_r", eng.cfg.tp2_r):
                         display += " · 잔여 주문 취소 확인 대기"
                     legs.append(display)
                 elif j.get(key + "_done") and target:

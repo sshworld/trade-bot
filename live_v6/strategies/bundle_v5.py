@@ -3,7 +3,7 @@
 Research source (read-only): lab/p179_exit_decision (E3), lab/p172 (V5), lab/p177 (same-minute equity fix),
 lab/p102/p116 (bundle v2, IV weights), components p49 (M), p00d (D), p14 R2_H4_range (R), p98 H52-E20 (H).
 
-Layers (the order path is the ONLY place PAPER and LIVE differ):
+Layers:
   bundle_v5_signals.py  raw signals from completed bars (pure)
   bundle_v5_core.py     the research account book: owner guards, sizing, stops, trailing, exits (pure, exact port)
   BundleDriver          per minute i: book.close_minute(i−1) on the completed bar, then the raw signals of minute i,
@@ -12,7 +12,8 @@ Layers (the order path is the ONLY place PAPER and LIVE differ):
       PaperPort   → JSONL ledger + Telegram (virtual fills = the research fill rules); NO exchange order call exists
                     on this path (the paper market data client has no write method at all).
       EnginePort  → V6Engine intents: enter (fixed qty / absolute stop / leverage; pre-armed exchange stop, closePosition
-                    stop after the fill), stop (new stop confirmed THEN old cancelled), exit (reduceOnly market). No TP.
+                    stop after the fill), stop (new stop confirmed THEN old cancelled), exit (reduceOnly market).
+                    The engine owns conditional take profits and reads back their actual fills.
 
 Choose with LIVE_V6_STRATEGY=bundle_v5; LIVE_V6_PAPER=1 runs the paper loop (live_v6/bundle_paper.py).
 """
@@ -29,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 
 from .base import DataNotReady, Strategy
 from . import bundle_v5_signals as SG
-from .bundle_v5_core import FIXED_RISK_MULT, GN, Book, Cand, fixed_fraction_weights
+from .bundle_v5_core import FIXED_RISK_MULT, GN, H_EXIT_V2, Book, Cand, fixed_fraction_weights
 
 log = logging.getLogger("live_v6.bundle_v5")
 KST = timezone(timedelta(hours=9))
@@ -52,6 +53,11 @@ class BundleConfig:
     risk_pct: tuple | None = None   # fixed-fraction sizing: % of the wallet risked per trade by (M, D, R, H); 0 = off.
     #                                 None = legacy IV weights x LIVE_V6_BUNDLE_RISK_MULT
     margin: str = "sleeve"          # "pooled": no per-component margin budget, only the account's free margin
+    h_exit_policy: str | None = None
+
+    def __post_init__(self):
+        if self.h_exit_policy not in (None, H_EXIT_V2):
+            raise ValueError(f"unknown LIVE_V6_BUNDLE_H_EXIT_POLICY: {self.h_exit_policy!r}")
 
 
 def sizing_from_env(env=None) -> dict:
@@ -59,6 +65,7 @@ def sizing_from_env(env=None) -> dict:
 
       LIVE_V6_BUNDLE_RISK_PCT="M:2,D:0,R:0,H:9"   % of the wallet risked per trade, all four required, 0 = component off
       LIVE_V6_BUNDLE_MARGIN=pooled|sleeve          default sleeve (legacy); pooled only together with RISK_PCT
+      LIVE_V6_BUNDLE_H_EXIT_POLICY=h_exit_v2       optional exit recipe for newly opened H longs
 
     Anything malformed refuses to start - a variable that is set but empty included: a sizing the operator did not
     write down must never be picked silently.
@@ -69,6 +76,8 @@ def sizing_from_env(env=None) -> dict:
     it must then find its old multiplier instead of the default 6."""
     env = os.environ if env is None else env
     out = {}
+    if "LIVE_V6_BUNDLE_H_EXIT_POLICY" in env:
+        out["h_exit_policy"] = env["LIVE_V6_BUNDLE_H_EXIT_POLICY"]
     margin = env.get("LIVE_V6_BUNDLE_MARGIN")
     if margin is not None:
         margin = margin.strip().lower()
@@ -132,7 +141,8 @@ class BundleDriver:
             weights = lambda i: fixed                              # noqa: E731
         self._weights = weights or (lambda i: SG.IV_FIXED)
         # fixed-fraction weights are defined for the research multiplier 6 (legacy: LIVE_V6_BUNDLE_RISK_MULT)
-        self._book_kw = dict(margin=self.cfg.margin,
+        self._book_kw = dict(margin=self.cfg.margin, h_exit_policy=self.cfg.h_exit_policy,
+                             exchange_exits=isinstance(port, EnginePort),
                              risk_mult=FIXED_RISK_MULT if self.cfg.risk_pct is not None else None)
         self._regime_fn = regime                       # replay may inject; default: V5 from BTC daily closes
         self._v5 = {}                                  # decision day → score
@@ -567,6 +577,8 @@ class PaperPort:
         last = a["i"] + max(1, math.ceil(self.timeout_s / 60)) - 1     # minutes i … i+⌈timeout/60⌉−1
         o = dict(cid=c.cid, sym=c.sym, sd=int(c.sd), limit=px, tick=c.tick, qty=a["qty"], book_entry=a["entry"],
                  book_fee=a["fee"], placed=a["i"], last=last, next=a["i"], state="working", src=src)
+        if "h_exit" in a:
+            o["h_exit"] = dict(a["h_exit"])
         self.po[c.cid] = o
         self.day["po_placed"] += 1
         self.write(dict(kind="po_place", minute=a["i"], kst=kst(a["i"]), cid=c.cid, sym=c.sym, side=int(c.sd), limit=px,
@@ -614,7 +626,9 @@ class PaperPort:
             self.day["po_pnl"] += net
             self.write(dict(kind="po_trade", minute=a["i"], kst=kst(a["i"]), cid=o["cid"], sym=o["sym"], entry=o["limit"],
                             book_entry=tr["entry"], exit=tr["exit_price"], qty=q, net_pnl=net, book_net_pnl=tr["net_pnl"],
-                            reason=a["reason"]))
+                            reason=a["reason"],
+                            **({"h_exit": o["h_exit"], "pnl_model": "maker_entry_repriced_market_exits"}
+                               if "h_exit" in o else {})))
         else:
             self.day["po_missed_pnl"] += tr["net_pnl"]
             self.write(dict(kind="po_missed_outcome", minute=a["i"], kst=kst(a["i"]), cid=o["cid"], sym=o["sym"],
@@ -640,7 +654,8 @@ class PaperPort:
                 self.day["entries"] += 1
                 self.write(dict(base, kind="enter", qty=a["qty"], entry=a["entry"], stop=a["stop"], lev=a["lev"],
                                 fee=a["fee"], wallet=a["wallet"], regime=a["regime"], side_factor=a["side_factor"],
-                                liq=a["liq"], signal_e=c.e, signal_sl=c.sl))
+                                liq=a["liq"], signal_e=c.e, signal_sl=c.sl,
+                                **({"h_exit": a["h_exit"]} if "h_exit" in a else {})))
                 self.send(f"🟢 [모의] 진입 {c.sym} {'롱' if c.sd > 0 else '숏'} · {GN[c.g]} · 가상가 {_fmt(a['entry'])} · "
                           f"손절 {_fmt(a['stop'])} · 수량 {_fmt(a['qty'])} · {int(a['lev'])}x · 가상잔고 {a['wallet']:.2f}", "entry")
                 if self.entry_mode == "postonly_timeout":
@@ -736,11 +751,15 @@ class EnginePort:
             if self.observe and t in ("enter", "skip") and c is not None:
                 self.observe("intent" if t == "enter" else "book_skip", minute=i,
                              cid=c.cid, component=GN[c.g], sym=c.sym, side=int(c.sd),
-                             reason=a.get("reason"), side_factor=a.get("side_factor"))
+                             reason=a.get("reason"), side_factor=a.get("side_factor"),
+                             **({"h_exit": a["h_exit"]} if "h_exit" in a else {}))
             if t == "enter":
+                fixed = {"qty": a["qty"], "stop_px": a["stop"], "lev": int(a["lev"])}
+                if "h_exit" in a:
+                    fixed["h_exit"] = a["h_exit"]
                 self.intents.append({"type": "enter", "sym": c.sym, "side": int(c.sd), "T": i * 60000, "model_id": i * 60000,
                                      "stop_dist": abs(a["entry"] - a["stop"]), "signal_px": a["entry"],
-                                     "fixed": {"qty": a["qty"], "stop_px": a["stop"], "lev": int(a["lev"])}, "cid": c.cid,
+                                     "fixed": fixed, "cid": c.cid,
                                      "max_age_s": 90})          # a caught-up (old) minute is never entered late
             elif t == "stop":
                 self.intents.append({"type": "stop", "sym": c.sym, "stop_px": a["stop"]})
@@ -789,6 +808,24 @@ class BundleV5(Strategy):
         if syms and hasattr(ctx, "track_symbols"):
             ctx.track_symbols(syms)
 
+    @staticmethod
+    def _sync_h_quantity(book, ctx):
+        """Release only confirmed quantity from the model's margin and original-distance risk reserve."""
+        for _, slot in book.positions():
+            if "h_exit" not in slot:
+                continue
+            c = slot["c"]
+            pos = ctx.st["pos"].get(c.sym, {})
+            obs = ctx.protection_snapshot.get(c.sym, {})
+            if (pos.get("model_entry_open") != c.i * 60_000 or pos.get("h_exit") != slot["h_exit"]
+                    or not pos.get("tp") or pos.get("closing") or ctx.in_manual(c.sym)
+                    or obs.get("cid") != pos["cid"] or not obs.get("stop")
+                    or not 0 <= ctx.now_ms() - obs["time"] <= 90_000):
+                continue
+            qty = float(pos["qty"])
+            if 0 < qty <= slot["q"] and qty == float(obs["qty"]):
+                slot["q"] = qty
+
     def on_bar_close(self, T, ctx, force=False):
         d = self._driver(ctx)
         try:
@@ -797,6 +834,8 @@ class BundleV5(Strategy):
                 d.book.sync_wallet(float(w))               # LIVE: the real wallet sizes the next entries
         except Exception:  # noqa: BLE001
             pass
+        if d.next_i == T // 60_000:
+            self._sync_h_quantity(d.book, ctx)
         d.tick(T + int(d.cfg.delay_s * 1000) + 1)
         intents = self.port.take()
         if not intents:                                    # no order waits behind this: use the idle minute
@@ -815,7 +854,7 @@ class BundleV5(Strategy):
         except Exception:  # noqa: BLE001
             px = None
         for _, s in d.book.positions():
-            if s["c"].sym == sym:
+            if s["c"].sym == sym and ("h_exit" not in s or model_entry_open == s["c"].i * 60_000):
                 d.book.live_closed(sym, int(t_ms // 60000), px if px is not None else s["sl"], reason)
                 self.state = {"drv": d.state_dict()}
                 return True
