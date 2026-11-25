@@ -32,6 +32,11 @@ KST_DAY_OFFSET = 900            # 00:00 KST = 15:00 UTC = minute 900 of the UTC 
 GN = ("M", "D", "R", "H")
 H_EXIT_V2 = "h_exit_v2"
 H_EXIT_V2_TERMS = {"name": H_EXIT_V2, "tp1_r": 1.0, "tp1_frac": .25, "tp2_r": 5.0}
+# R longs (2026-11-25, push_1pct/r2_sizing): p179 E3 keeps the whole qty on the 2.5 ATR trail - its edge is the >5R tail
+# (TP1 at 1R for 50 % cut R longs from +0.33R to +0.12R/trade). One far whole-qty TP at +15R keeps "no position without a TP".
+R_EXIT_V1 = "r_exit_v1"
+R_EXIT_V1_TERMS = {"name": R_EXIT_V1, "tp1_r": 15.0, "tp1_frac": 1.0, "tp2_r": None}
+EXIT_TERMS = {H_EXIT_V2: H_EXIT_V2_TERMS, R_EXIT_V1: R_EXIT_V1_TERMS}
 SLOTS = 7
 RISK_MULT = float(os.getenv("LIVE_V6_BUNDLE_RISK_MULT", "6.0"))   # p116 L6 risk multiplier; env lowers it for a first live run
 if not (math.isfinite(RISK_MULT) and RISK_MULT > 0):   # nan / inf / <= 0 would only fail (or size nothing) at the first entry
@@ -100,7 +105,8 @@ class Book:
     then the peak is reset to the wallet."""
 
     def __init__(self, fee=1.0, capital=106.0, weights=None, regime=None, state=None, end=None,
-                 margin="sleeve", risk_mult=None, h_exit_policy=None, exchange_exits=False):
+                 margin="sleeve", risk_mult=None, h_exit_policy=None, exchange_exits=False,
+                 r_exit_policy=None, r_long_only=False, r_notional_cap=None):
         self.fee = float(fee)
         self.weights = weights            # i → (wM, wD, wR, wH)
         self.regime = regime              # i → V5 score (−5 … +5)
@@ -109,6 +115,9 @@ class Book:
             raise ValueError(f"margin must be 'sleeve' or 'pooled': {margin!r}")
         self.margin = margin              # sleeve: per-component budget wallet·w[g]; pooled: account free margin
         self.h_exit_policy = h_exit_policy
+        self.r_exit_policy = r_exit_policy
+        self.r_long_only = bool(r_long_only)       # R shorts lost in every replay window (p179 E3: −0.15R/−0.44R)
+        self.r_notional_cap = None if r_notional_cap is None else float(r_notional_cap)   # × wallet, R only
         self.exchange_exits = exchange_exits
         self.risk_mult = RISK_MULT if risk_mult is None else float(risk_mult)
         if state:
@@ -134,7 +143,8 @@ class Book:
     # ── persistence ──
     def state(self) -> dict:
         d = {k: v for k, v in self.__dict__.items()
-             if k not in ("weights", "regime", "fee", "end", "margin", "risk_mult", "h_exit_policy", "exchange_exits")}
+             if k not in ("weights", "regime", "fee", "end", "margin", "risk_mult", "h_exit_policy", "exchange_exits",
+                          "r_exit_policy", "r_long_only", "r_notional_cap")}
         d["slots"] = [dict(s, c=s["c"].to_dict() if s["c"] is not None else None) for s in self.slots]
         return d
 
@@ -215,6 +225,10 @@ class Book:
                 self._skip(g, "disabled")
                 acts.append(dict(type="skip", i=i, cand=c, reason="disabled"))
                 continue
+            if g == 2 and sd < 0 and self.r_long_only:
+                self._skip(g, "r_short_off")
+                acts.append(dict(type="skip", i=i, cand=c, reason="r_short_off"))
+                continue
             if self.halt or self.until >= 0:
                 self._skip(g, "halt")
                 acts.append(dict(type="skip", i=i, cand=c, reason="owner_halt"))
@@ -292,6 +306,9 @@ class Book:
                         buffer = sd * (e - lp) / (2 * d)
                     notional = (min(capital * .01 * side_factor / (d / e), capital * L * .4) if g == 2
                                 else min(capital * .05 * side_factor / (d / e), capital * 5))
+                    if g == 2 and self.r_notional_cap is not None:
+                        # all open R positions together (up to 2 slots) stay within cap × wallet
+                        notional = min(notional, max(0., self.r_notional_cap * min(self.wallet, eventeq) - gross))
                 quantity = _floor(notional / (a[0] if g == 3 else e) / step + 1e-9) * step
             if quantity * d > remaining:
                 quantity = min(quantity, _floor(remaining / max(d, 1e-30) / step + 1e-9) * step)
@@ -322,6 +339,8 @@ class Book:
             s = self.slots[slot]
             if g == 3 and self.h_exit_policy == H_EXIT_V2:
                 s["h_exit"] = dict(H_EXIT_V2_TERMS)
+            elif g == 2 and sd > 0 and self.r_exit_policy == R_EXIT_V1:
+                s["h_exit"] = dict(R_EXIT_V1_TERMS)    # key kept generic: "the position's own exit recipe"
             s.update(c=c, q=quantity, iq=quantity, ep=e, sl=st, dist=d, best=a[4] if g in (0, 1) else e)
             cost = quantity * e * .0005 * fee
             self.wallet -= cost

@@ -30,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 
 from .base import DataNotReady, Strategy
 from . import bundle_v5_signals as SG
-from .bundle_v5_core import FIXED_RISK_MULT, GN, H_EXIT_V2, Book, Cand, fixed_fraction_weights
+from .bundle_v5_core import FIXED_RISK_MULT, GN, H_EXIT_V2, R_EXIT_V1, Book, Cand, fixed_fraction_weights
 
 log = logging.getLogger("live_v6.bundle_v5")
 KST = timezone(timedelta(hours=9))
@@ -54,10 +54,19 @@ class BundleConfig:
     #                                 None = legacy IV weights x LIVE_V6_BUNDLE_RISK_MULT
     margin: str = "sleeve"          # "pooled": no per-component margin budget, only the account's free margin
     h_exit_policy: str | None = None
+    r_exit_policy: str | None = None   # r_exit_v1: R longs keep the whole qty on the trail, one far TP (+15R)
+    r_long_only: bool = False          # R shorts skipped (r_short_off)
+    r_notional_cap: float | None = None   # R notional ≤ cap × wallet (the r2_sizing grid used 2)
 
     def __post_init__(self):
         if self.h_exit_policy not in (None, H_EXIT_V2):
             raise ValueError(f"unknown LIVE_V6_BUNDLE_H_EXIT_POLICY: {self.h_exit_policy!r}")
+        if self.r_exit_policy not in (None, R_EXIT_V1):
+            raise ValueError(f"unknown LIVE_V6_BUNDLE_R_EXIT_POLICY: {self.r_exit_policy!r}")
+        if self.r_exit_policy and not self.r_long_only:
+            raise ValueError("LIVE_V6_BUNDLE_R_EXIT_POLICY needs LIVE_V6_BUNDLE_R_LONG_ONLY=1 (the recipe is long only)")
+        if self.r_notional_cap is not None and not 0 < self.r_notional_cap <= 5:
+            raise ValueError(f"LIVE_V6_BUNDLE_R_NOTIONAL_CAP must be in (0, 5]: {self.r_notional_cap!r}")
 
 
 def sizing_from_env(env=None) -> dict:
@@ -66,6 +75,9 @@ def sizing_from_env(env=None) -> dict:
       LIVE_V6_BUNDLE_RISK_PCT="M:2,D:0,R:0,H:9"   % of the wallet risked per trade, all four required, 0 = component off
       LIVE_V6_BUNDLE_MARGIN=pooled|sleeve          default sleeve (legacy); pooled only together with RISK_PCT
       LIVE_V6_BUNDLE_H_EXIT_POLICY=h_exit_v2       optional exit recipe for newly opened H longs
+      LIVE_V6_BUNDLE_R_EXIT_POLICY=r_exit_v1       optional exit recipe for newly opened R longs (needs R_LONG_ONLY=1)
+      LIVE_V6_BUNDLE_R_LONG_ONLY=1|0               skip R shorts
+      LIVE_V6_BUNDLE_R_NOTIONAL_CAP=2              R notional at most this multiple of the wallet
 
     Anything malformed refuses to start - a variable that is set but empty included: a sizing the operator did not
     write down must never be picked silently.
@@ -78,6 +90,18 @@ def sizing_from_env(env=None) -> dict:
     out = {}
     if "LIVE_V6_BUNDLE_H_EXIT_POLICY" in env:
         out["h_exit_policy"] = env["LIVE_V6_BUNDLE_H_EXIT_POLICY"]
+    if "LIVE_V6_BUNDLE_R_EXIT_POLICY" in env:
+        out["r_exit_policy"] = env["LIVE_V6_BUNDLE_R_EXIT_POLICY"]
+    if "LIVE_V6_BUNDLE_R_LONG_ONLY" in env:
+        v = env["LIVE_V6_BUNDLE_R_LONG_ONLY"].strip()
+        if v not in ("0", "1"):
+            raise ValueError(f"LIVE_V6_BUNDLE_R_LONG_ONLY must be 0 or 1: {v!r}")
+        out["r_long_only"] = v == "1"
+    if "LIVE_V6_BUNDLE_R_NOTIONAL_CAP" in env:
+        try:
+            out["r_notional_cap"] = float(env["LIVE_V6_BUNDLE_R_NOTIONAL_CAP"])
+        except ValueError:
+            raise ValueError(f"LIVE_V6_BUNDLE_R_NOTIONAL_CAP must be a number: {env['LIVE_V6_BUNDLE_R_NOTIONAL_CAP']!r}")
     margin = env.get("LIVE_V6_BUNDLE_MARGIN")
     if margin is not None:
         margin = margin.strip().lower()
@@ -142,6 +166,8 @@ class BundleDriver:
         self._weights = weights or (lambda i: SG.IV_FIXED)
         # fixed-fraction weights are defined for the research multiplier 6 (legacy: LIVE_V6_BUNDLE_RISK_MULT)
         self._book_kw = dict(margin=self.cfg.margin, h_exit_policy=self.cfg.h_exit_policy,
+                             r_exit_policy=self.cfg.r_exit_policy, r_long_only=self.cfg.r_long_only,
+                             r_notional_cap=self.cfg.r_notional_cap,
                              exchange_exits=isinstance(port, EnginePort),
                              risk_mult=FIXED_RISK_MULT if self.cfg.risk_pct is not None else None)
         self._regime_fn = regime                       # replay may inject; default: V5 from BTC daily closes
@@ -173,6 +199,10 @@ class BundleDriver:
         self.sizing = (f"고정 비율 {' '.join(f'{n} {r:g}%' for n, r in zip(GN, self.cfg.risk_pct))} · 증거금 {self.cfg.margin}"
                        if self.cfg.risk_pct is not None else
                        f"기존 IV 가중치 × 위험배수 {self.book.risk_mult:g} · 증거금 {self.cfg.margin}")
+        if self.cfg.r_long_only or self.cfg.r_exit_policy or self.cfg.r_notional_cap is not None:
+            self.sizing += (f" · R {'롱만' if self.cfg.r_long_only else '양방향'}"
+                            + (f" 명목≤{self.cfg.r_notional_cap:g}배" if self.cfg.r_notional_cap is not None else "")
+                            + (f" 청산 {self.cfg.r_exit_policy}" if self.cfg.r_exit_policy else ""))
         self.sizing_was = st.get("sizing")             # None: a state from before this field
         log.info("bundle sizing: %s%s", self.sizing,
                  " (LIVE_V6_BUNDLE_RISK_MULT is set but not applied in this mode)"
@@ -301,6 +331,9 @@ class BundleDriver:
             if not bars or bars[-1]["t"] + 240 != c4:
                 raise DataNotReady(f"{sym} 4h bars up to {kst(c4)}")
             rows = SG.htf_levels(bars)
+            done = getattr(self.m, "complete_upto", None)
+            if done is not None and c4 > done():           # 4h bar still forming (open half of hh:59): use, don't keep
+                return (c4, rows[-1])
             self._lev = {k: v for k, v in self._lev.items() if k[1] >= c4 - 480}
             self._lev[(sym, c4)] = (c4, rows[-1])
         return self._lev[(sym, c4)]
@@ -854,7 +887,13 @@ class BundleV5(Strategy):
         except Exception:  # noqa: BLE001
             px = None
         for _, s in d.book.positions():
-            if s["c"].sym == sym and ("h_exit" not in s or model_entry_open == s["c"].i * 60_000):
+            if s["c"].sym != sym:
+                continue
+            # a close of a position opened at t never refers to a slot opened after t (R expiry + new M on the same
+            # symbol in one tick: the R close must not drop the new M slot - Codex 2026-11-25)
+            if model_entry_open is not None and s["c"].i * 60_000 > model_entry_open:
+                continue
+            if "h_exit" not in s or model_entry_open == s["c"].i * 60_000:
                 d.book.live_closed(sym, int(t_ms // 60000), px if px is not None else s["sl"], reason)
                 self.state = {"drv": d.state_dict()}
                 return True
